@@ -2407,3 +2407,21 @@ func TestUpdateIfMatchConcurrentProcesses(t *testing.T) {
 		t.Fatalf("%d concurrent updates with the same etag succeeded, want exactly 1 (errors: %v)", succeeded, errs)
 	}
 }
+
+func TestCreateWithEmptySlugSurvivesReload(t *testing.T) {
+	core, beansDir := setupTestCore(t)
+
+	b := &bean.Bean{ID: "proj-abc1", Title: "!!!", Slug: bean.Slugify("!!!"), Status: "todo"}
+	if err := core.Create(b); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	reloaded := New(beansDir, config.Default())
+	reloaded.SetWarnWriter(nil)
+	if err := reloaded.Load(); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if _, err := reloaded.Get("proj-abc1"); err != nil {
+		t.Fatalf("bean not found under its ID after reload (path %s): %v", b.Path, err)
+	}
+}

@@ -87,6 +87,19 @@ func ParseFilename(name string) (id, slug string) {
 	return id, slug
 }
 
+// UntitledSlug is used for beans whose title doesn't produce a slug but whose
+// ID can't be stored in an ID-only filename.
+const UntitledSlug = "untitled"
+
+// RequiresSlug reports whether a bean with this ID needs a slug in its
+// filename. ID-only filenames ("<id>.md") are parsed with the legacy formats,
+// so IDs containing "-" or "." (e.g. any prefixed ID like "beans-abc1") would
+// not survive a round trip and the bean would be reloaded under a wrong ID.
+func RequiresSlug(id string) bool {
+	parsed, _ := ParseFilename(BuildFilename(id, ""))
+	return parsed != id
+}
+
 // BuildFilename constructs a filename from ID and optional slug.
 // Uses double-dash separator: id--slug.md
 func BuildFilename(id, slug string) string {

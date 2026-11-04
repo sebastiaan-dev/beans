@@ -231,3 +231,19 @@ func TestParseFilenameAndBuildFilenameRoundtrip(t *testing.T) {
 		})
 	}
 }
+
+func TestRequiresSlug(t *testing.T) {
+	tests := []struct {
+		id   string
+		want bool
+	}{
+		{"abc1", false},
+		{"beans-abc1", true},
+		{"my.id", true},
+	}
+	for _, tt := range tests {
+		if got := RequiresSlug(tt.id); got != tt.want {
+			t.Errorf("RequiresSlug(%q) = %v, want %v", tt.id, got, tt.want)
+		}
+	}
+}
