@@ -1788,3 +1788,44 @@ func TestNoUnknownFrontMatterKeysRendersUnchanged(t *testing.T) {
 		t.Errorf("Render() =\n%q\nwant:\n%q", out, input)
 	}
 }
+
+func TestIsArchivedAndJSON(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"root bean", "abc1--demo.md", false},
+		{"archived bean", "archive/abc1--demo.md", true},
+		{"archived bean without slug", "archive/abc1.md", true},
+		{"empty path", "", false},
+		{"archive-like prefix", "archived/abc1.md", false},
+		{"archive in filename", "archive-abc1.md", false},
+		{"nested non-archive dir", "epic/archive/abc1.md", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &Bean{ID: "abc1", Path: tt.path, Title: "Demo", Status: "todo"}
+			if got := b.IsArchived(); got != tt.want {
+				t.Errorf("IsArchived() = %v, want %v", got, tt.want)
+			}
+
+			data, err := json.Marshal(b)
+			if err != nil {
+				t.Fatalf("Marshal error: %v", err)
+			}
+			var result map[string]interface{}
+			if err := json.Unmarshal(data, &result); err != nil {
+				t.Fatalf("Unmarshal error: %v", err)
+			}
+			archived, ok := result["archived"].(bool)
+			if !ok {
+				t.Fatalf("JSON should contain boolean 'archived' field, got: %s", data)
+			}
+			if archived != tt.want {
+				t.Errorf("JSON archived = %v, want %v", archived, tt.want)
+			}
+		})
+	}
+}

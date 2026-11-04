@@ -120,6 +120,10 @@ func showStyledBean(b *bean.Bean) {
 	header.WriteString(ui.ID.Render(b.ID))
 	header.WriteString(" ")
 	header.WriteString(ui.RenderStatusWithColor(b.Status, statusColor, isArchive))
+	if b.IsArchived() {
+		header.WriteString(" ")
+		header.WriteString(ui.Muted.Render(ui.ArchivedMarker))
+	}
 	if implicitStatus, implicitStatusFrom := core.ImplicitStatus(b.ID); implicitStatus != "" {
 		header.WriteString(" ")
 		header.WriteString(ui.Muted.Render("↑" + implicitStatus + " (from " + implicitStatusFrom + ")"))
