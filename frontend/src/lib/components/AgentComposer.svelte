@@ -380,8 +380,7 @@
     const text = editor.getText({
       blockSeparator: '\n',
       textSerializers: {
-        fileMention: ({ node }: { node: { attrs: { path: string } } }) =>
-          `{{file:${node.attrs.path}}}`
+        fileMention: ({ node }) => `{{file:${String(node.attrs.path ?? '')}}}`
       }
     }).trim();
     const attachments = extractAttachments(editor);

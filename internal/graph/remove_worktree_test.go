@@ -94,7 +94,7 @@ func TestRemoveWorktreeStopsRunAndTerminal(t *testing.T) {
 	mr := r.Mutation()
 	qr := r.Query()
 
-	wt, err := mr.CreateWorktree(ctx, "run-test")
+	wt, err := mr.CreateWorktree(ctx, "run-test", nil)
 	if err != nil {
 		t.Fatalf("CreateWorktree: %v", err)
 	}
