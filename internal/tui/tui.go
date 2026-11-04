@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/atotto/clipboard"
+	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/hmans/beans/pkg/beancore"
@@ -121,6 +122,11 @@ type App struct {
 	// Key chord state - tracks partial key sequences like "g" waiting for "t"
 	pendingKey string
 
+	// Batched key state - keys held back until a view change requested by an
+	// earlier key of the same batch has been applied (see handleKeys)
+	heldKeys    []tea.KeyMsg
+	holdingKeys bool
+
 	// Modal state - tracks view behind modal pickers
 	previousState viewState
 
@@ -169,12 +175,23 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
+		// Keep the order of keys while earlier keys of a batch are pending.
+		if a.holdingKeys {
+			a.heldKeys = append(a.heldKeys, msg)
+			return a, nil
+		}
+		// Several runes delivered at once are individual shortcuts, unless a
+		// text input is receiving them.
+		if keys, ok := splitBatchedRunes(msg); ok && !a.acceptsTextInput() {
+			return a, a.handleKeys(keys)
+		}
+
 		// Clear status messages on any keypress
 		a.list.statusMessage = ""
 		a.detail.statusMessage = ""
 
 		// Handle key chord sequences
-		if a.state == viewList && a.list.list.FilterState() != 1 {
+		if a.state == viewList && a.list.list.FilterState() != list.Filtering {
 			if a.pendingKey == "g" {
 				a.pendingKey = ""
 				switch msg.String() {
@@ -214,10 +231,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, tea.Quit
 			}
 			// For list, only quit if not filtering
-			if a.state == viewList && a.list.list.FilterState() != 1 {
+			if a.state == viewList && a.list.list.FilterState() != list.Filtering {
 				return a, tea.Quit
 			}
 		}
+
+	case releaseHeldKeysMsg:
+		keys := a.heldKeys
+		a.heldKeys = nil
+		a.holdingKeys = false
+		return a, a.handleKeys(keys)
 
 	case cursorChangedMsg:
 		// Update preview with the newly highlighted bean
@@ -634,6 +657,74 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return a, cmd
+}
+
+// acceptsTextInput reports whether the active view currently routes typed
+// characters into a text field, so batched runes must be kept intact.
+func (a *App) acceptsTextInput() bool {
+	switch a.state {
+	case viewList:
+		return a.list.list.FilterState() == list.Filtering
+	case viewDetail:
+		return a.detail.linksActive && a.detail.linkList.FilterState() == list.Filtering
+	case viewTagPicker:
+		return a.tagPicker.list.FilterState() == list.Filtering
+	case viewParentPicker:
+		return a.parentPicker.list.FilterState() == list.Filtering
+	case viewStatusPicker:
+		return a.statusPicker.list.FilterState() == list.Filtering
+	case viewTypePicker:
+		return a.typePicker.list.FilterState() == list.Filtering
+	case viewPriorityPicker:
+		return a.priorityPicker.list.FilterState() == list.Filtering
+	case viewBlockingPicker:
+		return a.blockingPicker.list.FilterState() == list.Filtering
+	case viewCreateModal:
+		return true
+	case viewFilterPicker:
+		// The filter modal splits batched runes itself outside its tag search.
+		return true
+	}
+	return false
+}
+
+// releaseHeldKeysMsg delivers keys held back by handleKeys.
+type releaseHeldKeysMsg struct{}
+
+// handleKeys handles key messages one after another, as if they had been
+// typed separately, splitting batched runes into single-key shortcuts.
+//
+// A key may return a command whose message changes the view (e.g. "c" opens
+// the create modal via openCreateModalMsg). The remaining keys, and any keys
+// arriving in the meantime, are therefore held back until that command's
+// messages have been processed. Once a text input has focus, the remaining
+// keys are delivered to it directly as text.
+func (a *App) handleKeys(keys []tea.KeyMsg) tea.Cmd {
+	var cmds []tea.Cmd
+	for len(keys) > 0 {
+		if a.acceptsTextInput() {
+			for _, k := range keys {
+				_, cmd := a.Update(k)
+				cmds = append(cmds, cmd)
+			}
+			break
+		}
+		if split, ok := splitBatchedRunes(keys[0]); ok {
+			keys = append(split, keys[1:]...)
+		}
+		k := keys[0]
+		keys = keys[1:]
+		_, cmd := a.Update(k)
+		if cmd != nil && len(keys) > 0 && !a.acceptsTextInput() {
+			a.heldKeys = keys
+			a.holdingKeys = true
+			release := func() tea.Msg { return releaseHeldKeysMsg{} }
+			cmds = append(cmds, tea.Sequence(cmd, release))
+			break
+		}
+		cmds = append(cmds, cmd)
+	}
+	return tea.Batch(cmds...)
 }
 
 // collectTagsWithCounts returns all tags with their usage counts

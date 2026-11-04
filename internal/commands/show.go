@@ -3,15 +3,19 @@ package commands
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/glamour"
+	glamourstyles "github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/hmans/beans/pkg/bean"
 	"github.com/hmans/beans/pkg/beangraph"
 	"github.com/hmans/beans/internal/output"
 	"github.com/hmans/beans/internal/ui"
+	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var (
@@ -183,16 +187,8 @@ func showStyledBean(b *bean.Bean) {
 
 	// Render the body with Glamour
 	if b.Body != "" {
-		renderer, err := glamour.NewTermRenderer(
-			glamour.WithAutoStyle(),
-			glamour.WithWordWrap(80),
-		)
-		if err != nil {
-			fmt.Printf("failed to create renderer: %v\n", err)
-			return
-		}
-
-		rendered, err := renderer.Render(b.Body)
+		isTTY := term.IsTerminal(int(os.Stdout.Fd()))
+		rendered, err := renderMarkdownBody(b.Body, isTTY, lipgloss.ColorProfile())
 		if err != nil {
 			fmt.Printf("failed to render markdown: %v\n", err)
 			return
@@ -200,6 +196,42 @@ func showStyledBean(b *bean.Bean) {
 
 		fmt.Print(rendered)
 	}
+}
+
+// showBodyWordWrap is the column at which rendered bean bodies are wrapped.
+const showBodyWordWrap = 80
+
+// newBodyRenderer returns the glamour renderer used for bean bodies.
+//
+// On a terminal it uses the shared 16-color ANSI palette style (the same one
+// as the TUI detail view) with the given color profile, so the output follows
+// the terminal theme. It deliberately avoids glamour's auto style, which emits
+// 256-color codes and performs slow terminal background detection. When stdout
+// is not a terminal, or colors are disabled (an Ascii profile, e.g. NO_COLOR or
+// TERM=dumb), it uses glamour's plain "notty" style without escape sequences.
+func newBodyRenderer(isTTY bool, profile termenv.Profile) (*glamour.TermRenderer, error) {
+	if !isTTY || profile == termenv.Ascii {
+		return glamour.NewTermRenderer(
+			glamour.WithStandardStyle(glamourstyles.NoTTYStyle),
+			glamour.WithColorProfile(termenv.Ascii),
+			glamour.WithWordWrap(showBodyWordWrap),
+		)
+	}
+	return glamour.NewTermRenderer(
+		glamour.WithStyles(ui.MarkdownStyleConfig()),
+		glamour.WithChromaFormatter(ui.MarkdownChromaFormatter),
+		glamour.WithColorProfile(profile),
+		glamour.WithWordWrap(showBodyWordWrap),
+	)
+}
+
+// renderMarkdownBody renders a bean body as styled markdown.
+func renderMarkdownBody(body string, isTTY bool, profile termenv.Profile) (string, error) {
+	renderer, err := newBodyRenderer(isTTY, profile)
+	if err != nil {
+		return "", fmt.Errorf("failed to create renderer: %w", err)
+	}
+	return renderer.Render(body)
 }
 
 // formatRelationships formats parent and blocks for display.
