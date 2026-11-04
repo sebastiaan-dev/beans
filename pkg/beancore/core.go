@@ -561,6 +561,11 @@ func (c *Core) Create(b *bean.Bean, opts ...UpdateOption) error {
 		}
 	}
 
+	// Make sure the filename maps back to this ID when the bean is reloaded
+	if b.Slug == "" && b.Path == "" && bean.RequiresSlug(b.ID) {
+		b.Slug = bean.UntitledSlug
+	}
+
 	// Normalize exactly like Load does, so the in-memory bean (and its etag)
 	// matches what any reader loading the written file will see.
 	b.ApplyDefaults()
