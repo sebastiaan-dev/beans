@@ -100,11 +100,13 @@ homebrew_casks:
     homepage: "https://github.com/hmans/beans"
     description: "Agentic-first issue tracker"
     license: "Apache-2.0"
+    # Generates Homebrew's declarative postflight_steps stanza (GoReleaser >= v2.19);
+    # the old `install` hook emitted the deprecated `postflight` block.
     hooks:
       post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/beans"]
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/beans"]
           end
 
 release:
