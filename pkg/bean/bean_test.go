@@ -1709,3 +1709,82 @@ func TestETagChangesAfterModification(t *testing.T) {
 		t.Error("JSON etag should differ after modification")
 	}
 }
+
+func TestUnknownFrontMatterKeysPreserved(t *testing.T) {
+	input := `---
+# abc1
+title: Demo
+custom_field: preserved?
+status: todo
+pipeline:
+    stage: review # keep me
+    owners: [a, b]
+type: task
+---
+
+Body text.
+`
+	b, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if b.Title != "Demo" || b.Status != "todo" || b.Type != "task" {
+		t.Fatalf("known fields not parsed: %+v", b)
+	}
+
+	// Modify a known field, as `beans update` would
+	b.ID = "abc1"
+	b.Status = "in-progress"
+
+	out, err := b.Render()
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+
+	want := `---
+# abc1
+title: Demo
+status: in-progress
+type: task
+custom_field: preserved?
+pipeline:
+    stage: review # keep me
+    owners: [a, b]
+---
+
+Body text.
+`
+	if string(out) != want {
+		t.Errorf("Render() =\n%s\nwant:\n%s", out, want)
+	}
+
+	// Rendering is stable across repeated parse/render cycles
+	b2, err := Parse(strings.NewReader(string(out)))
+	if err != nil {
+		t.Fatalf("Parse() of rendered output error = %v", err)
+	}
+	b2.ID = "abc1"
+	out2, err := b2.Render()
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if string(out2) != string(out) {
+		t.Errorf("second round trip changed output:\n%s\nwant:\n%s", out2, out)
+	}
+}
+
+func TestNoUnknownFrontMatterKeysRendersUnchanged(t *testing.T) {
+	input := "---\n# abc1\ntitle: Plain\nstatus: todo\ntags:\n    - a\n    - b\n---\n\nBody\n"
+	b, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	b.ID = "abc1"
+	out, err := b.Render()
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if string(out) != input {
+		t.Errorf("Render() =\n%q\nwant:\n%q", out, input)
+	}
+}
