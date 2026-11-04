@@ -79,12 +79,18 @@ class WorktreeStore {
     }
   }
 
-  async createWorktree(): Promise<Worktree | null> {
+  /**
+   * Create a workspace. Pass `beanId` when starting work on a bean: the server
+   * then copies its current (possibly uncommitted) version into the worktree.
+   */
+  async createWorktree(beanId?: string): Promise<Worktree | null> {
     this.loading = true;
     this.error = null;
 
     const name = generateWorkspaceName();
-    const result = await client.mutation(CreateWorktreeDocument, { name }).toPromise();
+    const result = await client
+      .mutation(CreateWorktreeDocument, { name, beanId: beanId ?? null })
+      .toPromise();
 
     this.loading = false;
 

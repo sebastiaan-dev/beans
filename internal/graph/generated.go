@@ -162,7 +162,7 @@ type ComplexityRoot struct {
 		ArchiveBean                func(childComplexity int, id string) int
 		ClearAgentSession          func(childComplexity int, beanID string) int
 		CreateBean                 func(childComplexity int, input model.CreateBeanInput) int
-		CreateWorktree             func(childComplexity int, name string) int
+		CreateWorktree             func(childComplexity int, name string, beanID *string) int
 		DeleteBean                 func(childComplexity int, id string) int
 		DiscardFileChange          func(childComplexity int, filePath string, staged bool, path *string) int
 		ExecuteAgentAction         func(childComplexity int, beanID string, actionID string) int
@@ -288,7 +288,7 @@ type MutationResolver interface {
 	WriteTerminalInput(ctx context.Context, sessionID string, data string) (bool, error)
 	StartRun(ctx context.Context, workspaceID string) (int, error)
 	StopRun(ctx context.Context, workspaceID string) (bool, error)
-	CreateWorktree(ctx context.Context, name string) (*model.Worktree, error)
+	CreateWorktree(ctx context.Context, name string, beanID *string) (*model.Worktree, error)
 	RemoveWorktree(ctx context.Context, id string) (bool, error)
 	SendAgentMessage(ctx context.Context, beanID string, message string, images []*model.ImageInput, attachments []*model.FileAttachmentInput) (bool, error)
 	StopAgent(ctx context.Context, beanID string) (bool, error)
@@ -859,7 +859,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Mutation.CreateWorktree(childComplexity, args["name"].(string)), true
+		return e.complexity.Mutation.CreateWorktree(childComplexity, args["name"].(string), args["beanId"].(*string)), true
 	case "Mutation.deleteBean":
 		if e.complexity.Mutation.DeleteBean == nil {
 			break
@@ -1753,6 +1753,11 @@ func (ec *executionContext) field_Mutation_createWorktree_args(ctx context.Conte
 		return nil, err
 	}
 	args["name"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "beanId", ec.unmarshalOID2ᚖstring)
+	if err != nil {
+		return nil, err
+	}
+	args["beanId"] = arg1
 	return args, nil
 }
 
@@ -5495,7 +5500,7 @@ func (ec *executionContext) _Mutation_createWorktree(ctx context.Context, field 
 		ec.fieldContext_Mutation_createWorktree,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Mutation().CreateWorktree(ctx, fc.Args["name"].(string))
+			return ec.resolvers.Mutation().CreateWorktree(ctx, fc.Args["name"].(string), fc.Args["beanId"].(*string))
 		},
 		nil,
 		ec.marshalNWorktree2ᚖgithubᚗcomᚋhmansᚋbeansᚋpkgᚋbeangraphᚋmodelᚐWorktree,

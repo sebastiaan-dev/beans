@@ -240,8 +240,8 @@ mutation ArchiveBean($id: ID!) {
   archiveBean(id: $id)
 }
 
-mutation CreateWorktree($name: String!) {
-  createWorktree(name: $name) {
+mutation CreateWorktree($name: String!, $beanId: ID) {
+  createWorktree(name: $name, beanId: $beanId) {
     ...WorktreeFields
   }
 }

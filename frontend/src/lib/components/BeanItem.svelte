@@ -17,6 +17,8 @@
     filterText?: string;
     /** Status of the backlog section this bean is in (for cross-section drag) */
     sectionStatus?: string;
+    /** Show the bean's parent when it is rendered outside its parent's subtree */
+    showParentContext?: boolean;
   }
 
   let {
@@ -27,8 +29,13 @@
     selectedId = null,
     onSelect,
     filterText = '',
-    sectionStatus
+    sectionStatus,
+    showParentContext = false
   }: Props = $props();
+
+  const contextParent = $derived(
+    showParentContext && bean.parentId ? beansStore.get(bean.parentId) : undefined
+  );
 
   const children = $derived(beansStore.children(bean.id));
   const filteredChildren = $derived(
@@ -49,6 +56,18 @@
       backlogDrag.showIndicator(parentId, index, bean.id, sectionStatus) ? 'h-0.5 bg-accent' : 'h-0'
     ]}
   ></div>
+
+  {#if contextParent}
+    <div
+      class="flex min-w-0 items-center gap-1 px-1 pb-0.5 text-[10px] text-text-faint"
+      data-parent-context
+      title="Parent: {contextParent.title} ({contextParent.status})"
+    >
+      <span class="icon-[uil--corner-down-right-alt] size-3 shrink-0"></span>
+      <span class="truncate">{contextParent.title}</span>
+      <span class="shrink-0">· {contextParent.status}</span>
+    </div>
+  {/if}
 
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->

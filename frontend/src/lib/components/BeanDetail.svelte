@@ -91,7 +91,9 @@
     startingWork = true;
     worktreeError = null;
 
-    const wt = await worktreeStore.createWorktree();
+    // Pass the bean so the server writes its current version (including
+    // uncommitted edits) into the new worktree before the agent starts.
+    const wt = await worktreeStore.createWorktree(bean.id);
     if (!wt) {
       worktreeError = worktreeStore.error;
       startingWork = false;

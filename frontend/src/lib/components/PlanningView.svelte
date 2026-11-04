@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { beansStore } from '$lib/beans.svelte';
+  import { beansStore, type Bean } from '$lib/beans.svelte';
+  import { backlogRoots } from '$lib/backlog';
   import { ui } from '$lib/uiState.svelte';
 
   let { planningView }: { planningView: 'backlog' | 'board' } = $props();
@@ -14,9 +15,12 @@
 
   let filterInput = $state<FilterInput | null>(null);
 
-  const topLevelBeans = $derived(beansStore.all.filter((b) => !b.parentId));
+  // Section roots: top-level backlog beans plus backlog beans whose ancestors
+  // are not in the backlog (e.g. todo children of an in-progress parent).
+  const todoRoots = $derived(backlogRoots(beansStore.all, 'todo'));
+  const draftRoots = $derived(backlogRoots(beansStore.all, 'draft'));
 
-  function filterBeans(beans: typeof topLevelBeans) {
+  function filterBeans(beans: Bean[]) {
     const text = ui.filterText;
     if (!text) return beans;
     return beans.filter((bean) => {
@@ -25,10 +29,8 @@
     });
   }
 
-  const filteredTodoBeans = $derived(filterBeans(topLevelBeans.filter((b) => b.status === 'todo')));
-  const filteredDraftBeans = $derived(
-    filterBeans(topLevelBeans.filter((b) => b.status === 'draft'))
-  );
+  const filteredTodoBeans = $derived(filterBeans(todoRoots));
+  const filteredDraftBeans = $derived(filterBeans(draftRoots));
 
   function handleKeydown(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && (e.key === 'f' || e.key === '/')) {
@@ -90,6 +92,7 @@
               {#snippet backlogSection(beans: typeof filteredTodoBeans, status: string, label: string)}
                 <div
                   class="p-3"
+                  data-backlog-section={status}
                   ondragover={(e) => backlogDrag.hoverList(e, null, beans.length, status)}
                   ondragleave={(e) => backlogDrag.leaveList(e, e.currentTarget, null)}
                   ondrop={(e) => backlogDrag.drop(e, null, beans)}
@@ -108,6 +111,7 @@
                       onSelect={(b) => ui.selectBean(b)}
                       filterText={ui.filterText}
                       sectionStatus={status}
+                      showParentContext
                     />
                   {:else}
                     {#if !beansStore.loading}
