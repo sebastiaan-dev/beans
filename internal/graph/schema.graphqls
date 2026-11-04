@@ -358,9 +358,9 @@ Input for creating a new bean
 input CreateBeanInput {
   "Bean title (required)"
   title: String!
-  "Bean type (defaults to 'task')"
+  "Bean type (defaults to the configured default_type, or 'task')"
   type: String
-  "Status (defaults to 'todo')"
+  "Status (defaults to the configured default_status, or 'todo')"
   status: String
   "Priority level (defaults to 'normal')"
   priority: String

@@ -188,8 +188,8 @@ func Default() *Config {
 			Path:          DefaultBeansPath,
 			Prefix:        "",
 			IDLength:      4,
-			DefaultStatus: "todo",
-			DefaultType:   "task",
+			DefaultStatus: DefaultStatus,
+			DefaultType:   DefaultType,
 		},
 		Worktree: WorktreeConfig{
 			BaseRef:   DefaultWorktreeBaseRef,
@@ -282,10 +282,10 @@ func Load(configPath string) (*Config, error) {
 		cfg.Beans.IDLength = 4
 	}
 	if cfg.Beans.DefaultStatus == "" {
-		cfg.Beans.DefaultStatus = "todo"
+		cfg.Beans.DefaultStatus = DefaultStatus
 	}
 	if cfg.Beans.DefaultType == "" {
-		cfg.Beans.DefaultType = DefaultTypes[0].Name
+		cfg.Beans.DefaultType = DefaultType
 	}
 
 	return &cfg, nil
@@ -534,16 +534,25 @@ func (c *Config) GetStatus(name string) *StatusConfig {
 	return nil
 }
 
+// Status and type for new beans when none is configured.
+const (
+	DefaultStatus = "todo"
+	DefaultType   = "task"
+)
+
 // GetDefaultStatus returns the default status name for new beans.
 func (c *Config) GetDefaultStatus() string {
 	if c.Beans.DefaultStatus == "" {
-		return "todo"
+		return DefaultStatus
 	}
 	return c.Beans.DefaultStatus
 }
 
 // GetDefaultType returns the default type name for new beans.
 func (c *Config) GetDefaultType() string {
+	if c.Beans.DefaultType == "" {
+		return DefaultType
+	}
 	return c.Beans.DefaultType
 }
 

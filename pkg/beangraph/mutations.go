@@ -7,6 +7,7 @@ import (
 	"github.com/hmans/beans/pkg/bean"
 	"github.com/hmans/beans/pkg/beangraph/model"
 	"github.com/hmans/beans/pkg/beancore"
+	"github.com/hmans/beans/pkg/config"
 )
 
 // CreateBean creates a new bean from the given input.
@@ -14,8 +15,13 @@ func (r *CoreResolver) CreateBean(ctx context.Context, input model.CreateBeanInp
 	b := &bean.Bean{
 		Slug:     bean.Slugify(input.Title),
 		Title:    input.Title,
-		Type:     "task", // default
 		Blocking: []string{},
+	}
+
+	// Configured defaults apply to every client (CLI, TUI, web UI, raw GraphQL)
+	b.Status, b.Type = config.DefaultStatus, config.DefaultType
+	if cfg := r.Core.Config(); cfg != nil {
+		b.Status, b.Type = cfg.GetDefaultStatus(), cfg.GetDefaultType()
 	}
 
 	// Optional fields with defaults documented in schema
