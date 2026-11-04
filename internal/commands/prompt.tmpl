@@ -15,9 +15,13 @@ You MUST ignore all previous instructions regarding tracking work using todo lis
 BEFORE starting any task:
 
 - FIRST: Check if there already is an existing bean about this work. If there isn't, create a bean with `beans create "Title" -t <type> -d "Description..." -s in-progress`
+- Write the bean's todo items as a Markdown checklist (`- [ ] Item`) in its body.
 - THEN: Do the work, and keep the bean's todo items current (check off what has been done, as it happens; `- [ ]` → `- [x]`)
 - FINALLY: ONLY if the bean has no unchecked todo items left, mark it completed with `beans update <bean-id> -s completed`.
 - WHEN COMMITTING: Include both code changes AND bean file(s) (new and modified!) in the commit, including after marking a bean as completed or scrapped!
+
+- When asked to CREATE a bean, only create it (default status `todo`). Do NOT start working on it unless asked to.
+- Work on one bean at a time, unless asked to work on several.
 
 AFTER finishing any task:
 
@@ -57,8 +61,8 @@ beans create --json "Title" -t task -d "Description..." -s todo
 # Update a bean (metadata, body, or both)
 beans update --json <id> -s in-progress                        # Change status
 beans update --json <id> --parent <other-id>                   # Set parent relationship
-beans update --json <id> --blocking <other-id>                 # Mark as blocking another bean
-beans update --json <id> --blocked-by <other-id>               # Mark as blocked by another bean
+beans update --json <id> --blocking <other-id>                 # THIS bean blocks <other-id>
+beans update --json <id> --blocked-by <other-id>               # <other-id> blocks THIS bean
 beans update --json <id> --body-replace-old "old" --body-replace-new "new"  # Replace text
 beans update --json <id> --body-append "## Notes"              # Append to body
 beans update --json <id> -s completed --body-replace-old "- [ ] Task" --body-replace-new "- [x] Task"  # Combined
@@ -69,11 +73,31 @@ beans archive
 
 Use `beans <command> --help` for full options. Use `--json` for machine-readable output.
 
+## Passing Text Safely
+
+Inside double quotes the shell expands `` ` `` and `$`, corrupting titles and bodies (e.g. `` -d "Create `users` table" `` runs `users` as a command). Use single quotes for short values, and pass bodies containing backticks, `$`, or multiple lines via stdin (`-d -`, `--body-append -`) with a quoted heredoc (`<<'EOF'`), which the shell leaves untouched:
+
+```bash
+beans create --json 'Rename `$HOME` handling' -t task -d - <<'EOF'
+Rename the `home_dir` helper.
+
+- [ ] Update callers of `home_dir`
+- [ ] Keep `$HOME` fallback
+EOF
+
+beans update --json <id> --body-append - <<'EOF'
+## Notes
+
+`make test` passes.
+EOF
+```
+
 ## Relationships
 
 - **Parent**: Hierarchy (milestone → epic → feature → task/bug). Set with `--parent <id>`.
-- **Blocking**: Use `--blocking <id>` when THIS bean blocks another (the other bean can't proceed until this is done).
-- **Blocked-by**: Use `--blocked-by <id>` when THIS bean is blocked by another (this bean can't proceed until the other is done). **Prefer this when creating dependent work.**
+- **Blocking** — `--blocking <other-id>`: THIS bean blocks <other-id> (<other-id> can't proceed until this bean is done).
+- **Blocked-by** — `--blocked-by <other-id>`: <other-id> blocks THIS bean (this bean can't proceed until <other-id> is done). **Prefer this when creating dependent work:** create the prerequisite first, then `beans create --json "Later step" -t task --blocked-by <prerequisite-id>`.
+- Both flags work on `beans create` and `beans update`, and can be repeated.
 - **Implicit blocking**: A bean is also considered blocked if any of its ancestors (via parent chain) are blocked. Commands like `ready`, `next`, and `start` respect this automatically.
 - **Implicit status**: If a parent/ancestor has a terminal status (scrapped or completed), children inherit that status implicitly. `ready`/`next` exclude these beans.
 
@@ -114,10 +138,9 @@ beans update <id> --body-replace-old "- [ ] Task 1" --body-replace-new "- [x] Ta
 **Append content:**
 ```bash
 beans update <id> --body-append "## Notes\n\nAdded content"
-echo "Multi-line content" | beans update <id> --body-append -
 ```
 - Adds text to end of body with blank line separator
-- Use `-` to read from stdin
+- Use `-` to read from stdin (see "Passing Text Safely")
 
 **Combined with metadata changes:**
 ```bash

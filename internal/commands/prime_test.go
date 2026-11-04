@@ -86,3 +86,28 @@ func TestPrime(t *testing.T) {
 		})
 	}
 }
+
+func TestPrimeGuidance(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv(configEnvVar, "")
+	t.Setenv("BEANS_PATH", "")
+	stdout, _, err := runPrime(t, "--beans-path", t.TempDir())
+	if err != nil {
+		t.Fatalf("prime error = %v", err)
+	}
+
+	for _, want := range []string{
+		"only create it",
+		"one bean at a time",
+		"- [ ]",
+		"<<'EOF'",
+		"-d -",
+		"--body-append -",
+		"`--blocking <other-id>`: THIS bean blocks",
+		"`--blocked-by <other-id>`: <other-id> blocks THIS bean",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("prime output missing %q", want)
+		}
+	}
+}
