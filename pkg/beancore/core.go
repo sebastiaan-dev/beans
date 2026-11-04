@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,21 @@ const BeansDir = ".beans"
 const ArchiveDir = "archive"
 
 var ErrNotFound = errors.New("bean not found")
+
+// maxIDGenerationAttempts bounds how many random IDs Create tries before giving
+// up. It is generous so that even nearly-exhausted ID spaces succeed with high
+// probability, while still guaranteeing termination.
+const maxIDGenerationAttempts = 1000
+
+// DuplicateIDError is returned when creating a bean whose ID is already used
+// by another bean.
+type DuplicateIDError struct {
+	ID string
+}
+
+func (e *DuplicateIDError) Error() string {
+	return fmt.Sprintf("a bean with ID %s already exists", e.ID)
+}
 
 // ETagMismatchError is returned when an ETag validation fails.
 // This allows callers to distinguish concurrency conflicts from other errors.
@@ -357,6 +373,7 @@ type UpdateOption func(*updateOptions)
 type updateOptions struct {
 	persist      bool   // whether to write to disk (default: true)
 	worktreePath string // if set, write to this worktree's .beans/ dir instead of main
+	idPrefix     *string // Create only: overrides the configured ID prefix for generated IDs
 }
 
 func defaultUpdateOptions() updateOptions {
@@ -376,6 +393,14 @@ func WithPersist(persist bool) UpdateOption {
 func WithWorktreePath(path string) UpdateOption {
 	return func(o *updateOptions) {
 		o.worktreePath = path
+	}
+}
+
+// WithIDPrefix overrides the configured prefix used when Create generates an ID.
+// It has no effect on Update or when the bean already has an ID.
+func WithIDPrefix(prefix string) UpdateOption {
+	return func(o *updateOptions) {
+		o.idPrefix = &prefix
 	}
 }
 
@@ -486,21 +511,29 @@ func (c *Core) Create(b *bean.Bean, opts ...UpdateOption) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Generate ID if not provided
 	if b.ID == "" {
+		// Generate a unique ID
 		prefix := ""
-		length := 4
 		if c.config != nil {
 			prefix = c.config.Beans.Prefix
-			if c.config.Beans.IDLength > 0 {
-				length = c.config.Beans.IDLength
-			}
 		}
-		id, err := bean.NewID(prefix, length)
+		if o.idPrefix != nil {
+			prefix = *o.idPrefix
+		}
+		id, err := c.generateUniqueIDLocked(prefix)
 		if err != nil {
-			return fmt.Errorf("generating bean ID: %w", err)
+			return err
 		}
 		b.ID = id
+	} else {
+		// Explicit IDs must not collide with an existing bean
+		taken, err := c.idTakenLocked(b.ID)
+		if err != nil {
+			return err
+		}
+		if taken {
+			return &DuplicateIDError{ID: b.ID}
+		}
 	}
 
 	// Set timestamps
@@ -529,6 +562,112 @@ func (c *Core) Create(b *bean.Bean, opts ...UpdateOption) error {
 	}
 
 	return nil
+}
+
+// generateUniqueIDLocked generates a random bean ID with the given prefix that
+// is not used by any known bean. Must be called with the write lock held.
+func (c *Core) generateUniqueIDLocked(prefix string) (string, error) {
+	length := 4
+	if c.config != nil && c.config.Beans.IDLength > 0 {
+		length = c.config.Beans.IDLength
+	}
+
+	for range maxIDGenerationAttempts {
+		id, err := bean.NewID(prefix, length)
+		if err != nil {
+			return "", fmt.Errorf("generating bean ID: %w", err)
+		}
+		taken, err := c.idTakenLocked(id)
+		if err != nil {
+			return "", err
+		}
+		if !taken {
+			return id, nil
+		}
+	}
+
+	return "", fmt.Errorf("could not generate a unique bean ID after %d attempts; consider increasing beans.id_length in the configuration", maxIDGenerationAttempts)
+}
+
+// idTakenLocked reports whether the given ID is used by a bean, either in
+// memory or on disk. The disk check catches beans created by other processes
+// since this Core was loaded. Must be called with the lock held.
+func (c *Core) idTakenLocked(id string) (bool, error) {
+	if _, ok := c.beans[id]; ok {
+		return true, nil
+	}
+
+	for _, dir := range []string{c.root, filepath.Join(c.root, ArchiveDir)} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return false, fmt.Errorf("checking for existing bean IDs: %w", err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			if fileID, _ := bean.ParseFilename(entry.Name()); fileID == id {
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
+}
+
+// DuplicateID describes a bean ID that is claimed by more than one file.
+type DuplicateID struct {
+	ID    string   `json:"id"`
+	Paths []string `json:"paths"`
+}
+
+// FindDuplicateIDs scans the bean files on disk and reports every bean ID that
+// is used by more than one file. Such beans shadow each other when loaded, so
+// only one of them is visible at a time. Results are sorted by ID; paths are
+// relative to the .beans directory.
+func (c *Core) FindDuplicateIDs() ([]DuplicateID, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	pathsByID := make(map[string][]string)
+	err := filepath.WalkDir(c.root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		// Mirror loadFromDisk: skip dot-prefixed subdirectories
+		if d.IsDir() {
+			if path != c.root && strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), ".md") {
+			return nil
+		}
+		rel, err := filepath.Rel(c.root, path)
+		if err != nil {
+			return err
+		}
+		id, _ := bean.ParseFilename(d.Name())
+		pathsByID[id] = append(pathsByID[id], rel)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("scanning bean files: %w", err)
+	}
+
+	var dups []DuplicateID
+	for id, paths := range pathsByID {
+		if len(paths) > 1 {
+			sort.Strings(paths)
+			dups = append(dups, DuplicateID{ID: id, Paths: paths})
+		}
+	}
+	sort.Slice(dups, func(i, j int) bool { return dups[i].ID < dups[j].ID })
+	return dups, nil
 }
 
 // Update modifies an existing bean.

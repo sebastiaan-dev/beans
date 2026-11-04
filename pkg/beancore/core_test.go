@@ -174,6 +174,149 @@ func TestCreateGeneratesID(t *testing.T) {
 	}
 }
 
+func TestCreateRejectsDuplicateID(t *testing.T) {
+	core, _ := setupTestCore(t)
+
+	createTestBean(t, core, "dupe", "First", "todo")
+
+	err := core.Create(&bean.Bean{ID: "dupe", Slug: "second", Title: "Second", Status: "todo"})
+	var dupErr *DuplicateIDError
+	if !errors.As(err, &dupErr) {
+		t.Fatalf("Create() with duplicate ID error = %v, want DuplicateIDError", err)
+	}
+	if dupErr.ID != "dupe" {
+		t.Errorf("DuplicateIDError.ID = %q, want %q", dupErr.ID, "dupe")
+	}
+
+	b, err := core.Get("dupe")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if b.Title != "First" {
+		t.Errorf("original bean was overwritten: title = %q", b.Title)
+	}
+}
+
+func TestCreateRejectsIDExistingOnlyOnDisk(t *testing.T) {
+	core, beansDir := setupTestCore(t)
+
+	// Simulate a bean written by another process after this core was loaded,
+	// both in the root and in the archive.
+	writeFile := func(rel string) {
+		t.Helper()
+		path := filepath.Join(beansDir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("---\ntitle: External\nstatus: todo\n---\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile("ext1--external.md")
+	writeFile(filepath.Join(ArchiveDir, "ext2--archived.md"))
+
+	for _, id := range []string{"ext1", "ext2"} {
+		err := core.Create(&bean.Bean{ID: id, Slug: "mine", Title: "Mine", Status: "todo"})
+		var dupErr *DuplicateIDError
+		if !errors.As(err, &dupErr) {
+			t.Errorf("Create(%s) error = %v, want DuplicateIDError", id, err)
+		}
+	}
+}
+
+func TestCreateGeneratesUniqueIDs(t *testing.T) {
+	core, _ := setupTestCore(t)
+	core.config.Beans.IDLength = 1
+	core.config.Beans.Prefix = ""
+
+	// The single-character ID space has 36 entries (minus none blocked at length 1),
+	// so filling it must yield 36 distinct IDs and then fail cleanly.
+	seen := make(map[string]bool)
+	for i := range 36 {
+		b := &bean.Bean{Title: fmt.Sprintf("Bean %d", i), Slug: fmt.Sprintf("bean-%d", i), Status: "todo"}
+		if err := core.Create(b); err != nil {
+			t.Fatalf("Create() #%d error = %v", i, err)
+		}
+		if seen[b.ID] {
+			t.Fatalf("Create() generated duplicate ID %q", b.ID)
+		}
+		seen[b.ID] = true
+	}
+
+	if err := core.Create(&bean.Bean{Title: "Overflow", Status: "todo"}); err == nil {
+		t.Fatal("Create() succeeded with exhausted ID space, want error")
+	}
+	if got := len(core.All()); got != 36 {
+		t.Errorf("len(All()) = %d, want 36", got)
+	}
+}
+
+func TestCreateWithIDPrefix(t *testing.T) {
+	core, _ := setupTestCore(t)
+
+	b := &bean.Bean{Title: "Custom", Status: "todo"}
+	if err := core.Create(b, WithIDPrefix("custom-")); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if len(b.ID) != len("custom-")+4 || b.ID[:7] != "custom-" {
+		t.Errorf("ID = %q, want custom- prefix with 4 random chars", b.ID)
+	}
+}
+
+func TestFindDuplicateIDs(t *testing.T) {
+	core, beansDir := setupTestCore(t)
+
+	files := []string{
+		"aaa1--first.md",
+		"aaa1--second.md",
+		filepath.Join(ArchiveDir, "aaa1--archived.md"),
+		"bbb2--unique.md",
+		"ccc3.md",
+		"ccc3--slugged.md",
+		filepath.Join(".conversations", "aaa1--ignored.md"),
+	}
+	for _, rel := range files {
+		path := filepath.Join(beansDir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("---\ntitle: T\nstatus: todo\n---\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dups, err := core.FindDuplicateIDs()
+	if err != nil {
+		t.Fatalf("FindDuplicateIDs() error = %v", err)
+	}
+
+	want := []DuplicateID{
+		{ID: "aaa1", Paths: []string{"aaa1--first.md", "aaa1--second.md", filepath.Join(ArchiveDir, "aaa1--archived.md")}},
+		{ID: "ccc3", Paths: []string{"ccc3--slugged.md", "ccc3.md"}},
+	}
+	if len(dups) != len(want) {
+		t.Fatalf("FindDuplicateIDs() = %+v, want %+v", dups, want)
+	}
+	for i := range want {
+		if dups[i].ID != want[i].ID {
+			t.Errorf("dups[%d].ID = %q, want %q", i, dups[i].ID, want[i].ID)
+		}
+		wantPaths := map[string]bool{}
+		for _, p := range want[i].Paths {
+			wantPaths[p] = true
+		}
+		if len(dups[i].Paths) != len(want[i].Paths) {
+			t.Errorf("dups[%d].Paths = %v, want %v", i, dups[i].Paths, want[i].Paths)
+			continue
+		}
+		for _, p := range dups[i].Paths {
+			if !wantPaths[p] {
+				t.Errorf("dups[%d].Paths contains unexpected %q", i, p)
+			}
+		}
+	}
+}
+
 func TestAll(t *testing.T) {
 	core, _ := setupTestCore(t)
 

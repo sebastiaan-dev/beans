@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/hmans/beans/pkg/beancore"
@@ -20,6 +21,7 @@ type checkResult struct {
 	Success      bool                      `json:"success"`
 	ConfigErrors []string                  `json:"config_errors"`
 	BeanIssues   *beancore.LinkCheckResult `json:"bean_issues,omitempty"`
+	DuplicateIDs []beancore.DuplicateID    `json:"duplicate_ids"`
 	Fixed        int                       `json:"fixed,omitempty"`
 }
 
@@ -28,6 +30,7 @@ var checkCmd = &cobra.Command{
 	Short: "Validate configuration and bean integrity",
 	Long: `Checks configuration and bean integrity, including:
 - Configuration settings (colors, default type)
+- Duplicate bean IDs (multiple files claiming the same ID)
 - Broken links (links to non-existent beans)
 - Self-references (beans linking to themselves)
 - Circular dependencies (cycles in blocks/parent relationships)
@@ -114,6 +117,28 @@ Note: Cycles cannot be auto-fixed and require manual intervention.`,
 			}
 		}
 
+		// === Bean file checks ===
+		if !checkJSON {
+			fmt.Println()
+			fmt.Println(ui.Bold.Render("Bean Files"))
+		}
+
+		duplicateIDs, err := core.FindDuplicateIDs()
+		if err != nil {
+			return err
+		}
+		if duplicateIDs == nil {
+			duplicateIDs = []beancore.DuplicateID{}
+		}
+		if !checkJSON {
+			for _, d := range duplicateIDs {
+				fmt.Printf("  %s Duplicate ID %s used by %d files: %s\n", ui.Danger.Render("✗"), d.ID, len(d.Paths), strings.Join(d.Paths, ", "))
+			}
+			if len(duplicateIDs) == 0 {
+				fmt.Printf("  %s No duplicate IDs found\n", ui.Success.Render("✓"))
+			}
+		}
+
 		// === Bean link checks ===
 		if !checkJSON {
 			fmt.Println()
@@ -169,13 +194,14 @@ Note: Cycles cannot be auto-fixed and require manual intervention.`,
 		}
 
 		// === Summary ===
-		totalIssues := len(configErrors) + linkResult.TotalIssues()
+		totalIssues := len(configErrors) + len(duplicateIDs) + linkResult.TotalIssues()
 
 		if checkJSON {
 			result := checkResult{
 				Success:      totalIssues == 0,
 				ConfigErrors: configErrors,
 				BeanIssues:   linkResult,
+				DuplicateIDs: duplicateIDs,
 				Fixed:        fixed,
 			}
 			data, _ := json.MarshalIndent(result, "", "  ")
