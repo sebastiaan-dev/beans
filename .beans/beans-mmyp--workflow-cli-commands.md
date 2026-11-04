@@ -1,11 +1,11 @@
 ---
 # beans-mmyp
 title: Workflow CLI commands
-status: todo
+status: completed
 type: epic
 priority: normal
 created_at: 2025-12-27T21:43:38Z
-updated_at: 2026-03-07T23:11:57Z
+updated_at: 2026-11-04T14:38:49Z
 order: w
 ---
 
@@ -25,3 +25,9 @@ Currently, users need to use `beans update <id> -s completed` to complete a bean
 - `beans milestones` - List planned milestones
 - `beans blocked` - Show blocked beans
 - `beans progress` - Show work progress summary
+
+## Summary of Changes
+
+- Implemented all workflow commands: start, complete, scrap, next, progress, milestones (internal/commands/*.go, registered in register.go).
+- All mutations go through the GraphQL CoreResolver.UpdateBean; queries use existing BeanFilter options (no schema changes).
+- Consistent --json output via internal/output; table-driven tests in internal/commands/workflow_test.go.
