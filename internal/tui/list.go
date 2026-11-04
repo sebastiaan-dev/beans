@@ -4,24 +4,25 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/hmans/beans/pkg/bean"
-	"github.com/hmans/beans/pkg/config"
-	"github.com/hmans/beans/pkg/beangraph"
-	"github.com/hmans/beans/pkg/beangraph/model"
 	"github.com/hmans/beans/internal/ui"
+	"github.com/hmans/beans/pkg/bean"
+	"github.com/hmans/beans/pkg/beangraph"
+	"github.com/hmans/beans/pkg/config"
 )
 
 // beanItem wraps a Bean to implement list.Item, with tree context
 type beanItem struct {
-	bean            *bean.Bean
-	cfg             *config.Config
-	treePrefix      string // tree prefix for rendering (e.g., "├─" or "  └─")
-	matched         bool   // true if bean matched filter (vs. ancestor shown for context)
+	bean           *bean.Bean
+	cfg            *config.Config
+	treePrefix     string // tree prefix for rendering (e.g., "├─" or "  └─")
+	matched        bool   // true if bean matched filter (vs. ancestor shown for context)
 	implicitStatus string // implicit terminal status from an ancestor, if any
+	archived       bool   // true if the bean file lives in the archive directory
 }
 
 func (i beanItem) Title() string       { return i.bean.Title }
@@ -64,6 +65,17 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 	if d.cols.ShowTags {
 		baseWidth += d.cols.Tags
 	}
+	// Archived beans get a muted marker at the end of the row
+	var archivedMarker string
+	if item.archived {
+		archivedMarker = ui.Muted.Render(archivedMarkerText)
+		baseWidth += lipgloss.Width(archivedMarker)
+	}
+	// The row renderer appends " ↑<status>" for matched beans that inherit a
+	// terminal status; reserve room for it so the row does not wrap.
+	if item.implicitStatus != "" && item.matched {
+		baseWidth += lipgloss.Width(" ↑" + item.implicitStatus)
+	}
 	maxTitleWidth := max(0, m.Width()-baseWidth)
 
 	// Check if bean is marked for multi-select
@@ -78,29 +90,32 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		item.bean.Type,
 		item.bean.Title,
 		ui.BeanRowConfig{
-			StatusColor:     colors.StatusColor,
-			TypeColor:       colors.TypeColor,
-			PriorityColor:   colors.PriorityColor,
-			Priority:        item.bean.Priority,
-			IsArchive:       colors.IsArchive,
-			MaxTitleWidth:   maxTitleWidth,
-			ShowCursor:      true,
-			IsSelected:      index == m.Index(),
-			IsMarked:        isMarked,
-			Tags:            item.bean.Tags,
-			ShowTags:        d.cols.ShowTags,
-			TagsColWidth:    d.cols.Tags,
-			MaxTags:         d.cols.MaxTags,
-			TreePrefix:      item.treePrefix,
-			Dimmed:          !item.matched,
-			IDColWidth:      d.idColWidth,
-			UseFullNames:    d.cols.UseFullTypeStatus,
+			StatusColor:    colors.StatusColor,
+			TypeColor:      colors.TypeColor,
+			PriorityColor:  colors.PriorityColor,
+			Priority:       item.bean.Priority,
+			IsArchive:      colors.IsArchive,
+			MaxTitleWidth:  maxTitleWidth,
+			ShowCursor:     true,
+			IsSelected:     index == m.Index(),
+			IsMarked:       isMarked,
+			Tags:           item.bean.Tags,
+			ShowTags:       d.cols.ShowTags,
+			TagsColWidth:   d.cols.Tags,
+			MaxTags:        d.cols.MaxTags,
+			TreePrefix:     item.treePrefix,
+			Dimmed:         !item.matched,
+			IDColWidth:     d.idColWidth,
+			UseFullNames:   d.cols.UseFullTypeStatus,
 			ImplicitStatus: item.implicitStatus,
 		},
 	)
 
-	fmt.Fprint(w, str)
+	fmt.Fprint(w, str+archivedMarker)
 }
+
+// archivedMarkerText is appended to rows of beans stored in the archive directory.
+const archivedMarkerText = " [archived]"
 
 // listModel is the model for the bean list view
 type listModel struct {
@@ -116,8 +131,12 @@ type listModel struct {
 	cols       ui.ResponsiveColumns // calculated responsive columns
 	idColWidth int                  // ID column width (accounts for tree depth)
 
-	// Active filters
-	tagFilter string // if set, only show beans with this tag
+	// Active filters (status/type/tag selections and the hide-resolved toggle)
+	filters listFilters
+
+	// Counts from the last load, for the title indicator
+	shownCount int // beans matching the filters
+	totalCount int // all beans
 
 	// Multi-select state
 	selectedBeans map[string]bool // IDs of beans marked for multi-edit
@@ -135,10 +154,8 @@ func newListModel(resolver *beangraph.CoreResolver, cfg *config.Config) listMode
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
-	l.Styles.Title = listTitleStyle
+	applyListTheme(&l)
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 1, 1)
-	l.Styles.FilterPrompt = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
-	l.Styles.FilterCursor = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
 
 	return listModel{
 		list:          l,
@@ -150,8 +167,11 @@ func newListModel(resolver *beangraph.CoreResolver, cfg *config.Config) listMode
 
 // beansLoadedMsg is sent when beans are loaded
 type beansLoadedMsg struct {
-	items      []ui.FlatItem // flattened tree items
-	idColWidth int           // calculated ID column width for tree
+	items      []ui.FlatItem   // flattened tree items
+	idColWidth int             // calculated ID column width for tree
+	archived   map[string]bool // IDs of beans stored in the archive directory
+	shownCount int             // number of beans matching the filters
+	totalCount int             // number of beans in total
 }
 
 // errMsg is sent when an error occurs
@@ -169,19 +189,9 @@ func (m listModel) Init() tea.Cmd {
 }
 
 func (m listModel) loadBeans() tea.Msg {
-	// Build filter if tag filter is set
-	var filter *model.BeanFilter
-	if m.tagFilter != "" {
-		filter = &model.BeanFilter{Tags: []string{m.tagFilter}}
-	}
-
-	// Query filtered beans
-	filteredBeans, err := m.resolver.Beans(context.Background(), filter)
-	if err != nil {
-		return errMsg{err}
-	}
-
-	// Query all beans for tree context (ancestors)
+	// Query all beans; filtering happens below because it depends on
+	// implicit (inherited) statuses, and unmatched ancestors are still
+	// needed for tree context.
 	allBeans, err := m.resolver.Beans(context.Background(), nil)
 	if err != nil {
 		return errMsg{err}
@@ -192,13 +202,19 @@ func (m listModel) loadBeans() tea.Msg {
 		bean.SortByStatusPriorityAndType(beans, m.config.StatusNames(), m.config.PriorityNames(), m.config.TypeNames())
 	}
 
-	// Pre-compute implicit statuses for all beans
+	// Pre-compute implicit statuses and archive state for all beans
 	implicitStatuses := make(map[string]string, len(allBeans))
+	archived := make(map[string]bool)
 	for _, b := range allBeans {
 		if status, _ := m.resolver.Core.ImplicitStatus(b.ID); status != "" {
 			implicitStatuses[b.ID] = status
 		}
+		if m.resolver.Core.IsArchived(b.ID) {
+			archived[b.ID] = true
+		}
 	}
+
+	filteredBeans := m.filters.apply(allBeans, implicitStatuses)
 
 	// Build tree and flatten it
 	tree := ui.BuildTree(filteredBeans, allBeans, sortFn, implicitStatuses)
@@ -218,22 +234,48 @@ func (m listModel) loadBeans() tea.Msg {
 		idColWidth += maxDepth * 3 // 3 chars per depth level (├─ + space)
 	}
 
-	return beansLoadedMsg{items: items, idColWidth: idColWidth}
+	return beansLoadedMsg{
+		items:      items,
+		idColWidth: idColWidth,
+		archived:   archived,
+		shownCount: len(filteredBeans),
+		totalCount: len(allBeans),
+	}
 }
 
-// setTagFilter sets the tag filter
+// setTagFilter restricts the list to beans with the given tag, replacing any
+// previously selected tags. Other filters are kept.
 func (m *listModel) setTagFilter(tag string) {
-	m.tagFilter = tag
+	m.filters.tags = []string{tag}
 }
 
-// clearFilter clears all active filters
+// setFilters replaces the status/type/tag filters and the hide-resolved toggle.
+func (m *listModel) setFilters(f listFilters) {
+	m.filters = f
+}
+
+// toggleHideResolved toggles hiding of completed and scrapped beans.
+func (m *listModel) toggleHideResolved() {
+	m.filters.hideResolved = !m.filters.hideResolved
+}
+
+// clearFilter clears all active filters, including the hide-resolved toggle
 func (m *listModel) clearFilter() {
-	m.tagFilter = ""
+	m.filters = listFilters{}
 }
 
 // hasActiveFilter returns true if any filter is active
 func (m *listModel) hasActiveFilter() bool {
-	return m.tagFilter != ""
+	return !m.filters.isEmpty()
+}
+
+// title returns the list title including active filter indicators.
+func (m listModel) title() string {
+	if m.filters.isEmpty() {
+		return "Beans"
+	}
+	parts := append([]string{fmt.Sprintf("Beans %d/%d", m.shownCount, m.totalCount)}, m.filters.summary()...)
+	return strings.Join(parts, " · ")
 }
 
 func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
@@ -259,11 +301,12 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 		m.hasTags = false
 		for i, flatItem := range msg.items {
 			items[i] = beanItem{
-				bean:            flatItem.Bean,
-				cfg:             m.config,
-				treePrefix:      flatItem.TreePrefix,
-				matched:         flatItem.Matched,
+				bean:           flatItem.Bean,
+				cfg:            m.config,
+				treePrefix:     flatItem.TreePrefix,
+				matched:        flatItem.Matched,
 				implicitStatus: flatItem.ImplicitStatus,
+				archived:       msg.archived[flatItem.Bean.ID],
 			}
 			if len(flatItem.Bean.Tags) > 0 {
 				m.hasTags = true
@@ -271,6 +314,8 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 		}
 		m.list.SetItems(items)
 		m.idColWidth = msg.idColWidth
+		m.shownCount = msg.shownCount
+		m.totalCount = msg.totalCount
 		// Calculate responsive columns based on hasTags and width
 		m.cols = ui.CalculateResponsiveColumns(m.width, m.hasTags)
 		m.updateDelegate()
@@ -413,6 +458,15 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 						}
 					}
 				}
+			case "H":
+				// Toggle hiding of completed/scrapped beans
+				m.toggleHideResolved()
+				return m, m.loadBeans
+			case "F":
+				// Open the filter modal (status, type, tags)
+				return m, func() tea.Msg {
+					return openFilterPickerMsg{}
+				}
 			case "c":
 				// Open create modal
 				return m, func() tea.Msg {
@@ -501,12 +555,8 @@ func (m listModel) View() string {
 		return "Loading..."
 	}
 
-	// Update title based on active filter
-	if m.tagFilter != "" {
-		m.list.Title = fmt.Sprintf("Beans [tag: %s]", m.tagFilter)
-	} else {
-		m.list.Title = "Beans"
-	}
+	// Update title based on active filters
+	m.list.Title = m.title()
 
 	// Inner height: total height minus border (2) minus footer (1) minus padding (1)
 	return m.viewContent(m.height-4) + "\n" + m.Footer()
@@ -535,6 +585,11 @@ func (m listModel) Footer() string {
 		selectionPrefix = selectionStyle.Render(fmt.Sprintf("(%d selected) ", len(m.selectedBeans)))
 	}
 
+	hideLabel := "hide done"
+	if m.filters.hideResolved {
+		hideLabel = "show done"
+	}
+
 	if len(m.selectedBeans) > 0 {
 		// When beans are selected, show esc to clear selection
 		help = helpKeyStyle.Render("space") + " " + helpStyle.Render("toggle") + "  " +
@@ -546,7 +601,11 @@ func (m listModel) Footer() string {
 			helpKeyStyle.Render("?") + " " + helpStyle.Render("help") + "  " +
 			helpKeyStyle.Render("q") + " " + helpStyle.Render("quit")
 	} else if m.hasActiveFilter() {
-		help = helpKeyStyle.Render("space") + " " + helpStyle.Render("select") + "  " +
+		// Filter keys come first so they stay visible when the footer is cut off
+		help = helpKeyStyle.Render("esc") + " " + helpStyle.Render("clear filter") + "  " +
+			helpKeyStyle.Render("F") + " " + helpStyle.Render("filters") + "  " +
+			helpKeyStyle.Render("H") + " " + helpStyle.Render(hideLabel) + "  " +
+			helpKeyStyle.Render("space") + " " + helpStyle.Render("select") + "  " +
 			helpKeyStyle.Render("enter") + " " + helpStyle.Render("view") + "  " +
 			helpKeyStyle.Render("b") + " " + helpStyle.Render("blocking") + "  " +
 			helpKeyStyle.Render("c") + " " + helpStyle.Render("create") + "  " +
@@ -556,7 +615,6 @@ func (m listModel) Footer() string {
 			helpKeyStyle.Render("s") + " " + helpStyle.Render("status") + "  " +
 			helpKeyStyle.Render("t") + " " + helpStyle.Render("type") + "  " +
 			helpKeyStyle.Render("y") + " " + helpStyle.Render("copy id") + "  " +
-			helpKeyStyle.Render("esc") + " " + helpStyle.Render("clear filter") + "  " +
 			helpKeyStyle.Render("?") + " " + helpStyle.Render("help") + "  " +
 			helpKeyStyle.Render("q") + " " + helpStyle.Render("quit")
 	} else {
@@ -570,7 +628,9 @@ func (m listModel) Footer() string {
 			helpKeyStyle.Render("s") + " " + helpStyle.Render("status") + "  " +
 			helpKeyStyle.Render("t") + " " + helpStyle.Render("type") + "  " +
 			helpKeyStyle.Render("y") + " " + helpStyle.Render("copy id") + "  " +
-			helpKeyStyle.Render("/") + " " + helpStyle.Render("filter") + "  " +
+			helpKeyStyle.Render("/") + " " + helpStyle.Render("search") + "  " +
+			helpKeyStyle.Render("F") + " " + helpStyle.Render("filters") + "  " +
+			helpKeyStyle.Render("H") + " " + helpStyle.Render(hideLabel) + "  " +
 			helpKeyStyle.Render("?") + " " + helpStyle.Render("help") + "  " +
 			helpKeyStyle.Render("q") + " " + helpStyle.Render("quit")
 	}
@@ -603,13 +663,8 @@ func (m listModel) ViewConstrained(width, height int) string {
 	m.cols = ui.CalculateResponsiveColumns(width, m.hasTags)
 	m.updateDelegate()
 
-	// Update title based on active filter
-	if m.tagFilter != "" {
-		m.list.Title = fmt.Sprintf("Beans [tag: %s]", m.tagFilter)
-	} else {
-		m.list.Title = "Beans"
-	}
+	// Update title based on active filters
+	m.list.Title = m.title()
 
 	return m.viewContent(innerHeight)
 }
-

@@ -12,10 +12,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/hmans/beans/pkg/beancore"
-	"github.com/hmans/beans/pkg/config"
-	"github.com/hmans/beans/pkg/safepath"
 	"github.com/hmans/beans/pkg/beangraph"
 	"github.com/hmans/beans/pkg/beangraph/model"
+	"github.com/hmans/beans/pkg/config"
+	"github.com/hmans/beans/pkg/safepath"
 )
 
 // viewState represents which view is currently active
@@ -32,6 +32,7 @@ const (
 	viewPriorityPicker
 	viewCreateModal
 	viewHelpOverlay
+	viewFilterPicker
 )
 
 // Two-column layout constants
@@ -108,6 +109,7 @@ type App struct {
 	priorityPicker priorityPickerModel
 	createModal    createModalModel
 	helpOverlay    helpOverlayModel
+	filterPicker   filterPickerModel
 	history        []detailModel // stack of previous detail views for back navigation
 	core           *beancore.Core
 	resolver       *beangraph.CoreResolver
@@ -546,6 +548,21 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.list.clearFilter()
 		return a, a.list.loadBeans
 
+	case openFilterPickerMsg:
+		a.previousState = a.state
+		a.filterPicker = newFilterPickerModel(a.list.filters, a.collectTagsWithCounts(), a.width, a.height)
+		a.state = viewFilterPicker
+		return a, a.filterPicker.Init()
+
+	case closeFilterPickerMsg:
+		a.state = a.previousState
+		return a, nil
+
+	case filtersAppliedMsg:
+		a.state = a.previousState
+		a.list.setFilters(msg.filters)
+		return a, a.list.loadBeans
+
 	case copyBeanIDMsg:
 		var statusMsg string
 		text := strings.Join(msg.ids, ", ")
@@ -612,6 +629,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.createModal, cmd = a.createModal.Update(msg)
 	case viewHelpOverlay:
 		a.helpOverlay, cmd = a.helpOverlay.Update(msg)
+	case viewFilterPicker:
+		a.filterPicker, cmd = a.filterPicker.Update(msg)
 	}
 
 	return a, cmd
@@ -683,6 +702,8 @@ func (a *App) View() string {
 		return a.createModal.ModalView(a.getBackgroundView(), a.width, a.height)
 	case viewHelpOverlay:
 		return a.helpOverlay.ModalView(a.getBackgroundView(), a.width, a.height)
+	case viewFilterPicker:
+		return a.filterPicker.ModalView(a.getBackgroundView(), a.width, a.height)
 	}
 	return ""
 }
