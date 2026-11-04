@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -2264,5 +2265,38 @@ func TestLoadSkipsDotPrefixedSubdirectories(t *testing.T) {
 	}
 	if all[0].ID != "test-real" {
 		t.Fatalf("expected bean id test-real, got %s", all[0].ID)
+	}
+}
+
+func TestUpdatePreservesUnknownFrontMatterKeys(t *testing.T) {
+	core, beansDir := setupTestCore(t)
+
+	path := filepath.Join(beansDir, "ext1--external.md")
+	content := "---\ntitle: External\nstatus: todo\nworkflow_stage: review\n---\n\nBody\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.Load(); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	b, err := core.Get("ext1")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	b.Status = "in-progress"
+	if err := core.Update(b, nil); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "workflow_stage: review\n") {
+		t.Errorf("unknown front matter key was dropped:\n%s", data)
+	}
+	if !strings.Contains(string(data), "status: in-progress\n") {
+		t.Errorf("status was not updated:\n%s", data)
 	}
 }

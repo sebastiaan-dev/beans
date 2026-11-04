@@ -164,6 +164,10 @@ type Bean struct {
 
 	// BlockedBy is a list of bean IDs that are blocking this bean.
 	BlockedBy []string `yaml:"blocked_by,omitempty" json:"blocked_by,omitempty"`
+
+	// extraFrontMatter holds front matter keys that beans does not manage
+	// (e.g. metadata added by external tools). They are preserved on rewrite.
+	extraFrontMatter []frontMatterField
 }
 
 // frontMatter is the subset of Bean that gets serialized to YAML front matter.
@@ -181,51 +185,91 @@ type frontMatter struct {
 	BlockedBy []string   `yaml:"blocked_by,omitempty"`
 }
 
+// knownFrontMatterKeys lists the front matter keys managed by beans.
+// Any other key is preserved verbatim as extra front matter.
+var knownFrontMatterKeys = map[string]bool{
+	"title":      true,
+	"status":     true,
+	"type":       true,
+	"priority":   true,
+	"tags":       true,
+	"created_at": true,
+	"updated_at": true,
+	"order":      true,
+	"parent":     true,
+	"blocking":   true,
+	"blocked_by": true,
+}
+
+// frontMatterField is a single key/value pair of front matter that beans does
+// not manage itself. The YAML nodes are kept as-is so that values (including
+// nested structures, comments and styles) round-trip unchanged.
+type frontMatterField struct {
+	Key   *yaml.Node
+	Value *yaml.Node
+}
+
+// parsedFrontMatter decodes the known fields and captures all other keys.
+type parsedFrontMatter struct {
+	known frontMatter
+	extra []frontMatterField
+}
+
+// UnmarshalYAML implements yaml.Unmarshaler.
+func (p *parsedFrontMatter) UnmarshalYAML(node *yaml.Node) error {
+	if err := node.Decode(&p.known); err != nil {
+		return err
+	}
+	if node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key, value := node.Content[i], node.Content[i+1]
+		if key.Kind == yaml.ScalarNode && knownFrontMatterKeys[key.Value] {
+			continue
+		}
+		p.extra = append(p.extra, frontMatterField{Key: key, Value: value})
+	}
+	return nil
+}
+
+// yamlFrontMatter parses YAML front matter with yaml.v3, the same library used
+// for rendering, so parse and render agree on syntax.
+var yamlFrontMatter = frontmatter.NewFormat("---", "---", yaml.Unmarshal)
+
 // Parse reads a bean from a reader (markdown with YAML front matter).
+// Front matter keys not managed by beans are retained and written back by Render.
 func Parse(r io.Reader) (*Bean, error) {
-	var fm frontMatter
-	body, err := frontmatter.Parse(r, &fm)
+	var pfm parsedFrontMatter
+	body, err := frontmatter.Parse(r, &pfm, yamlFrontMatter)
 	if err != nil {
 		return nil, fmt.Errorf("parsing front matter: %w", err)
 	}
+	fm := pfm.known
 
 	// Trim trailing newline from body (POSIX files end with newline, but it's not part of content)
 	bodyStr := strings.TrimSuffix(string(body), "\n")
 
 	return &Bean{
-		Title:     fm.Title,
-		Status:    fm.Status,
-		Type:      fm.Type,
-		Priority:  fm.Priority,
-		Tags:      fm.Tags,
-		CreatedAt: fm.CreatedAt,
-		UpdatedAt: fm.UpdatedAt,
-		Order:     fm.Order,
-		Body:      bodyStr,
-		Parent:    fm.Parent,
-		Blocking:  fm.Blocking,
-		BlockedBy: fm.BlockedBy,
+		Title:            fm.Title,
+		Status:           fm.Status,
+		Type:             fm.Type,
+		Priority:         fm.Priority,
+		Tags:             fm.Tags,
+		CreatedAt:        fm.CreatedAt,
+		UpdatedAt:        fm.UpdatedAt,
+		Order:            fm.Order,
+		Body:             bodyStr,
+		Parent:           fm.Parent,
+		Blocking:         fm.Blocking,
+		BlockedBy:        fm.BlockedBy,
+		extraFrontMatter: pfm.extra,
 	}, nil
-}
-
-// renderFrontMatter is used for YAML output with yaml.v3 (supports custom marshalers).
-type renderFrontMatter struct {
-	Title     string     `yaml:"title"`
-	Status    string     `yaml:"status"`
-	Type      string     `yaml:"type,omitempty"`
-	Priority  string     `yaml:"priority,omitempty"`
-	Tags      []string   `yaml:"tags,omitempty"`
-	CreatedAt *time.Time `yaml:"created_at,omitempty"`
-	UpdatedAt *time.Time `yaml:"updated_at,omitempty"`
-	Order     string     `yaml:"order,omitempty"`
-	Parent    string     `yaml:"parent,omitempty"`
-	Blocking  []string   `yaml:"blocking,omitempty"`
-	BlockedBy []string   `yaml:"blocked_by,omitempty"`
 }
 
 // Render serializes the bean back to markdown with YAML front matter.
 func (b *Bean) Render() ([]byte, error) {
-	fm := renderFrontMatter{
+	fm := frontMatter{
 		Title:     b.Title,
 		Status:    b.Status,
 		Type:      b.Type,
@@ -239,10 +283,25 @@ func (b *Bean) Render() ([]byte, error) {
 		BlockedBy: b.BlockedBy,
 	}
 
-	fmBytes, err := yaml.Marshal(&fm)
-	if err != nil {
+	var node yaml.Node
+	if err := node.Encode(&fm); err != nil {
 		return nil, fmt.Errorf("marshaling front matter: %w", err)
 	}
+	// Append front matter keys that beans does not manage, preserving their order
+	for _, f := range b.extraFrontMatter {
+		node.Content = append(node.Content, f.Key, f.Value)
+	}
+
+	var fmBuf bytes.Buffer
+	enc := yaml.NewEncoder(&fmBuf)
+	enc.SetIndent(4)
+	if err := enc.Encode(&node); err != nil {
+		return nil, fmt.Errorf("marshaling front matter: %w", err)
+	}
+	if err := enc.Close(); err != nil {
+		return nil, fmt.Errorf("marshaling front matter: %w", err)
+	}
+	fmBytes := fmBuf.Bytes()
 
 	var buf bytes.Buffer
 	buf.WriteString("---\n")
