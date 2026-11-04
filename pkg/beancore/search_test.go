@@ -1,9 +1,11 @@
 package beancore
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
+	"github.com/hmans/beans/internal/search"
 	"github.com/hmans/beans/pkg/bean"
 )
 
@@ -276,4 +278,69 @@ func TestClose_ClosesSearchIndex(t *testing.T) {
 // Helper to write test files
 func writeTestFile(dir, name, content string) error {
 	return os.WriteFile(dir+"/"+name, []byte(content), 0644)
+}
+
+func TestSearch_ReturnsAllMatches(t *testing.T) {
+	core, _ := setupTestCore(t)
+	defer core.Close()
+
+	n := search.DefaultSearchLimit + 50
+	for i := range n {
+		b := &bean.Bean{ID: fmt.Sprintf("b%05d", i), Title: "common title", Status: "todo"}
+		if err := core.Create(b); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+	}
+
+	results, err := core.Search("common")
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(results) != n {
+		t.Errorf("Search() returned %d results, want %d", len(results), n)
+	}
+}
+
+func TestSearch_OneShotDoesNotRetainIndex(t *testing.T) {
+	core, _ := setupTestCore(t)
+	defer core.Close()
+
+	createTestBean(t, core, "abc1", "Searchable", "todo")
+	results, err := core.Search("Searchable")
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Search() returned %d results, want 1", len(results))
+	}
+	if core.searchIndex != nil {
+		t.Error("non-watching core retained a search index after a one-shot search")
+	}
+}
+
+func TestSearch_WatchingCoreMaintainsIndex(t *testing.T) {
+	core, _ := setupTestCore(t)
+	defer core.Close()
+
+	if err := core.StartWatching(); err != nil {
+		t.Fatalf("StartWatching() error = %v", err)
+	}
+
+	createTestBean(t, core, "abc1", "Original title", "todo")
+	if _, err := core.Search("Original"); err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if core.searchIndex == nil {
+		t.Fatal("watching core did not build a search index")
+	}
+
+	// Changes are reflected through incremental index updates
+	createTestBean(t, core, "abc2", "Fresh title", "todo")
+	results, err := core.Search("Fresh")
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(results) != 1 || results[0].ID != "abc2" {
+		t.Errorf("Search(Fresh) = %v, want [abc2]", results)
+	}
 }
