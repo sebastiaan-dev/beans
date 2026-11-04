@@ -2300,3 +2300,110 @@ func TestUpdatePreservesUnknownFrontMatterKeys(t *testing.T) {
 		t.Errorf("status was not updated:\n%s", data)
 	}
 }
+
+func TestUpdateIfMatchAcceptsETagOfNonCanonicalFile(t *testing.T) {
+	core, beansDir := setupTestCore(t)
+
+	// A freshly created file as written by older versions / hand-edited files:
+	// it lacks fields that Load fills in with defaults (e.g. priority), so its
+	// raw bytes differ from the canonical rendering.
+	path := filepath.Join(beansDir, "abc1--fresh.md")
+	content := "---\n# abc1\ntitle: Fresh\nstatus: todo\ntype: task\ncreated_at: 2026-01-01T00:00:00Z\nupdated_at: 2026-01-01T00:00:00Z\n---\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.Load(); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := core.Get("abc1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	etag := b.ETag() // what `beans show --etag-only` and GraphQL report
+
+	if err := b.AddTag("demo"); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.Update(b, &etag); err != nil {
+		t.Fatalf("Update() with etag from read path error = %v", err)
+	}
+}
+
+func TestUpdateIfMatchDetectsExternalChange(t *testing.T) {
+	core, beansDir := setupTestCore(t)
+	b := createTestBean(t, core, "abc1", "Original", "todo")
+	etag := b.ETag()
+
+	// Another process rewrites the file
+	path := filepath.Join(beansDir, b.Path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modified := strings.Replace(string(data), "title: Original", "title: Changed elsewhere", 1)
+	if err := os.WriteFile(path, []byte(modified), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	b.Status = "in-progress"
+	var mismatch *ETagMismatchError
+	if err := core.Update(b, &etag); !errors.As(err, &mismatch) {
+		t.Fatalf("Update() error = %v, want ETagMismatchError", err)
+	}
+}
+
+// TestUpdateIfMatchConcurrentProcesses simulates two beans processes (separate
+// Core instances on the same directory) updating the same bean with the same
+// etag. Exactly one of them may succeed.
+func TestUpdateIfMatchConcurrentProcesses(t *testing.T) {
+	coreA, beansDir := setupTestCore(t)
+	createTestBean(t, coreA, "abc1", "Race", "todo")
+
+	coreB := New(beansDir, config.Default())
+	coreB.SetWarnWriter(nil)
+	if err := coreB.Load(); err != nil {
+		t.Fatal(err)
+	}
+
+	beanA, _ := coreA.Get("abc1")
+	beanB, _ := coreB.Get("abc1")
+	etag := beanA.ETag()
+	if beanB.ETag() != etag {
+		t.Fatalf("cores disagree on etag: %s vs %s", etag, beanB.ETag())
+	}
+
+	// Widen the window between validation and write so that, without
+	// cross-process locking, both updates would pass validation.
+	testHookAfterETagCheck = func() { time.Sleep(100 * time.Millisecond) }
+	t.Cleanup(func() { testHookAfterETagCheck = nil })
+
+	if err := beanA.AddTag("from-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := beanB.AddTag("from-b"); err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	wg.Add(2)
+	go func() { defer wg.Done(); errs[0] = coreA.Update(beanA, &etag) }()
+	go func() { defer wg.Done(); errs[1] = coreB.Update(beanB, &etag) }()
+	wg.Wait()
+
+	succeeded := 0
+	for _, err := range errs {
+		var mismatch *ETagMismatchError
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.As(err, &mismatch):
+		default:
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("%d concurrent updates with the same etag succeeded, want exactly 1 (errors: %v)", succeeded, errs)
+	}
+}

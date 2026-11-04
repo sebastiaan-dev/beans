@@ -170,6 +170,31 @@ type Bean struct {
 	extraFrontMatter []frontMatterField
 }
 
+// Default values applied to beans that don't specify them.
+const (
+	DefaultType     = "task"
+	DefaultPriority = "normal"
+)
+
+// ApplyDefaults fills in default values for unset fields (type, priority) and
+// replaces nil slices with empty ones. Beans are normalized this way whenever
+// they are loaded or written, so all readers and writers agree on a bean's
+// content and therefore on its etag.
+func (b *Bean) ApplyDefaults() {
+	if b.Type == "" {
+		b.Type = DefaultType
+	}
+	if b.Priority == "" {
+		b.Priority = DefaultPriority
+	}
+	if b.Tags == nil {
+		b.Tags = []string{}
+	}
+	if b.Blocking == nil {
+		b.Blocking = []string{}
+	}
+}
+
 // frontMatter is the subset of Bean that gets serialized to YAML front matter.
 type frontMatter struct {
 	Title     string     `yaml:"title"`

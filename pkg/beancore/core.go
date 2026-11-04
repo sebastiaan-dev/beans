@@ -40,6 +40,10 @@ func (e *DuplicateIDError) Error() string {
 	return fmt.Sprintf("a bean with ID %s already exists", e.ID)
 }
 
+// testHookAfterETagCheck, if set, runs after a successful etag validation in
+// Update. Tests use it to widen race windows deterministically.
+var testHookAfterETagCheck func()
+
 // ETagMismatchError is returned when an ETag validation fails.
 // This allows callers to distinguish concurrency conflicts from other errors.
 type ETagMismatchError struct {
@@ -218,19 +222,7 @@ func (c *Core) loadBean(path string) (*bean.Bean, error) {
 	filename := filepath.Base(path)
 	b.ID, b.Slug = bean.ParseFilename(filename)
 
-	// Apply defaults for GraphQL non-nullable fields
-	if b.Type == "" {
-		b.Type = "task"
-	}
-	if b.Priority == "" {
-		b.Priority = "normal"
-	}
-	if b.Tags == nil {
-		b.Tags = []string{}
-	}
-	if b.Blocking == nil {
-		b.Blocking = []string{}
-	}
+	b.ApplyDefaults()
 	if b.CreatedAt == nil {
 		if b.UpdatedAt != nil {
 			b.CreatedAt = b.UpdatedAt
@@ -536,6 +528,10 @@ func (c *Core) Create(b *bean.Bean, opts ...UpdateOption) error {
 		}
 	}
 
+	// Normalize exactly like Load does, so the in-memory bean (and its etag)
+	// matches what any reader loading the written file will see.
+	b.ApplyDefaults()
+
 	// Set timestamps
 	now := time.Now().UTC().Truncate(time.Second)
 	b.CreatedAt = &now
@@ -695,24 +691,33 @@ func (c *Core) Update(b *bean.Bean, ifMatch *string, opts ...UpdateOption) error
 		return &ETagRequiredError{}
 	}
 
-	if ifMatch != nil && *ifMatch != "" {
-		// Calculate etag from the on-disk version by reading the stored bean's path
-		// This is necessary because the in-memory bean may have already been modified
-		// (Go uses pointers, so modifying the bean passed to Update also modifies c.beans[id])
+	// Auto-route to linked worktree if no explicit path given
+	wtPath := o.worktreePath
+	if wtPath == "" {
+		wtPath = c.worktreeLinks[b.ID]
+	}
+
+	hasIfMatch := ifMatch != nil && *ifMatch != ""
+	onDisk := storedBean.Path != "" && !c.dirty[b.ID]
+	writesMain := wtPath == "" && o.persist
+
+	// Hold a cross-process lock on the bean file while validating and writing,
+	// so concurrent beans processes cannot both pass the same etag check.
+	if storedBean.Path != "" && (writesMain || (hasIfMatch && onDisk)) {
+		unlock, err := lockBeanFile(filepath.Join(c.root, storedBean.Path))
+		if err != nil {
+			return err
+		}
+		defer unlock()
+	}
+
+	if hasIfMatch {
 		var currentETag string
-		if storedBean.Path != "" && !c.dirty[b.ID] {
-			// Read current file from disk to calculate etag
-			diskPath := filepath.Join(c.root, storedBean.Path)
-			content, err := os.ReadFile(diskPath)
-			if err != nil {
-				// If file doesn't exist yet, fall back to stored bean's etag
-				currentETag = storedBean.ETag()
-			} else {
-				// Calculate etag from on-disk content
-				h := fnv.New64a()
-				h.Write(content)
-				currentETag = hex.EncodeToString(h.Sum(nil))
-			}
+		if onDisk {
+			// Validate against the on-disk version: it reflects writes made by
+			// other processes, and the in-memory bean may already have been
+			// modified by the caller (it is the same pointer as c.beans[id]).
+			currentETag = c.diskETagLocked(storedBean)
 		} else {
 			// No path yet or bean is dirty (not on disk), use in-memory etag
 			currentETag = storedBean.ETag()
@@ -724,17 +729,17 @@ func (c *Core) Update(b *bean.Bean, ifMatch *string, opts ...UpdateOption) error
 				Current:  currentETag,
 			}
 		}
+		if testHookAfterETagCheck != nil {
+			testHookAfterETagCheck()
+		}
 	}
+
+	// Normalize exactly like Load does (see Create)
+	b.ApplyDefaults()
 
 	// Update timestamp
 	now := time.Now().UTC().Truncate(time.Second)
 	b.UpdatedAt = &now
-
-	// Auto-route to linked worktree if no explicit path given
-	wtPath := o.worktreePath
-	if wtPath == "" {
-		wtPath = c.worktreeLinks[b.ID]
-	}
 
 	if wtPath != "" {
 		// Write to the worktree's .beans/ dir; keep dirty in main
@@ -765,6 +770,30 @@ func (c *Core) Update(b *bean.Bean, ifMatch *string, opts ...UpdateOption) error
 	}
 
 	return nil
+}
+
+// diskETagLocked computes the etag of the bean's current on-disk version.
+// The file is loaded exactly like Load does, so the result equals the etag
+// reported by readers (e.g. `beans show --etag-only`) for an unchanged file,
+// even if the file is not in canonical rendered form.
+func (c *Core) diskETagLocked(storedBean *bean.Bean) string {
+	diskPath := filepath.Join(c.root, storedBean.Path)
+	diskBean, err := c.loadBean(diskPath)
+	if err == nil {
+		// Identity comes from the in-memory bean; the etag covers content.
+		diskBean.ID = storedBean.ID
+		return diskBean.ETag()
+	}
+	content, readErr := os.ReadFile(diskPath)
+	if readErr != nil {
+		// If the file doesn't exist (anymore), fall back to the stored bean's etag
+		return storedBean.ETag()
+	}
+	// The file exists but can't be parsed: hash the raw content so the etag
+	// reflects the change but can never match an etag issued for a valid bean.
+	h := fnv.New64a()
+	h.Write(content)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // saveToDisk writes a bean to the filesystem.
