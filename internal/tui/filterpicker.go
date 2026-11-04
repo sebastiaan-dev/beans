@@ -438,7 +438,8 @@ func (m filterPickerModel) View() string {
 		return "Loading..."
 	}
 
-	modalWidth := max(50, min(70, m.width*60/100))
+	// Never wider than the terminal (the border adds 2 columns).
+	modalWidth := max(1, min(max(50, min(70, m.width*60/100)), m.width-2))
 
 	title := listTitleStyle.Render("Filter Beans")
 

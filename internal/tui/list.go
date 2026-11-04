@@ -71,6 +71,11 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list
 		archivedMarker = ui.Muted.Render(archivedMarkerText)
 		baseWidth += lipgloss.Width(archivedMarker)
 	}
+	// The row renderer appends " ↑<status>" for matched beans that inherit a
+	// terminal status; reserve room for it so the row does not wrap.
+	if item.implicitStatus != "" && item.matched {
+		baseWidth += lipgloss.Width(" ↑" + item.implicitStatus)
+	}
 	maxTitleWidth := max(0, m.Width()-baseWidth)
 
 	// Check if bean is marked for multi-select

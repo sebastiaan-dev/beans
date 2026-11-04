@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/hmans/beans/pkg/bean"
 	"github.com/hmans/beans/pkg/beancore"
 	"github.com/hmans/beans/pkg/config"
@@ -531,5 +532,36 @@ func TestListMarksArchivedBeans(t *testing.T) {
 	}
 	if !strings.Contains(view, "t-arch") {
 		t.Error("archived bean should be listed")
+	}
+}
+
+func TestListRowsDoNotWrapOnNarrowTerminal(t *testing.T) {
+	app, _ := setupListTestModel(t)
+	runCmd(t, app, app.Init())
+	const width = 44
+	app.list, _ = app.list.Update(tea.WindowSizeMsg{Width: width, Height: 30})
+
+	view := stripAnsi(app.list.View())
+	// Each bean, including the archived one and the child with an inherited
+	// status annotation, must render on a single row that fits the width.
+	for _, id := range []string{"t-arch", "t-child", "t-open"} {
+		found := false
+		for _, line := range strings.Split(view, "\n") {
+			if strings.Contains(line, id) {
+				found = true
+				if w := lipgloss.Width(line); w > width {
+					t.Errorf("row for %s is %d columns wide: %q", id, w, line)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("%s not listed", id)
+		}
+	}
+	for _, line := range strings.Split(view, "\n") {
+		trimmed := strings.TrimSpace(strings.Trim(line, "│ "))
+		if strings.HasPrefix(trimmed, "↑") {
+			t.Errorf("implicit status annotation wrapped onto its own line: %q", line)
+		}
 	}
 }

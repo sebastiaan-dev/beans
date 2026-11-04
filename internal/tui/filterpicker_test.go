@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/hmans/beans/pkg/bean"
 )
 
@@ -267,5 +268,17 @@ func TestFilterPickerHandlesBatchedRunes(t *testing.T) {
 	}
 	if m.section != filterSectionTags || m.tagQuery != "fro" {
 		t.Errorf("section=%v query=%q, want tags section and %q", m.section, m.tagQuery, "fro")
+	}
+}
+
+func TestFilterPickerFitsNarrowTerminal(t *testing.T) {
+	for _, width := range []int{30, 42, 60, 120} {
+		m := newFilterPickerModel(listFilters{}, testTags(), width, 40)
+		for _, line := range strings.Split(m.View(), "\n") {
+			if w := lipgloss.Width(line); w > width {
+				t.Errorf("width %d: line is %d columns wide: %q", width, w, line)
+				break
+			}
+		}
 	}
 }
