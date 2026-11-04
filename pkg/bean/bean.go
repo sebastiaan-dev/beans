@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"io"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -168,6 +169,17 @@ type Bean struct {
 	// extraFrontMatter holds front matter keys that beans does not manage
 	// (e.g. metadata added by external tools). They are preserved on rewrite.
 	extraFrontMatter []frontMatterField
+}
+
+// ArchiveDir is the subdirectory of the beans root that holds archived beans.
+// It must match beancore.ArchiveDir.
+const ArchiveDir = "archive"
+
+// IsArchived reports whether the bean lives in the archive directory,
+// derived from its Path relative to the beans root.
+func (b *Bean) IsArchived() bool {
+	return strings.HasPrefix(b.Path, ArchiveDir+"/") ||
+		strings.HasPrefix(b.Path, ArchiveDir+string(filepath.Separator))
 }
 
 // Default values applied to beans that don't specify them.
@@ -370,14 +382,17 @@ func (b *Bean) ETag() string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// MarshalJSON implements json.Marshaler to include computed etag field.
+// MarshalJSON implements json.Marshaler to include the computed etag and
+// archived fields.
 func (b *Bean) MarshalJSON() ([]byte, error) {
 	type BeanAlias Bean // Avoid infinite recursion
 	return json.Marshal(&struct {
 		*BeanAlias
-		ETag string `json:"etag"`
+		Archived bool   `json:"archived"`
+		ETag     string `json:"etag"`
 	}{
 		BeanAlias: (*BeanAlias)(b),
+		Archived:  b.IsArchived(),
 		ETag:      b.ETag(),
 	})
 }

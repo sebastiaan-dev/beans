@@ -37,6 +37,9 @@ var (
 	listQuiet      bool
 	listSort       string
 	listFull       bool
+	listLimit      int
+	listArchived   bool
+	listNoArchived bool
 )
 
 var listCmd = &cobra.Command{
@@ -57,8 +60,29 @@ Search Syntax (--search/-S):
   user OR login  Either term matches
   slug:auth      Search only in slug field
   title:login    Search only in title field
-  body:auth      Search only in body field`,
+  body:auth      Search only in body field
+
+Archived Beans:
+  Beans moved to .beans/archive/ (see "beans archive") are listed by default
+  and marked "(archived)" in the tree output; JSON output includes an
+  "archived" field. Use --no-archived to hide them or --archived to show only
+  archived beans.
+
+Limiting Results (--limit):
+  --limit N keeps the first N beans after all filters and sorting (--sort)
+  have been applied; 0 (the default) means no limit. It applies to the beans
+  matching the filters, so in the tree view unmatched ancestors may still be
+  shown (dimmed) for context but do not count toward the limit.
+
+Examples:
+  beans list --sort created --limit 5     Five most recently created beans
+  beans list --no-archived                Hide archived beans
+  beans list --archived --json            Archived beans as JSON`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := validateListOptions(listLimit, listArchived, listNoArchived); err != nil {
+			return err
+		}
+
 		// Build GraphQL filter from CLI flags
 		filter := &model.BeanFilter{
 			Status:          listStatus,
@@ -118,8 +142,12 @@ Search Syntax (--search/-S):
 			return fmt.Errorf("querying beans: %w", err)
 		}
 
-		// Sort beans
+		// Filter by archive location (not part of the GraphQL filter)
+		beans = filterArchived(beans, archiveFilterMode(listArchived, listNoArchived))
+
+		// Sort beans, then apply limit to the sorted, filtered result
 		sortBeans(beans, listSort, cfg)
+		beans = limitBeans(beans, listLimit)
 
 		// JSON output (flat list)
 		if listJSON {
@@ -283,6 +311,62 @@ func sortBeans(beans []*bean.Bean, sortBy string, cfg *config.Config) {
 	}
 }
 
+// archiveFilter selects beans by whether they live in the archive directory.
+type archiveFilter int
+
+const (
+	archiveInclude archiveFilter = iota // include all beans (default)
+	archiveExclude                      // exclude archived beans
+	archiveOnly                         // only archived beans
+)
+
+// archiveFilterMode maps the --archived/--no-archived flags to a filter mode.
+func archiveFilterMode(onlyArchived, noArchived bool) archiveFilter {
+	switch {
+	case onlyArchived:
+		return archiveOnly
+	case noArchived:
+		return archiveExclude
+	default:
+		return archiveInclude
+	}
+}
+
+// validateListOptions validates list flags that cannot be expressed as cobra
+// constraints alone.
+func validateListOptions(limit int, onlyArchived, noArchived bool) error {
+	if limit < 0 {
+		return fmt.Errorf("--limit must be a non-negative integer, got %d", limit)
+	}
+	if onlyArchived && noArchived {
+		return fmt.Errorf("--archived and --no-archived are mutually exclusive")
+	}
+	return nil
+}
+
+// filterArchived returns the beans matching the archive filter mode.
+func filterArchived(beans []*bean.Bean, mode archiveFilter) []*bean.Bean {
+	if mode == archiveInclude {
+		return beans
+	}
+	result := make([]*bean.Bean, 0, len(beans))
+	for _, b := range beans {
+		if b.IsArchived() == (mode == archiveOnly) {
+			result = append(result, b)
+		}
+	}
+	return result
+}
+
+// limitBeans returns at most limit beans from the front of the slice.
+// A limit of 0 means no limit.
+func limitBeans(beans []*bean.Bean, limit int) []*bean.Bean {
+	if limit > 0 && len(beans) > limit {
+		return beans[:limit]
+	}
+	return beans
+}
+
 func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
@@ -311,5 +395,8 @@ func RegisterListCmd(root *cobra.Command) {
 	listCmd.Flags().BoolVarP(&listQuiet, "quiet", "q", false, "Only output IDs (one per line)")
 	listCmd.Flags().StringVar(&listSort, "sort", "", "Sort by: created, updated, status, priority, id (default: status, priority, type, title)")
 	listCmd.Flags().BoolVar(&listFull, "full", false, "Include bean body in JSON output")
+	listCmd.Flags().IntVar(&listLimit, "limit", 0, "Maximum number of beans to show after filtering and sorting (0 = no limit)")
+	listCmd.Flags().BoolVar(&listArchived, "archived", false, "Only show archived beans (in .beans/archive/)")
+	listCmd.Flags().BoolVar(&listNoArchived, "no-archived", false, "Exclude archived beans (in .beans/archive/)")
 	root.AddCommand(listCmd)
 }

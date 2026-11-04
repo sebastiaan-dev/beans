@@ -27,6 +27,7 @@ type TreeNodeJSON struct {
 	Priority  string          `json:"priority,omitempty"`
 	Tags      []string        `json:"tags,omitempty"`
 	Body      string          `json:"body,omitempty"`
+	Archived  bool            `json:"archived"`
 	Matched   bool            `json:"matched"`
 	Children  []*TreeNodeJSON `json:"children,omitempty"`
 }
@@ -42,6 +43,7 @@ func (n *TreeNode) ToJSON(includeFull bool) *TreeNodeJSON {
 		Type:     n.Bean.Type,
 		Priority: n.Bean.Priority,
 		Tags:     n.Bean.Tags,
+		Archived: n.Bean.IsArchived(),
 		Matched:  n.Matched,
 	}
 	if includeFull {
@@ -283,8 +285,15 @@ func renderNode(sb *strings.Builder, node *TreeNode, depth int, isLast bool, anc
 	// Get colors from config
 	colors := cfg.GetBeanColors(b.Status, b.Type, b.Priority)
 
+	title := b.Title
+	if b.IsArchived() {
+		// RenderBeanRow omits the priority symbol (symbol + space) for dimmed rows.
+		hasPrioritySymbol := node.Matched && GetPrioritySymbol(b.Priority) != ""
+		title = ArchivedTitle(title, renderCfg.titleWidth, hasPrioritySymbol)
+	}
+
 	// Use shared RenderBeanRow function with responsive columns
-	row := RenderBeanRow(b.ID, b.Status, b.Type, b.Title, BeanRowConfig{
+	row := RenderBeanRow(b.ID, b.Status, b.Type, title, BeanRowConfig{
 		StatusColor:     colors.StatusColor,
 		TypeColor:       colors.TypeColor,
 		PriorityColor:   colors.PriorityColor,
@@ -304,6 +313,35 @@ func renderNode(sb *strings.Builder, node *TreeNode, depth int, isLast bool, anc
 
 	sb.WriteString(row)
 	sb.WriteString("\n")
+}
+
+// ArchivedMarker is appended to the titles of archived beans in list output.
+const ArchivedMarker = "(archived)"
+
+// ArchivedTitle returns title with ArchivedMarker appended, truncating the
+// title itself (not the marker) so the result fits in maxWidth columns.
+// hasPrioritySymbol accounts for the 2-column priority symbol RenderBeanRow
+// prepends to the title. maxWidth <= 0 means no width limit.
+func ArchivedTitle(title string, maxWidth int, hasPrioritySymbol bool) string {
+	suffix := " " + ArchivedMarker
+	if maxWidth <= 0 {
+		return title + suffix
+	}
+	available := maxWidth - len(suffix)
+	if hasPrioritySymbol {
+		available -= 2
+	}
+	if len(title) > available {
+		switch {
+		case available > 3:
+			title = title[:available-3] + "..."
+		case available > 0:
+			title = title[:available]
+		default:
+			title = ""
+		}
+	}
+	return title + suffix
 }
 
 // FlatItem represents a flattened tree node with rendering context.
