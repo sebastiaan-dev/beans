@@ -5,8 +5,8 @@ import (
 	"os"
 	"text/template"
 
-	"github.com/spf13/cobra"
 	"github.com/hmans/beans/pkg/config"
+	"github.com/spf13/cobra"
 )
 
 //go:embed prompt.tmpl
@@ -26,18 +26,23 @@ var primeCmd = &cobra.Command{
 	Long:  `Outputs a prompt that primes AI coding agents on how to use the beans CLI to manage project issues.`,
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// If no explicit path given, check if a beans project exists by searching
-		// upward for a .beans.yml config file
-		if beansPath == "" && configPath == "" {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return nil // Silently exit on error
-			}
-			configFile, err := config.FindConfig(cwd)
-			if err != nil || configFile == "" {
-				// No config file found - silently exit
-				return nil
-			}
+		// Only emit the primer for projects that opted in to beans: an
+		// explicit --beans-path, an explicit config file (--config or
+		// BEANS_CONFIG), or a .beans.yml found by searching upward.
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil // Silently exit on error
+		}
+		configFile, err := resolveConfigFile(configPath, cwd)
+		if err != nil {
+			// An explicitly configured config file is missing. Report it
+			// instead of silently priming nothing.
+			cmd.SilenceUsage = true
+			return err
+		}
+		if beansPath == "" && configFile == "" {
+			// Not a beans project - silently exit
+			return nil
 		}
 
 		tmpl, err := template.New("prompt").Parse(agentPromptTemplate)
@@ -52,7 +57,7 @@ var primeCmd = &cobra.Command{
 			Priorities:    config.DefaultPriorities,
 		}
 
-		return tmpl.Execute(os.Stdout, data)
+		return tmpl.Execute(cmd.OutOrStdout(), data)
 	},
 }
 

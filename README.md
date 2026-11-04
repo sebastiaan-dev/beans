@@ -74,6 +74,23 @@ beans help
 
 But more importantly, you'll want to get your coding agent set up to use it. Let's dive in!
 
+### Config and Data Locations
+
+By default, `beans` searches upward from the current directory for `.beans.yml` and uses the data directory it configures. You can override both:
+
+| Setting | Flag | Environment variable | Default |
+| --- | --- | --- | --- |
+| Config file | `--config` | `BEANS_CONFIG` | nearest `.beans.yml` found searching upward |
+| Data directory | `--beans-path` | `BEANS_PATH` | `beans.path` from the config |
+
+Flags take precedence over environment variables. A config file set via `--config` or `BEANS_CONFIG` must exist; otherwise every command (including `beans prime`) fails with an error.
+
+`beans prime` only prints its agent instructions for projects that opted in to Beans: when a `.beans.yml` is found, or when `--config`, `BEANS_CONFIG`, or `--beans-path` is given. `BEANS_PATH` alone doesn't enable it. To keep your beans outside the repository, point `BEANS_CONFIG` at their config:
+
+```bash
+export BEANS_CONFIG=~/my-beans/.beans.yml
+```
+
 ## Agent Configuration
 
 The most basic way to teach your agent about Beans is to simply add the following instruction to your `AGENTS.md`, `CLAUDE.md`, or equivalent file:
