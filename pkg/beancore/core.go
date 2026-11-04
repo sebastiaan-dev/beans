@@ -268,11 +268,25 @@ func (c *Core) ensureSearchIndexLocked() error {
 	return nil
 }
 
-// Search performs full-text search and returns matching beans.
-// The search index is lazily initialized on first use.
+// Search performs full-text search and returns all matching beans.
+//
+// Long-running processes that watch the beans directory (beans-serve, the TUI)
+// maintain an in-memory search index, which is lazily built on first use and
+// kept up to date as beans change. Short-lived processes (CLI commands) search
+// without retaining an index: building and maintaining one would only add cost
+// to a single query.
 func (c *Core) Search(query string) ([]*bean.Bean, error) {
-	// Ensure index is initialized (needs write lock for lazy init)
 	c.mu.Lock()
+	if !c.watching && c.searchIndex == nil {
+		beans := make([]*bean.Bean, 0, len(c.beans))
+		for _, b := range c.beans {
+			beans = append(beans, b)
+		}
+		c.mu.Unlock()
+		return c.searchOnce(beans, query)
+	}
+
+	// Ensure index is initialized (needs write lock for lazy init)
 	if err := c.ensureSearchIndexLocked(); err != nil {
 		c.mu.Unlock()
 		return nil, err
@@ -282,7 +296,7 @@ func (c *Core) Search(query string) ([]*bean.Bean, error) {
 	c.mu.Unlock()
 
 	// Perform search outside the lock (Bleve is thread-safe)
-	ids, err := idx.Search(query, search.DefaultSearchLimit)
+	ids, err := idx.Search(query, -1)
 	if err != nil {
 		return nil, err
 	}
@@ -294,6 +308,25 @@ func (c *Core) Search(query string) ([]*bean.Bean, error) {
 	result := make([]*bean.Bean, 0, len(ids))
 	for _, id := range ids {
 		if b, ok := c.beans[id]; ok {
+			result = append(result, b)
+		}
+	}
+	return result, nil
+}
+
+// searchOnce matches the query against the given beans without an index.
+func (c *Core) searchOnce(beans []*bean.Bean, query string) ([]*bean.Bean, error) {
+	ids, err := search.Match(beans, query)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]*bean.Bean, len(beans))
+	for _, b := range beans {
+		byID[b.ID] = b
+	}
+	result := make([]*bean.Bean, 0, len(ids))
+	for _, id := range ids {
+		if b, ok := byID[id]; ok {
 			result = append(result, b)
 		}
 	}
