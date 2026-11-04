@@ -70,10 +70,9 @@ func (m helpOverlayModel) View() string {
 			Bold(true).
 			Width(12).
 			Render(key)
-		descStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#fff")).
-			Render(desc)
-		return keyStyle + descStyle
+		// Descriptions use the terminal's default foreground so they stay
+		// readable on both dark and light themes.
+		return keyStyle + desc
 	}
 
 	var content strings.Builder
