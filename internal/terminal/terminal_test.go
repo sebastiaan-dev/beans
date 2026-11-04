@@ -274,6 +274,10 @@ func TestManagerShutdown(t *testing.T) {
 }
 
 func TestEnvFuncInjection(t *testing.T) {
+	// Use a plain POSIX shell: the user's $SHELL may load slow rc files
+	// (e.g. zsh plugins), which made this test time out under load.
+	t.Setenv("SHELL", "/bin/sh")
+
 	mgr := NewManager(func(sessionID string) []string {
 		return []string{"BEANS_WORKSPACE_PORT=44000"}
 	})
@@ -291,8 +295,8 @@ func TestEnvFuncInjection(t *testing.T) {
 		t.Fatalf("Write failed: %v", err)
 	}
 
-	// Collect output for a short time looking for the PORT= line
-	deadline := time.After(5 * time.Second)
+	// Collect output looking for the PORT= line (generous for loaded CI machines)
+	deadline := time.After(15 * time.Second)
 	var collected []byte
 	for {
 		select {
