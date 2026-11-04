@@ -713,9 +713,12 @@ func TestMutationCreateBean(t *testing.T) {
 		if got.Title != "New Bean" {
 			t.Errorf("CreateBean().Title = %q, want %q", got.Title, "New Bean")
 		}
-		// Type defaults to "task"
+		// Type and status default to "task" and "todo"
 		if got.Type != "task" {
 			t.Errorf("CreateBean().Type = %q, want %q (default)", got.Type, "task")
+		}
+		if got.Status != "todo" {
+			t.Errorf("CreateBean().Status = %q, want %q (default)", got.Status, "todo")
 		}
 		if got.ID == "" {
 			t.Error("CreateBean().ID is empty")
@@ -781,6 +784,32 @@ func TestMutationCreateBean(t *testing.T) {
 			t.Errorf("CreateBean().Blocking count = %d, want 1", len(got.Blocking))
 		}
 	})
+}
+
+func TestMutationCreateBeanUsesConfiguredDefaults(t *testing.T) {
+	resolver, core := setupTestResolver(t)
+	core.Config().Beans.DefaultStatus = "draft"
+	core.Config().Beans.DefaultType = "feature"
+	ctx := context.Background()
+	mr := resolver.Mutation()
+
+	got, err := mr.CreateBean(ctx, model.CreateBeanInput{Title: "Configured"})
+	if err != nil {
+		t.Fatalf("CreateBean() error = %v", err)
+	}
+	if got.Status != "draft" || got.Type != "feature" {
+		t.Errorf("CreateBean() status/type = %q/%q, want draft/feature", got.Status, got.Type)
+	}
+
+	// Explicit values still win over configured defaults
+	status, typ := "todo", "bug"
+	got, err = mr.CreateBean(ctx, model.CreateBeanInput{Title: "Explicit", Status: &status, Type: &typ})
+	if err != nil {
+		t.Fatalf("CreateBean() error = %v", err)
+	}
+	if got.Status != "todo" || got.Type != "bug" {
+		t.Errorf("CreateBean() status/type = %q/%q, want todo/bug", got.Status, got.Type)
+	}
 }
 
 func TestMutationCreateBeanWithCustomPrefix(t *testing.T) {

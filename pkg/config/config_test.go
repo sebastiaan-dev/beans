@@ -276,9 +276,9 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if cfg.GetDefaultStatus() != "todo" {
 		t.Errorf("DefaultStatus: got %q, want \"todo\"", cfg.GetDefaultStatus())
 	}
-	// DefaultType should be first type name when not specified
-	if cfg.Beans.DefaultType != "milestone" {
-		t.Errorf("DefaultType default not applied: got %q, want \"milestone\"", cfg.Beans.DefaultType)
+	// DefaultType is "task" when not specified (matching Default())
+	if cfg.Beans.DefaultType != "task" {
+		t.Errorf("DefaultType default not applied: got %q, want \"task\"", cfg.Beans.DefaultType)
 	}
 }
 

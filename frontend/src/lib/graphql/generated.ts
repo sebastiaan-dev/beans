@@ -319,13 +319,13 @@ export type CreateBeanInput = {
   prefix?: InputMaybe<Scalars['String']['input']>;
   /** Priority level (defaults to 'normal') */
   priority?: InputMaybe<Scalars['String']['input']>;
-  /** Status (defaults to 'todo') */
+  /** Status (defaults to the configured default_status, or 'todo') */
   status?: InputMaybe<Scalars['String']['input']>;
   /** Tags for categorization */
   tags?: InputMaybe<Array<Scalars['String']['input']>>;
   /** Bean title (required) */
   title: Scalars['String']['input'];
-  /** Bean type (defaults to 'task') */
+  /** Bean type (defaults to the configured default_type, or 'task') */
   type?: InputMaybe<Scalars['String']['input']>;
 };
 

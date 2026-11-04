@@ -453,11 +453,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case beanCreatedMsg:
-		// Create the bean via GraphQL mutation with draft status
-		draftStatus := "draft"
+		// Create the bean via GraphQL mutation; status and type use the configured defaults
 		createdBean, err := a.resolver.CreateBean(context.Background(), model.CreateBeanInput{
-			Title:  msg.title,
-			Status: &draftStatus,
+			Title: msg.title,
 		})
 		if err != nil {
 			// TODO: Show error to user

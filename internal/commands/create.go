@@ -56,17 +56,12 @@ var createCmd = &cobra.Command{
 
 		// Build GraphQL input
 		input := model.CreateBeanInput{Title: title}
+		// Unset status/type fall back to the configured defaults in CreateBean
 		if createStatus != "" {
 			input.Status = &createStatus
-		} else {
-			defaultStatus := cfg.GetDefaultStatus()
-			input.Status = &defaultStatus
 		}
 		if createType != "" {
 			input.Type = &createType
-		} else {
-			defaultType := cfg.GetDefaultType()
-			input.Type = &defaultType
 		}
 		if createPriority != "" {
 			input.Priority = &createPriority
