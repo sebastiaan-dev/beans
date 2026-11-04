@@ -47,7 +47,7 @@ var DefaultTypes = []TypeConfig{
 var DefaultPriorities = []PriorityConfig{
 	{Name: "critical", Color: "red", Description: "Urgent, blocking work. When possible, address immediately"},
 	{Name: "high", Color: "yellow", Description: "Important, should be done before normal work"},
-	{Name: "normal", Color: "white", Description: "Standard priority"},
+	{Name: "normal", Color: "default", Description: "Standard priority"},
 	{Name: "low", Color: "gray", Description: "Less important, can be delayed"},
 	{Name: "deferred", Color: "gray", Description: "Explicitly pushed back, avoid doing unless necessary"},
 }

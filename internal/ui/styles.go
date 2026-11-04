@@ -2,39 +2,76 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/glamour/ansi"
+	glamourstyles "github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Color palette
+// Color palette.
+//
+// All built-in colors use the terminal's standard 16-color ANSI palette
+// (indices "0".."15") rather than fixed truecolor hex values. The actual RGB
+// value of each index is defined by the user's terminal theme, so the UI follows
+// that theme and inherits the contrast the theme was designed for on both dark
+// and light backgrounds. Bright black ("8") is used for de-emphasized text.
+//
+// Under NO_COLOR or when output is not a terminal, lipgloss downgrades these to
+// plain text as usual.
 var (
-	ColorPrimary   = lipgloss.Color("#7C3AED") // Purple
-	ColorSecondary = lipgloss.Color("#6B7280") // Gray
-	ColorSuccess   = lipgloss.Color("#10B981") // Green
-	ColorWarning   = lipgloss.Color("#F59E0B") // Amber
-	ColorDanger    = lipgloss.Color("#EF4444") // Red
-	ColorMuted     = lipgloss.Color("#9CA3AF") // Light gray
-	ColorSubtle    = lipgloss.Color("#555555") // Dark gray (for tree lines)
-	ColorBlue      = lipgloss.Color("#3B82F6") // Blue
-	ColorCyan      = lipgloss.Color("14")      // Bright Cyan (ANSI)
+	ColorPrimary   = lipgloss.Color("5") // Magenta: IDs, headings, selection, focus
+	ColorSecondary = lipgloss.Color("8") // Bright black: archived/done states
+	ColorSuccess   = lipgloss.Color("2") // Green
+	ColorWarning   = lipgloss.Color("3") // Yellow
+	ColorDanger    = lipgloss.Color("1") // Red
+	ColorMuted     = lipgloss.Color("8") // Bright black: help, metadata, borders
+	ColorSubtle    = lipgloss.Color("8") // Bright black: tree lines, dimmed background
+	ColorBlue      = lipgloss.Color("4") // Blue
+	ColorCyan      = lipgloss.Color("6") // Cyan
 )
 
-// NamedColors maps color names to lipgloss colors.
+// ColorDefault is the terminal's default foreground color (no color escape is
+// emitted). It is selected with the color name "default".
+var ColorDefault = lipgloss.Color("")
+
+// NamedColors maps the color names accepted in configuration to ANSI palette
+// colors.
 var NamedColors = map[string]lipgloss.Color{
-	"green":  ColorSuccess,
-	"yellow": ColorWarning,
-	"red":    ColorDanger,
-	"gray":   ColorSecondary,
-	"grey":   ColorSecondary,
-	"blue":   ColorBlue,
-	"purple": ColorPrimary,
-	"cyan":   ColorCyan,
+	"default":        ColorDefault,
+	"black":          lipgloss.Color("0"),
+	"red":            ColorDanger,
+	"green":          ColorSuccess,
+	"yellow":         ColorWarning,
+	"blue":           ColorBlue,
+	"purple":         ColorPrimary,
+	"magenta":        ColorPrimary,
+	"cyan":           ColorCyan,
+	"white":          lipgloss.Color("7"),
+	"gray":           ColorSecondary,
+	"grey":           ColorSecondary,
+	"bright-black":   lipgloss.Color("8"),
+	"bright-red":     lipgloss.Color("9"),
+	"bright-green":   lipgloss.Color("10"),
+	"bright-yellow":  lipgloss.Color("11"),
+	"bright-blue":    lipgloss.Color("12"),
+	"bright-magenta": lipgloss.Color("13"),
+	"bright-purple":  lipgloss.Color("13"),
+	"bright-cyan":    lipgloss.Color("14"),
+	"bright-white":   lipgloss.Color("15"),
 }
 
-// ResolveColor converts a color name or hex code to a lipgloss.Color.
+// ResolveColor converts a color name, ANSI palette index ("0".."15"), or hex
+// code to a lipgloss.Color. Unknown values resolve to ColorMuted.
+//
+// Hex codes are passed through unchanged for users who explicitly configure
+// them; they do not follow the terminal theme.
 func ResolveColor(color string) lipgloss.Color {
 	if strings.HasPrefix(color, "#") {
+		return lipgloss.Color(color)
+	}
+	if isANSIIndex(color) {
 		return lipgloss.Color(color)
 	}
 	if c, ok := NamedColors[strings.ToLower(color)]; ok {
@@ -43,34 +80,47 @@ func ResolveColor(color string) lipgloss.Color {
 	return ColorMuted
 }
 
-// IsValidColor returns true if the color is a valid named color or hex code.
+// IsValidColor returns true if the color is a valid named color, ANSI palette
+// index ("0".."15"), or hex code.
 func IsValidColor(color string) bool {
 	if strings.HasPrefix(color, "#") {
 		// Valid hex: #RGB or #RRGGBB
 		return len(color) == 4 || len(color) == 7
 	}
+	if isANSIIndex(color) {
+		return true
+	}
 	_, ok := NamedColors[strings.ToLower(color)]
 	return ok
 }
 
+// isANSIIndex reports whether s is a canonical decimal index into the 16-color
+// ANSI palette.
+func isANSIIndex(s string) bool {
+	n, err := strconv.Atoi(s)
+	return err == nil && n >= 0 && n <= 15 && strconv.Itoa(n) == s
+}
+
+// badgeStyle returns the style for a badge with a colored background.
+//
+// Badges use reverse video instead of an explicit foreground/background pair:
+// the badge color becomes the background and the terminal's own background
+// color becomes the text. Theme authors choose palette colors that contrast
+// with their background, so swapping the two keeps exactly that contrast on
+// both dark and light themes, whereas any fixed text color (e.g. white or
+// black) is illegible on some badge colors in some themes.
+func badgeStyle(c lipgloss.TerminalColor) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Foreground(c).
+		Reverse(true).
+		Padding(0, 1)
+}
+
 // Status badge styles (for inline use, like in show command)
 var (
-	StatusOpen = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#fff")).
-			Background(ColorSuccess).
-			Padding(0, 1).
-			Bold(true)
-
-	StatusDone = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#fff")).
-			Background(ColorSecondary).
-			Padding(0, 1)
-
-	StatusInProgress = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#fff")).
-				Background(ColorWarning).
-				Padding(0, 1).
-				Bold(true)
+	StatusOpen       = badgeStyle(ColorSuccess).Bold(true)
+	StatusDone       = badgeStyle(ColorSecondary)
+	StatusInProgress = badgeStyle(ColorWarning).Bold(true)
 )
 
 // Status text styles (for table use, no background/padding)
@@ -80,10 +130,10 @@ var (
 	StatusInProgressText = lipgloss.NewStyle().Foreground(ColorWarning).Bold(true)
 )
 
-// Tag badge style - black text on gray background
+// Tag badge style - reverse video of the terminal's default colors, so tags
+// render as a neutral badge with maximum contrast in any theme.
 var TagBadge = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("#000")).
-	Background(ColorMuted).
+	Reverse(true).
 	Padding(0, 1)
 
 // RenderTag renders a single tag as a badge
@@ -199,11 +249,7 @@ func RenderStatusText(status string) string {
 
 // RenderStatusWithColor returns a styled status badge using the specified color.
 func RenderStatusWithColor(status, color string, isArchiveStatus bool) string {
-	c := ResolveColor(color)
-	style := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#fff")).
-		Background(c).
-		Padding(0, 1)
+	style := badgeStyle(ResolveColor(color))
 
 	if !isArchiveStatus {
 		style = style.Bold(true)
@@ -242,13 +288,7 @@ func RenderTypeWithColor(typeName, color string) string {
 	if typeName == "" {
 		return ""
 	}
-	c := ResolveColor(color)
-	style := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#fff")).
-		Background(c).
-		Bold(true).
-		Padding(0, 1)
-	return style.Render(typeName)
+	return badgeStyle(ResolveColor(color)).Bold(true).Render(typeName)
 }
 
 // RenderPriorityWithColor returns a styled priority badge using the specified color.
@@ -605,4 +645,75 @@ func RenderBeanRow(id, status, typeName, title string, cfg BeanRowConfig) string
 		return cursor + idCol + " " + typeCol + " " + statusCol + " " + prioritySymbol + titleStyled + padding + " " + tagsCol + implicitAnnotation
 	}
 	return cursor + idCol + " " + typeCol + " " + statusCol + " " + prioritySymbol + titleStyled + implicitAnnotation
+}
+
+// Chroma's "terminal16" formatter maps each syntax-highlighting color to the
+// nearest of these reference values and emits the corresponding ANSI palette
+// escape, so using them exactly yields the intended palette index.
+const (
+	chromaANSIRed     = "#7f0000"
+	chromaANSIGreen   = "#007f00"
+	chromaANSIYellow  = "#7f7fe0"
+	chromaANSIMagenta = "#7f007f"
+	chromaANSICyan    = "#007f7f"
+)
+
+// MarkdownChromaFormatter is the chroma formatter to use together with
+// MarkdownStyleConfig; it emits 16-color ANSI palette escapes.
+const MarkdownChromaFormatter = "terminal16"
+
+// MarkdownStyleConfig returns a glamour style that only uses the terminal's
+// 16-color ANSI palette (and its default foreground), so rendered markdown
+// follows the user's theme on both dark and light backgrounds. It is based on
+// glamour's dark style layout. Use it with MarkdownChromaFormatter.
+func MarkdownStyleConfig() ansi.StyleConfig {
+	str := func(s string) *string { return &s }
+	yes := func() *bool { b := true; return &b }
+	no := func() *bool { b := false; return &b }
+	fg := func(c string) ansi.StylePrimitive { return ansi.StylePrimitive{Color: str(c)} }
+
+	s := glamourstyles.DarkStyleConfig
+
+	s.Document.Color = nil
+	s.Heading.Color = str("6")
+	s.H1.StylePrimitive = ansi.StylePrimitive{
+		Prefix:  " ",
+		Suffix:  " ",
+		Color:   str("6"),
+		Inverse: yes(),
+		Bold:    yes(),
+	}
+	s.H6.Color = str("8")
+	s.H6.Bold = no()
+	s.HorizontalRule.Color = str("8")
+	s.Link.Color = str("6")
+	s.LinkText.Color = str("6")
+	s.Image.Color = str("5")
+	s.ImageText.Color = str("8")
+	s.Code.StylePrimitive = ansi.StylePrimitive{Color: str("1")}
+	s.CodeBlock.Color = nil
+	s.CodeBlock.Chroma = &ansi.Chroma{
+		Error:               fg(chromaANSIRed),
+		Comment:             ansi.StylePrimitive{Italic: yes()},
+		CommentPreproc:      fg(chromaANSIYellow),
+		Keyword:             fg(chromaANSIMagenta),
+		KeywordReserved:     fg(chromaANSIMagenta),
+		KeywordNamespace:    fg(chromaANSIRed),
+		KeywordType:         fg(chromaANSICyan),
+		NameBuiltin:         fg(chromaANSICyan),
+		NameTag:             fg(chromaANSIMagenta),
+		NameAttribute:       fg(chromaANSIGreen),
+		NameClass:           ansi.StylePrimitive{Bold: yes(), Underline: yes()},
+		NameDecorator:       fg(chromaANSIYellow),
+		NameFunction:        fg(chromaANSIGreen),
+		LiteralNumber:       fg(chromaANSICyan),
+		LiteralString:       fg(chromaANSIYellow),
+		LiteralStringEscape: fg(chromaANSICyan),
+		GenericDeleted:      fg(chromaANSIRed),
+		GenericEmph:         ansi.StylePrimitive{Italic: yes()},
+		GenericInserted:     fg(chromaANSIGreen),
+		GenericStrong:       ansi.StylePrimitive{Bold: yes()},
+		GenericSubheading:   ansi.StylePrimitive{Bold: yes()},
+	}
+	return s
 }

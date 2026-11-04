@@ -60,7 +60,7 @@ func (d priorityItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 	}
 
 	// Render priority with color
-	priorityStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(item.color))
+	priorityStyle := lipgloss.NewStyle().Foreground(ui.ResolveColor(item.color))
 	priorityText := priorityStyle.Render(item.name)
 
 	// Add current indicator
@@ -117,10 +117,8 @@ func newPriorityPickerModel(beanIDs []string, beanTitle, currentPriority string,
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
 	l.SetShowPagination(false)
-	l.Styles.Title = listTitleStyle
+	applyListTheme(&l)
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 0, 0)
-	l.Styles.FilterPrompt = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
-	l.Styles.FilterCursor = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
 
 	// Select the current priority
 	if selectedIndex < len(items) {

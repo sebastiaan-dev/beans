@@ -81,7 +81,7 @@ func overlayModal(bgView, modal string, width, height int) string {
 	}
 
 	// Dim the background
-	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555"))
+	dimStyle := modalDimStyle
 	for i, line := range bgLines {
 		bgLines[i] = dimStyle.Render(stripAnsi(line))
 	}
@@ -127,7 +127,7 @@ func overlayLine(bgLine, modalLine string, startX, maxWidth int) string {
 		suffix = string(bgRunes[suffixStart:])
 	}
 
-	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555"))
+	dimStyle := modalDimStyle
 	return dimStyle.Render(prefix) + modalLine + dimStyle.Render(suffix)
 }
 
