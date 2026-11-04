@@ -1,11 +1,9 @@
 package commands
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os"
-	"strings"
+	"io"
 
 	"github.com/hmans/beans/pkg/bean"
 	"github.com/hmans/beans/pkg/beancore"
@@ -32,9 +30,16 @@ var deleteCmd = &cobra.Command{
 	Long: `Deletes one or more beans after confirmation (use -f to skip confirmation).
 
 If other beans reference the target bean(s) (as parent or via blocking), you will be
-warned and those references will be removed after confirmation. Use -f to skip all warnings.`,
+warned and those references will be removed after confirmation. Use -f to skip all warnings.
+
+The confirmation prompt is only shown when stdin is a terminal. When stdin is not
+a terminal (pipes, /dev/null, scripts, coding agents), beans never prompts and
+never deletes silently: it exits with an error asking you to re-run with -f/--force.
+--json implies --force.`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Runtime errors (not found, non-interactive stdin) are not usage errors.
+		cmd.SilenceUsage = true
 		ctx := context.Background()
 		resolver := &beangraph.CoreResolver{Core: core}
 
@@ -56,8 +61,11 @@ warned and those references will be removed after confirmation. Use -f to skip a
 
 		// Prompt for confirmation (JSON implies force)
 		if !forceDelete && !deleteJSON {
-			if !confirmDeleteMultiple(targets) {
-				fmt.Println("Cancelled")
+			ok, err := confirmDeleteMultiple(targets)
+			if err != nil {
+				return err
+			}
+			if !ok {
 				return nil
 			}
 		}
@@ -98,7 +106,13 @@ warned and those references will be removed after confirmation. Use -f to skip a
 }
 
 // confirmDeleteMultiple prompts the user to confirm deletion of one or more beans.
-func confirmDeleteMultiple(targets []beanWithLinks) bool {
+// It returns an error without prompting when stdin is not a terminal.
+func confirmDeleteMultiple(targets []beanWithLinks) (bool, error) {
+	return confirm(func(w io.Writer) { writeDeletePrompt(w, targets) }, "-f/--force")
+}
+
+// writeDeletePrompt renders the deletion confirmation prompt for targets to w.
+func writeDeletePrompt(w io.Writer, targets []beanWithLinks) {
 	beansWithLinks := 0
 	totalLinks := 0
 	for _, t := range targets {
@@ -112,34 +126,29 @@ func confirmDeleteMultiple(targets []beanWithLinks) bool {
 	if len(targets) == 1 {
 		t := targets[0]
 		if len(t.links) > 0 {
-			fmt.Printf("Warning: %d bean(s) link to '%s':\n", len(t.links), t.bean.Title)
+			fmt.Fprintf(w, "Warning: %d bean(s) link to '%s':\n", len(t.links), t.bean.Title)
 			for _, link := range t.links {
-				fmt.Printf("  - %s (%s) via %s\n", link.FromBean.ID, link.FromBean.Title, link.LinkType)
+				fmt.Fprintf(w, "  - %s (%s) via %s\n", link.FromBean.ID, link.FromBean.Title, link.LinkType)
 			}
-			fmt.Print("Delete anyway and remove references? [y/N] ")
+			fmt.Fprint(w, "Delete anyway and remove references? [y/N] ")
 		} else {
-			fmt.Printf("Delete '%s' (%s)? [y/N] ", t.bean.Title, t.bean.Path)
+			fmt.Fprintf(w, "Delete '%s' (%s)? [y/N] ", t.bean.Title, t.bean.Path)
 		}
 	} else {
 		// Multiple beans: show batch summary
-		fmt.Printf("About to delete %d bean(s):\n", len(targets))
+		fmt.Fprintf(w, "About to delete %d bean(s):\n", len(targets))
 		for _, t := range targets {
 			if len(t.links) > 0 {
-				fmt.Printf("  - %s (%s) ← %d incoming link(s)\n", t.bean.ID, t.bean.Title, len(t.links))
+				fmt.Fprintf(w, "  - %s (%s) ← %d incoming link(s)\n", t.bean.ID, t.bean.Title, len(t.links))
 			} else {
-				fmt.Printf("  - %s (%s)\n", t.bean.ID, t.bean.Title)
+				fmt.Fprintf(w, "  - %s (%s)\n", t.bean.ID, t.bean.Title)
 			}
 		}
 		if beansWithLinks > 0 {
-			fmt.Printf("\nWarning: %d bean(s) have incoming references (%d total) that will be removed.\n", beansWithLinks, totalLinks)
+			fmt.Fprintf(w, "\nWarning: %d bean(s) have incoming references (%d total) that will be removed.\n", beansWithLinks, totalLinks)
 		}
-		fmt.Print("\nProceed with deletion? [y/N] ")
+		fmt.Fprint(w, "\nProceed with deletion? [y/N] ")
 	}
-
-	reader := bufio.NewReader(os.Stdin)
-	response, _ := reader.ReadString('\n')
-	response = strings.TrimSpace(strings.ToLower(response))
-	return response == "y" || response == "yes"
 }
 
 func RegisterDeleteCmd(root *cobra.Command) {
