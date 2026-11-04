@@ -29,22 +29,9 @@ a full view of your project.`,
 			}
 
 			var err error
-
-			// Load configuration
-			if configPath != "" {
-				cfg, err = config.Load(configPath)
-				if err != nil {
-					return fmt.Errorf("loading config from %s: %w", configPath, err)
-				}
-			} else {
-				cwd, err := os.Getwd()
-				if err != nil {
-					return fmt.Errorf("getting current directory: %w", err)
-				}
-				cfg, err = config.LoadFromDirectory(cwd)
-				if err != nil {
-					return fmt.Errorf("loading config: %w", err)
-				}
+			cfg, err = loadConfig(configPath)
+			if err != nil {
+				return err
 			}
 
 			root, err := resolveBeansPath(beansPath, cfg)
@@ -62,7 +49,7 @@ a full view of your project.`,
 	}
 
 	rootCmd.PersistentFlags().StringVar(&beansPath, "beans-path", "", "Path to data directory (overrides config and BEANS_PATH env var)")
-	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Path to config file (default: searches upward for .beans.yml)")
+	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Path to config file (overrides BEANS_CONFIG env var; default: searches upward for .beans.yml)")
 
 	return rootCmd
 }
@@ -79,6 +66,64 @@ func requiresProject(cmd *cobra.Command) bool {
 		}
 	}
 	return true
+}
+
+// configEnvVar names the environment variable equivalent of the --config flag.
+const configEnvVar = "BEANS_CONFIG"
+
+// resolveConfigFile determines which config file to use.
+// Precedence: --config flag > BEANS_CONFIG env var > upward search for
+// .beans.yml starting at startDir.
+//
+// An explicitly configured file (flag or env var) must exist; otherwise an
+// error is returned rather than silently falling back to defaults. When no
+// explicit file is configured and the upward search finds nothing, it returns
+// an empty path and no error.
+func resolveConfigFile(flagPath, startDir string) (string, error) {
+	path, source := flagPath, "--config"
+	if path == "" {
+		path, source = os.Getenv(configEnvVar), configEnvVar
+	}
+	if path == "" {
+		return config.FindConfig(startDir)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("config file set via %s does not exist: %s", source, path)
+		}
+		return "", fmt.Errorf("config file set via %s is not accessible: %w", source, err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("config file set via %s is a directory, not a file: %s", source, path)
+	}
+	return path, nil
+}
+
+// loadConfig loads the configuration selected by resolveConfigFile. Without
+// any config file, it returns the defaults anchored at the current directory.
+func loadConfig(flagPath string) (*config.Config, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("getting current directory: %w", err)
+	}
+
+	path, err := resolveConfigFile(flagPath, cwd)
+	if err != nil {
+		return nil, err
+	}
+	if path == "" {
+		c := config.Default()
+		c.SetConfigDir(cwd)
+		return c, nil
+	}
+
+	c, err := config.Load(path)
+	if err != nil {
+		return nil, fmt.Errorf("loading config from %s: %w", path, err)
+	}
+	return c, nil
 }
 
 // resolveBeansPath determines the beans data directory path.
