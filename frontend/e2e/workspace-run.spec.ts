@@ -105,3 +105,74 @@ test.describe('Workspace run experience', () => {
     expect(title).toMatch(/http:\/\/localhost:\d+/);
   });
 });
+
+test.describe('Destroying a workspace with an active Run', () => {
+  test('stops the Run process and terminal sessions before removing the worktree', async ({
+    beansWithRun,
+    page
+  }) => {
+    await page.goto(beansWithRun.baseURL + '/');
+    await expect(page.getByText('Workspaces')).toBeVisible({ timeout: 10_000 });
+    await page.getByRole('button', { name: 'Create worktree' }).click();
+    await expect(page).toHaveURL(/\/workspace\//, { timeout: 10_000 });
+    const workspaceId = new URL(page.url()).pathname.split('/')[2];
+
+    // Start the run process and open a shell terminal
+    await page.getByTitle(/^Run:/).click();
+    await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible({ timeout: 5_000 });
+    await page.getByTitle('Show terminal').click();
+    await expect(page.getByRole('textbox', { name: 'Terminal input' })).toHaveCount(2, {
+      timeout: 5_000
+    });
+
+    const isRunning = async () =>
+      (
+        await beansWithRun.graphql<{ isRunning: boolean }>(
+          `{ isRunning(workspaceId: "${workspaceId}") }`
+        )
+      ).isRunning;
+    expect(await isRunning()).toBe(true);
+
+    // Destroy the workspace from its toolbar; the dialog says the run will be stopped
+    await page.getByRole('button', { name: 'Close Workspace' }).click();
+    await expect(page.getByText('Its running process will be stopped.')).toBeVisible();
+    await page.getByRole('button', { name: 'Destroy', exact: true }).click();
+    await expect(page).toHaveURL(/\/planning/, { timeout: 5_000 });
+
+    // The worktree disappears and its run process is no longer running
+    await expect
+      .poll(async () => (await beansWithRun.getWorktrees()).some((w) => w.id === workspaceId), {
+        timeout: 10_000
+      })
+      .toBe(false);
+    expect(await isRunning()).toBe(false);
+  });
+});
+
+test.describe('Run command that exits on its own', () => {
+  test.use({ runCommand: 'echo run-finished' });
+
+  test('does not leave a bare shell behind in the Run pane', async ({ beansWithRun, page }) => {
+    await page.goto(beansWithRun.baseURL + '/');
+    await expect(page.getByText('Workspaces')).toBeVisible({ timeout: 10_000 });
+    await page.getByRole('button', { name: 'Create worktree' }).click();
+    await expect(page).toHaveURL(/\/workspace\//, { timeout: 10_000 });
+    const workspaceId = new URL(page.url()).pathname.split('/')[2];
+
+    await page.getByTitle(/^Run:/).click();
+
+    // Once the command finishes, the workspace goes back to the Run button and
+    // the Run pane closes instead of showing an interactive prompt.
+    await expect(page.getByTitle(/^Run:/)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('textbox', { name: 'Terminal input' })).toHaveCount(0, {
+      timeout: 5_000
+    });
+
+    // No shell was spawned under the run session ID on the server.
+    await page.waitForTimeout(1_000);
+    const { isRunning } = await beansWithRun.graphql<{ isRunning: boolean }>(
+      `{ isRunning(workspaceId: "${workspaceId}") }`
+    );
+    expect(isRunning).toBe(false);
+  });
+});

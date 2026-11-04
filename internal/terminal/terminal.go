@@ -1,16 +1,32 @@
 package terminal
 
 import (
+	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"runtime"
 	"sync"
+	"time"
 
 	gopty "github.com/aymanbagabas/go-pty"
 )
 
 const scrollbackSize = 64 * 1024 // 64KB
+
+// Termination timeouts used by Session.Close. Variables so tests can shorten them.
+var (
+	// terminateGracePeriod is how long Close waits for the session's processes to
+	// exit after asking them to (SIGHUP/SIGTERM + PTY hangup) before force-killing.
+	terminateGracePeriod = 3 * time.Second
+	// killGracePeriod is how long Close waits after force-killing before giving up.
+	killGracePeriod = 2 * time.Second
+)
+
+// ErrSessionBlocked is returned when a session cannot be created because its ID is
+// currently blocked (e.g. while the owning workspace is being destroyed).
+var ErrSessionBlocked = errors.New("terminal session is shutting down")
 
 // RingBuffer is a fixed-size circular buffer for terminal scrollback.
 type RingBuffer struct {
@@ -81,7 +97,29 @@ type Session struct {
 	attachMu sync.Mutex
 	clientCh chan []byte
 
-	done chan struct{} // closed when readLoop exits (shell exited)
+	done   chan struct{} // closed when readLoop exits (shell exited)
+	exited chan struct{} // closed when the shell process has exited and been reaped
+
+	closeOnce sync.Once
+}
+
+// newSession wraps a started command and its PTY in a Session and starts the
+// background goroutines that pump output and reap the process.
+func newSession(id string, p gopty.Pty, cmd *gopty.Cmd) *Session {
+	sess := &Session{
+		id:         id,
+		pty:        p,
+		cmd:        cmd,
+		scrollback: NewRingBuffer(scrollbackSize),
+		done:       make(chan struct{}),
+		exited:     make(chan struct{}),
+	}
+	go sess.readLoop()
+	go func() {
+		defer close(sess.exited)
+		_ = cmd.Wait()
+	}()
+	return sess
 }
 
 // Write sends input to the PTY.
@@ -177,15 +215,65 @@ func (s *Session) readLoop() {
 	}
 }
 
-// Close kills the process and closes the PTY.
+// Close terminates the session's processes and closes the PTY. It blocks until the
+// processes have exited: every process in the PTY session is first asked to stop (SIGHUP,
+// SIGTERM and a PTY hangup), and is force-killed if it is still around after
+// terminateGracePeriod. Close is idempotent and safe to call concurrently.
 func (s *Session) Close() {
+	s.closeOnce.Do(s.terminate)
+}
+
+func (s *Session) terminate() {
+	pid := 0
+	if s.cmd.Process != nil {
+		pid = s.cmd.Process.Pid
+	}
+
+	if pid > 0 {
+		terminateSession(pid)
+	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	_ = s.pty.Close()
+	s.mu.Unlock()
+
+	if s.waitExit(pid, terminateGracePeriod) {
+		return
+	}
+
+	log.Printf("[terminal] session %s did not exit within %s, killing", s.id, terminateGracePeriod)
+	if pid > 0 {
+		killSession(pid)
+	}
 	if s.cmd.Process != nil {
 		_ = s.cmd.Process.Kill()
 	}
-	_ = s.pty.Close()
-	_ = s.cmd.Wait()
+	if !s.waitExit(pid, killGracePeriod) {
+		log.Printf("[terminal] session %s still has running processes after kill", s.id)
+	}
+}
+
+// waitExit waits until the shell process has exited and no other process in its
+// PTY session remains, or until the timeout elapses. Returns true on exit.
+func (s *Session) waitExit(pid int, timeout time.Duration) bool {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+
+	select {
+	case <-s.exited:
+	case <-deadline.C:
+		return false
+	}
+
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for pid > 0 && sessionAlive(pid) {
+		select {
+		case <-ticker.C:
+		case <-deadline.C:
+			return false
+		}
+	}
+	return true
 }
 
 // closeSlave closes the slave end of a Unix PTY in the parent process after
@@ -219,26 +307,37 @@ type EnvFunc func(sessionID string) []string
 type Manager struct {
 	mu       sync.Mutex
 	sessions map[string]*Session
-	envFunc  EnvFunc
+	// blocked counts active blocks per session ID; while > 0, no session with
+	// that ID may be created (see CloseAndBlock).
+	blocked map[string]int
+	envFunc EnvFunc
 }
 
 // NewManager creates a new terminal session manager.
 // An optional EnvFunc can provide extra environment variables per session.
 func NewManager(envFunc EnvFunc) *Manager {
-	return &Manager{sessions: make(map[string]*Session), envFunc: envFunc}
+	return &Manager{
+		sessions: make(map[string]*Session),
+		blocked:  make(map[string]int),
+		envFunc:  envFunc,
+	}
 }
 
-// Create spawns a new PTY session, replacing any existing session with the same ID.
+// Create spawns a new interactive login shell session, replacing (and
+// terminating) any existing session with the same ID.
 func (m *Manager) Create(sessionID, workDir string, cols, rows uint16) (*Session, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	return m.replace(sessionID, func() (*Session, error) {
+		return m.spawn(sessionID, workDir, cols, rows, "-l")
+	})
+}
 
-	if existing, ok := m.sessions[sessionID]; ok {
-		existing.Close()
-		delete(m.sessions, sessionID)
-	}
-
-	return m.createLocked(sessionID, workDir, cols, rows)
+// CreateWithCommand spawns a new PTY session that runs a specific command
+// (via shell -c) instead of an interactive login shell. The session ends
+// when the command exits. Any existing session with the same ID is terminated.
+func (m *Manager) CreateWithCommand(sessionID, workDir string, cols, rows uint16, command string) (*Session, error) {
+	return m.replace(sessionID, func() (*Session, error) {
+		return m.spawn(sessionID, workDir, cols, rows, "-l", "-c", command)
+	})
 }
 
 // GetOrCreate returns an existing alive session or creates a new one.
@@ -252,73 +351,61 @@ func (m *Manager) GetOrCreate(sessionID, workDir string, cols, rows uint16) (*Se
 			_ = existing.Resize(cols, rows)
 			return existing, true, nil
 		}
-		// Shell exited — clean up dead session
-		existing.Close()
+		// Shell exited — clean up the dead session in the background
+		// (its process is already gone, so this only releases resources).
 		delete(m.sessions, sessionID)
+		go existing.Close()
 	}
 
-	sess, err := m.createLocked(sessionID, workDir, cols, rows)
+	if m.blocked[sessionID] > 0 {
+		return nil, false, ErrSessionBlocked
+	}
+
+	sess, err := m.spawn(sessionID, workDir, cols, rows, "-l")
 	if err != nil {
 		return nil, false, err
 	}
+	m.sessions[sessionID] = sess
 	return sess, false, nil
 }
 
-func (m *Manager) createLocked(sessionID, workDir string, cols, rows uint16) (*Session, error) {
-	shell := defaultShell()
+// replace terminates any existing session with the given ID (without holding
+// the manager lock, since termination may take a while) and registers the
+// session returned by start.
+func (m *Manager) replace(sessionID string, start func() (*Session, error)) (*Session, error) {
+	m.mu.Lock()
+	if m.blocked[sessionID] > 0 {
+		m.mu.Unlock()
+		return nil, ErrSessionBlocked
+	}
+	old := m.sessions[sessionID]
+	delete(m.sessions, sessionID)
+	m.mu.Unlock()
 
-	p, err := gopty.New()
+	if old != nil {
+		old.Close()
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.blocked[sessionID] > 0 {
+		return nil, ErrSessionBlocked
+	}
+	sess, err := start()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create PTY: %w", err)
+		return nil, err
 	}
-
-	if err := p.Resize(int(cols), int(rows)); err != nil {
-		p.Close()
-		return nil, fmt.Errorf("failed to resize PTY: %w", err)
+	if raced := m.sessions[sessionID]; raced != nil {
+		// Another session was registered while we were terminating the old one.
+		go raced.Close()
 	}
-
-	env := append(os.Environ(), "TERM=xterm-256color")
-	if m.envFunc != nil {
-		env = append(env, m.envFunc(sessionID)...)
-	}
-
-	cmd := p.Command(shell, "-l")
-	cmd.Dir = workDir
-	cmd.Env = env
-
-	if err := cmd.Start(); err != nil {
-		p.Close()
-		return nil, fmt.Errorf("failed to start PTY: %w", err)
-	}
-
-	closeSlave(p)
-
-	sess := &Session{
-		id:         sessionID,
-		pty:        p,
-		cmd:        cmd,
-		scrollback: NewRingBuffer(scrollbackSize),
-		done:       make(chan struct{}),
-	}
-
-	go sess.readLoop()
-
 	m.sessions[sessionID] = sess
 	return sess, nil
 }
 
-// CreateWithCommand spawns a new PTY session that runs a specific command
-// (via shell -c) instead of an interactive login shell. The session ends
-// when the command exits.
-func (m *Manager) CreateWithCommand(sessionID, workDir string, cols, rows uint16, command string) (*Session, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if existing, ok := m.sessions[sessionID]; ok {
-		existing.Close()
-		delete(m.sessions, sessionID)
-	}
-
+// spawn starts the default shell with the given arguments on a new PTY.
+// It does not register the session with the manager.
+func (m *Manager) spawn(sessionID, workDir string, cols, rows uint16, args ...string) (*Session, error) {
 	shell := defaultShell()
 
 	p, err := gopty.New()
@@ -336,7 +423,7 @@ func (m *Manager) CreateWithCommand(sessionID, workDir string, cols, rows uint16
 		env = append(env, m.envFunc(sessionID)...)
 	}
 
-	cmd := p.Command(shell, "-l", "-c", command)
+	cmd := p.Command(shell, args...)
 	cmd.Dir = workDir
 	cmd.Env = env
 
@@ -347,18 +434,7 @@ func (m *Manager) CreateWithCommand(sessionID, workDir string, cols, rows uint16
 
 	closeSlave(p)
 
-	sess := &Session{
-		id:         sessionID,
-		pty:        p,
-		cmd:        cmd,
-		scrollback: NewRingBuffer(scrollbackSize),
-		done:       make(chan struct{}),
-	}
-
-	go sess.readLoop()
-
-	m.sessions[sessionID] = sess
-	return sess, nil
+	return newSession(sessionID, p, cmd), nil
 }
 
 // Get retrieves an existing session.
@@ -368,30 +444,74 @@ func (m *Manager) Get(sessionID string) *Session {
 	return m.sessions[sessionID]
 }
 
-// Close closes and removes a specific session.
+// Close terminates and removes a specific session, waiting for its processes to exit.
 func (m *Manager) Close(sessionID string) {
+	closeAll(m.take(sessionID))
+}
+
+// CloseAndBlock terminates the given sessions (concurrently), waiting for their
+// processes to exit, and prevents sessions with these IDs from being created
+// until the returned release function is called. Use it when the resources a
+// session depends on (such as a worktree directory) are about to disappear.
+func (m *Manager) CloseAndBlock(sessionIDs ...string) (release func()) {
 	m.mu.Lock()
-	sess, ok := m.sessions[sessionID]
-	if ok {
-		delete(m.sessions, sessionID)
+	for _, id := range sessionIDs {
+		m.blocked[id]++
 	}
 	m.mu.Unlock()
-	if ok {
-		sess.Close()
+
+	closeAll(m.take(sessionIDs...))
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			for _, id := range sessionIDs {
+				if m.blocked[id]--; m.blocked[id] <= 0 {
+					delete(m.blocked, id)
+				}
+			}
+		})
 	}
 }
 
-// Shutdown closes all active sessions.
+// Shutdown terminates all active sessions.
 func (m *Manager) Shutdown() {
 	m.mu.Lock()
-	sessions := make(map[string]*Session)
-	for k, v := range m.sessions {
-		sessions[k] = v
+	sessions := make([]*Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		sessions = append(sessions, s)
 	}
 	m.sessions = make(map[string]*Session)
 	m.mu.Unlock()
 
-	for _, s := range sessions {
-		s.Close()
+	closeAll(sessions)
+}
+
+// take removes the given sessions from the manager and returns them.
+func (m *Manager) take(sessionIDs ...string) []*Session {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var sessions []*Session
+	for _, id := range sessionIDs {
+		if s, ok := m.sessions[id]; ok {
+			sessions = append(sessions, s)
+			delete(m.sessions, id)
+		}
 	}
+	return sessions
+}
+
+// closeAll closes the given sessions concurrently and waits for all of them.
+func closeAll(sessions []*Session) {
+	var wg sync.WaitGroup
+	for _, s := range sessions {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.Close()
+		}()
+	}
+	wg.Wait()
 }

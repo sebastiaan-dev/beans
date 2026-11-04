@@ -259,6 +259,17 @@ func (r *mutationResolver) RemoveWorktree(ctx context.Context, id string) (bool,
 		return false, fmt.Errorf("worktree support not available")
 	}
 
+	// Stop the workspace's run process and shell terminal before touching the
+	// worktree: processes still running inside it would keep files open (causing
+	// permission errors on removal) or keep running against a deleted directory.
+	// CloseAndBlock waits for the processes to exit (force-killing them after a
+	// grace period) and prevents a reconnecting client from respawning a session
+	// until the removal has finished.
+	if r.TerminalMgr != nil {
+		release := r.TerminalMgr.CloseAndBlock(id, id+RunSessionSuffix)
+		defer release()
+	}
+
 	// Find the worktree path before removing (for unwatching)
 	worktrees, _ := r.WorktreeMgr.List()
 	for _, wt := range worktrees {
@@ -275,11 +286,6 @@ func (r *mutationResolver) RemoveWorktree(ctx context.Context, id string) (bool,
 	// Free the workspace port
 	if r.PortAlloc != nil {
 		r.PortAlloc.Free(id)
-	}
-
-	// Close any terminal session associated with this worktree
-	if r.TerminalMgr != nil {
-		r.TerminalMgr.Close(id)
 	}
 
 	return true, nil

@@ -234,12 +234,8 @@ function applyBeansDefaults(config: string, defaults: BeansDefaults): string {
 }
 
 type Fixtures = {
-  /**
-   * Optional `beans.default_status` / `beans.default_type` values written to
-   * the project's `.beans.yml` before beans-serve starts.
-   * Override with `test.use({ beansDefaults: { status: 'draft' } })`.
-   */
-  beansDefaults: BeansDefaults | null;
+  /** Run command configured for `beansWithRun` (override with `test.use({ runCommand })`). */
+  runCommand: string;
   beans: BeansCLI;
   beansWithRun: BeansCLI;
   backlogPage: BacklogPage;
@@ -255,6 +251,8 @@ type WorkerFixtures = {
  * beans-serve process, and port. Full isolation — no shared state between tests.
  */
 export const test = base.extend<Fixtures, WorkerFixtures>({
+  // A long-running process we can stop
+  runCommand: ['sleep 300', { option: true }],
 
   // Worker-scoped: run `beans init` once per worker, copy .beans dir for each test.
   // Fresh git repos are created per test (avoids stale git index/worktree state).
@@ -332,7 +330,7 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     }
   },
 
-  beansWithRun: async ({ page, beansTemplate }, use, testInfo) => {
+  beansWithRun: async ({ page, beansTemplate, runCommand }, use, testInfo) => {
     const { beans: beansBin, beansServe } = getBinaries();
 
     const projectDir = mkdtempSync(join(tmpdir(), 'beans-e2e-'));
@@ -346,10 +344,10 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     cpSync(join(beansTemplate, '.beans'), join(projectDir, '.beans'), { recursive: true });
     cpSync(join(beansTemplate, '.beans.yml'), join(projectDir, '.beans.yml'));
 
-    // Add a run command to the config — a long-running process we can stop
+    // Add the run command to the config
     const configPath = join(projectDir, '.beans.yml');
     const config = readFileSync(configPath, 'utf-8');
-    writeFileSync(configPath, config.replace(/run: ""/g, 'run: "sleep 300"'));
+    writeFileSync(configPath, config.replace(/run: ""/g, `run: ${JSON.stringify(runCommand)}`));
 
     const beansPath = join(projectDir, '.beans');
     const port = serverPort(testInfo.workerIndex, testInfo.parallelIndex);

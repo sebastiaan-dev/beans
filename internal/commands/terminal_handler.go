@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/hmans/beans/internal/graph"
 	"github.com/hmans/beans/internal/terminal"
 	"github.com/hmans/beans/internal/worktree"
 )
@@ -36,6 +37,10 @@ type terminalResizeMsg struct {
 // handleTerminalWS upgrades an HTTP connection to a WebSocket and bridges it to a PTY session.
 // Sessions persist across WebSocket reconnections — the PTY stays alive when the client disconnects,
 // and scrollback is replayed when a new client attaches.
+//
+// Shell sessions are created on demand. Run sessions ("<workspace>__run") are only ever
+// started by the startRun mutation: the handler attaches to an existing one but never
+// spawns a shell under a run session ID, so a Run pane can't end up showing a bare prompt.
 func handleTerminalWS(c *gin.Context, termMgr *terminal.Manager, wtMgr *worktree.Manager, upgrader websocket.Upgrader, projectRoot string) {
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -73,11 +78,27 @@ func handleTerminalWS(c *gin.Context, termMgr *terminal.Manager, wtMgr *worktree
 		rows = 24
 	}
 
-	sess, reconnected, err := termMgr.GetOrCreate(initMsg.SessionID, workDir, cols, rows)
-	if err != nil {
-		_ = conn.WriteMessage(websocket.CloseMessage,
-			websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "failed to create PTY"))
-		return
+	var sess *terminal.Session
+	var reconnected bool
+	if isRunSession(initMsg.SessionID) {
+		sess = termMgr.Get(initMsg.SessionID)
+		if sess == nil {
+			// The run process is gone (stopped, never started, or its workspace was
+			// destroyed) — report it as ended instead of spawning a shell.
+			_ = conn.WriteMessage(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseNormalClosure, "shell exited"))
+			return
+		}
+		// Replay scrollback even on first attach: the command may already have
+		// produced output (or exited) before the client connected.
+		reconnected = true
+	} else {
+		sess, reconnected, err = termMgr.GetOrCreate(initMsg.SessionID, workDir, cols, rows)
+		if err != nil {
+			_ = conn.WriteMessage(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "failed to create PTY"))
+			return
+		}
 	}
 
 	// Attach to session — get scrollback and live output channel
@@ -166,9 +187,9 @@ func handleTerminalWS(c *gin.Context, termMgr *terminal.Manager, wtMgr *worktree
 // directory as their parent workspace.
 func resolveTerminalWorkDir(sessionID string, wtMgr *worktree.Manager, projectRoot string) (string, error) {
 	// Strip __run suffix so run sessions resolve to the same workspace directory
-	baseID := strings.TrimSuffix(sessionID, "__run")
+	baseID := strings.TrimSuffix(sessionID, graph.RunSessionSuffix)
 
-	if baseID == "__central__" {
+	if baseID == graph.CentralSessionID {
 		return projectRoot, nil
 	}
 
@@ -184,6 +205,11 @@ func resolveTerminalWorkDir(sessionID string, wtMgr *worktree.Manager, projectRo
 	}
 
 	return "", fmt.Errorf("unknown session: %s", sessionID)
+}
+
+// isRunSession reports whether a terminal session ID refers to a workspace's run command.
+func isRunSession(sessionID string) bool {
+	return strings.HasSuffix(sessionID, graph.RunSessionSuffix)
 }
 
 // RegisterTerminalRoute adds the /api/terminal WebSocket endpoint to the Gin router.

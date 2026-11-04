@@ -20,8 +20,8 @@ func TestRingBufferBasic(t *testing.T) {
 func TestRingBufferWrap(t *testing.T) {
 	rb := NewRingBuffer(8)
 
-	rb.Write([]byte("abcdefgh"))  // fills exactly
-	rb.Write([]byte("ij"))        // wraps: should be "cdefghij"
+	rb.Write([]byte("abcdefgh")) // fills exactly
+	rb.Write([]byte("ij"))       // wraps: should be "cdefghij"
 
 	got := string(rb.Bytes())
 	if got != "cdefghij" {
@@ -429,4 +429,3 @@ func TestCreateWithCommandEnvFunc(t *testing.T) {
 		}
 	}
 }
-

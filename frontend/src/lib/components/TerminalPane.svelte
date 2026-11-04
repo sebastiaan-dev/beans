@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { ui } from '$lib/uiState.svelte';
   import { Terminal } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
   import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -9,9 +8,11 @@
     sessionId: string;
     hideToolbar?: boolean;
     onSessionEnd?: () => void;
+    /** Called by the toolbar's close button (shown only when set). */
+    onClose?: () => void;
   }
 
-  let { sessionId, hideToolbar = false, onSessionEnd }: Props = $props();
+  let { sessionId, hideToolbar = false, onSessionEnd, onClose }: Props = $props();
 
   let terminalEl: HTMLDivElement | undefined = $state();
   let terminal: Terminal | undefined;
@@ -188,7 +189,9 @@
     <div class="pane-toolbar">
       <span>Terminal</span>
       <div class="flex-1"></div>
-      <button onclick={() => ui.toggleTerminal()} class="btn-icon" title="Close"> &#x2715; </button>
+      {#if onClose}
+        <button onclick={onClose} class="btn-icon" title="Close"> &#x2715; </button>
+      {/if}
     </div>
     <div class="min-h-0 flex-1 p-2" bind:this={terminalEl}></div>
   </div>
