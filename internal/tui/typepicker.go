@@ -116,10 +116,8 @@ func newTypePickerModel(beanIDs []string, beanTitle, currentType string, cfg *co
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
 	l.SetShowPagination(false)
-	l.Styles.Title = listTitleStyle
+	applyListTheme(&l)
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 0, 0)
-	l.Styles.FilterPrompt = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
-	l.Styles.FilterCursor = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
 
 	// Select the current type
 	if selectedIndex < len(items) {

@@ -118,10 +118,8 @@ func newStatusPickerModel(beanIDs []string, beanTitle, currentStatus string, cfg
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
 	l.SetShowPagination(false)
-	l.Styles.Title = listTitleStyle
+	applyListTheme(&l)
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 0, 0)
-	l.Styles.FilterPrompt = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
-	l.Styles.FilterCursor = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
 
 	// Select the current status
 	if selectedIndex < len(items) {

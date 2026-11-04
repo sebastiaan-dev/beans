@@ -28,9 +28,16 @@ var (
 func getGlamourRenderer() *glamour.TermRenderer {
 	glamourRendererOnce.Do(func() {
 		var err error
-		// Use DarkStyle instead of WithAutoStyle() to avoid slow terminal detection
-		// that can cause multi-second delays in some terminals
-		glamourRenderer, err = glamour.NewTermRenderer(glamour.WithStylePath("dark"))
+		// Use a fixed ANSI-palette style instead of WithAutoStyle() to avoid slow
+		// terminal background detection that can cause multi-second delays in
+		// some terminals; the palette follows the terminal theme anyway. Use
+		// lipgloss's detected color profile so NO_COLOR and non-TTY output are
+		// respected like in the rest of the UI.
+		glamourRenderer, err = glamour.NewTermRenderer(
+			glamour.WithStyles(ui.MarkdownStyleConfig()),
+			glamour.WithChromaFormatter(ui.MarkdownChromaFormatter),
+			glamour.WithColorProfile(lipgloss.ColorProfile()),
+		)
 		if err != nil {
 			glamourRenderer = nil
 		}
@@ -222,14 +229,9 @@ func (m detailModel) createLinkList() list.Model {
 	l.SetFilteringEnabled(true)
 
 	// Style the title bar similar to the detail header title (badge style) but with different color
-	l.Styles.Title = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#fff")).
-		Background(ui.ColorBlue).
-		Padding(0, 1)
+	applyListTheme(&l)
+	l.Styles.Title = detailTitleStyle.Foreground(ui.ColorBlue)
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 0, 1) // Left padding to align with header title
-	l.Styles.FilterPrompt = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
-	l.Styles.FilterCursor = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
 	l.Styles.NoItems = lipgloss.NewStyle()
 
 	return l
