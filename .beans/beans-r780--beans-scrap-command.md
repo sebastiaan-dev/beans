@@ -1,11 +1,11 @@
 ---
 # beans-r780
 title: beans scrap command
-status: todo
+status: completed
 type: task
 priority: normal
 created_at: 2025-12-27T21:44:04Z
-updated_at: 2026-03-07T23:17:12Z
+updated_at: 2026-11-04T14:38:49Z
 order: VVv
 parent: beans-mmyp
 ---
@@ -24,3 +24,9 @@ Add `beans scrap <id> --reason <text>` command.
 ```bash
 beans scrap beans-abc --reason "Superseded by beans-xyz approach"
 ```
+
+## Summary of Changes
+
+- Added `beans scrap <id> --reason/-m text` (internal/commands/scrap.go): sets status to scrapped via UpdateBean.
+- --reason is required (structured VALIDATION_ERROR in --json); appended as `## Reasons for Scrapping` (prompt.tmpl convention); '-' reads stdin.
+- Already-scrapped beans are left unchanged with a warning.
