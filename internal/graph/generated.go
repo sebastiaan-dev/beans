@@ -159,6 +159,7 @@ type ComplexityRoot struct {
 	Mutation struct {
 		AddBlockedBy               func(childComplexity int, id string, targetID string, ifMatch *string) int
 		AddBlocking                func(childComplexity int, id string, targetID string, ifMatch *string) int
+		AnswerAgentQuestions       func(childComplexity int, beanID string, answers []*model.AgentQuestionAnswerInput) int
 		ArchiveBean                func(childComplexity int, id string) int
 		ClearAgentSession          func(childComplexity int, beanID string) int
 		CreateBean                 func(childComplexity int, input model.CreateBeanInput) int
@@ -175,7 +176,7 @@ type ComplexityRoot struct {
 		SendAgentMessage           func(childComplexity int, beanID string, message string, images []*model.ImageInput, attachments []*model.FileAttachmentInput) int
 		SetAgentActMode            func(childComplexity int, beanID string, actMode bool) int
 		SetAgentEffort             func(childComplexity int, beanID string, effort string) int
-		SetAgentPendingInteraction func(childComplexity int, beanID string, typeArg model.InteractionType, planContent *string) int
+		SetAgentPendingInteraction func(childComplexity int, beanID string, typeArg model.InteractionType, planContent *string, questions []*model.AskUserQuestionInput) int
 		SetAgentPlanMode           func(childComplexity int, beanID string, planMode bool) int
 		SetParent                  func(childComplexity int, id string, parentID *string, ifMatch *string) int
 		StartRun                   func(childComplexity int, workspaceID string) int
@@ -211,6 +212,8 @@ type ComplexityRoot struct {
 		Bean                  func(childComplexity int, id string) int
 		Beans                 func(childComplexity int, filter *model.BeanFilter) int
 		BranchStatus          func(childComplexity int, path *string) int
+		DefaultBeanStatus     func(childComplexity int) int
+		DefaultBeanType       func(childComplexity int) int
 		FileChanges           func(childComplexity int, path *string) int
 		FileDiff              func(childComplexity int, filePath string, staged bool, path *string) int
 		HasDirtyBeans         func(childComplexity int) int
@@ -295,7 +298,8 @@ type MutationResolver interface {
 	SetAgentPlanMode(ctx context.Context, beanID string, planMode bool) (bool, error)
 	SetAgentActMode(ctx context.Context, beanID string, actMode bool) (bool, error)
 	SetAgentEffort(ctx context.Context, beanID string, effort string) (bool, error)
-	SetAgentPendingInteraction(ctx context.Context, beanID string, typeArg model.InteractionType, planContent *string) (bool, error)
+	SetAgentPendingInteraction(ctx context.Context, beanID string, typeArg model.InteractionType, planContent *string, questions []*model.AskUserQuestionInput) (bool, error)
+	AnswerAgentQuestions(ctx context.Context, beanID string, answers []*model.AgentQuestionAnswerInput) (bool, error)
 	ClearAgentSession(ctx context.Context, beanID string) (bool, error)
 	ArchiveBean(ctx context.Context, id string) (bool, error)
 	SaveDirtyBeans(ctx context.Context) (int, error)
@@ -317,6 +321,8 @@ type QueryResolver interface {
 	HasDirtyBeans(ctx context.Context) (bool, error)
 	AgentActions(ctx context.Context, beanID string, skipForge *bool) ([]*model.AgentAction, error)
 	ProjectName(ctx context.Context) (string, error)
+	DefaultBeanStatus(ctx context.Context) (string, error)
+	DefaultBeanType(ctx context.Context) (string, error)
 	MainBranch(ctx context.Context) (string, error)
 	AgentEnabled(ctx context.Context) (bool, error)
 	WorktreeBaseRef(ctx context.Context) (string, error)
@@ -816,6 +822,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Mutation.AddBlocking(childComplexity, args["id"].(string), args["targetId"].(string), args["ifMatch"].(*string)), true
+	case "Mutation.answerAgentQuestions":
+		if e.complexity.Mutation.AnswerAgentQuestions == nil {
+			break
+		}
+
+		args, err := ec.field_Mutation_answerAgentQuestions_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Mutation.AnswerAgentQuestions(childComplexity, args["beanId"].(string), args["answers"].([]*model.AgentQuestionAnswerInput)), true
 	case "Mutation.archiveBean":
 		if e.complexity.Mutation.ArchiveBean == nil {
 			break
@@ -997,7 +1014,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.complexity.Mutation.SetAgentPendingInteraction(childComplexity, args["beanId"].(string), args["type"].(model.InteractionType), args["planContent"].(*string)), true
+		return e.complexity.Mutation.SetAgentPendingInteraction(childComplexity, args["beanId"].(string), args["type"].(model.InteractionType), args["planContent"].(*string), args["questions"].([]*model.AskUserQuestionInput)), true
 	case "Mutation.setAgentPlanMode":
 		if e.complexity.Mutation.SetAgentPlanMode == nil {
 			break
@@ -1227,6 +1244,18 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Query.BranchStatus(childComplexity, args["path"].(*string)), true
+	case "Query.defaultBeanStatus":
+		if e.complexity.Query.DefaultBeanStatus == nil {
+			break
+		}
+
+		return e.complexity.Query.DefaultBeanStatus(childComplexity), true
+	case "Query.defaultBeanType":
+		if e.complexity.Query.DefaultBeanType == nil {
+			break
+		}
+
+		return e.complexity.Query.DefaultBeanType(childComplexity), true
 	case "Query.fileChanges":
 		if e.complexity.Query.FileChanges == nil {
 			break
@@ -1497,6 +1526,9 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 	opCtx := graphql.GetOperationContext(ctx)
 	ec := executionContext{opCtx, e, 0, 0, make(chan graphql.DeferredResult)}
 	inputUnmarshalMap := graphql.BuildUnmarshalerMap(
+		ec.unmarshalInputAgentQuestionAnswerInput,
+		ec.unmarshalInputAskUserOptionInput,
+		ec.unmarshalInputAskUserQuestionInput,
 		ec.unmarshalInputBeanFilter,
 		ec.unmarshalInputBodyModification,
 		ec.unmarshalInputCreateBeanInput,
@@ -1709,6 +1741,22 @@ func (ec *executionContext) field_Mutation_addBlocking_args(ctx context.Context,
 		return nil, err
 	}
 	args["ifMatch"] = arg2
+	return args, nil
+}
+
+func (ec *executionContext) field_Mutation_answerAgentQuestions_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "beanId", ec.unmarshalNID2string)
+	if err != nil {
+		return nil, err
+	}
+	args["beanId"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "answers", ec.unmarshalNAgentQuestionAnswerInput2ᚕᚖgithubᚗcomᚋhmansᚋbeansᚋpkgᚋbeangraphᚋmodelᚐAgentQuestionAnswerInputᚄ)
+	if err != nil {
+		return nil, err
+	}
+	args["answers"] = arg1
 	return args, nil
 }
 
@@ -1960,6 +2008,11 @@ func (ec *executionContext) field_Mutation_setAgentPendingInteraction_args(ctx c
 		return nil, err
 	}
 	args["planContent"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "questions", ec.unmarshalOAskUserQuestionInput2ᚕᚖgithubᚗcomᚋhmansᚋbeansᚋpkgᚋbeangraphᚋmodelᚐAskUserQuestionInputᚄ)
+	if err != nil {
+		return nil, err
+	}
+	args["questions"] = arg3
 	return args, nil
 }
 
@@ -5815,7 +5868,7 @@ func (ec *executionContext) _Mutation_setAgentPendingInteraction(ctx context.Con
 		ec.fieldContext_Mutation_setAgentPendingInteraction,
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.resolvers.Mutation().SetAgentPendingInteraction(ctx, fc.Args["beanId"].(string), fc.Args["type"].(model.InteractionType), fc.Args["planContent"].(*string))
+			return ec.resolvers.Mutation().SetAgentPendingInteraction(ctx, fc.Args["beanId"].(string), fc.Args["type"].(model.InteractionType), fc.Args["planContent"].(*string), fc.Args["questions"].([]*model.AskUserQuestionInput))
 		},
 		nil,
 		ec.marshalNBoolean2bool,
@@ -5842,6 +5895,47 @@ func (ec *executionContext) fieldContext_Mutation_setAgentPendingInteraction(ctx
 	}()
 	ctx = graphql.WithFieldContext(ctx, fc)
 	if fc.Args, err = ec.field_Mutation_setAgentPendingInteraction_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Mutation_answerAgentQuestions(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Mutation_answerAgentQuestions,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Mutation().AnswerAgentQuestions(ctx, fc.Args["beanId"].(string), fc.Args["answers"].([]*model.AgentQuestionAnswerInput))
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Mutation_answerAgentQuestions(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Mutation",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Mutation_answerAgentQuestions_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
 	}
@@ -7094,6 +7188,64 @@ func (ec *executionContext) _Query_projectName(ctx context.Context, field graphq
 }
 
 func (ec *executionContext) fieldContext_Query_projectName(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_defaultBeanStatus(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_defaultBeanStatus,
+		func(ctx context.Context) (any, error) {
+			return ec.resolvers.Query().DefaultBeanStatus(ctx)
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_defaultBeanStatus(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_defaultBeanType(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_defaultBeanType,
+		func(ctx context.Context) (any, error) {
+			return ec.resolvers.Query().DefaultBeanType(ctx)
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_defaultBeanType(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	fc = &graphql.FieldContext{
 		Object:     "Query",
 		Field:      field,
@@ -9829,6 +9981,122 @@ func (ec *executionContext) fieldContext___Type_isOneOf(_ context.Context, field
 
 // region    **************************** input.gotpl *****************************
 
+func (ec *executionContext) unmarshalInputAgentQuestionAnswerInput(ctx context.Context, obj any) (model.AgentQuestionAnswerInput, error) {
+	var it model.AgentQuestionAnswerInput
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"question", "answers"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "question":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("question"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Question = data
+		case "answers":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("answers"))
+			data, err := ec.unmarshalNString2ᚕstringᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Answers = data
+		}
+	}
+
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputAskUserOptionInput(ctx context.Context, obj any) (model.AskUserOptionInput, error) {
+	var it model.AskUserOptionInput
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"label", "description"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "label":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("label"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Label = data
+		case "description":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("description"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Description = data
+		}
+	}
+
+	return it, nil
+}
+
+func (ec *executionContext) unmarshalInputAskUserQuestionInput(ctx context.Context, obj any) (model.AskUserQuestionInput, error) {
+	var it model.AskUserQuestionInput
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"header", "question", "multiSelect", "options"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "header":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("header"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Header = data
+		case "question":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("question"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Question = data
+		case "multiSelect":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("multiSelect"))
+			data, err := ec.unmarshalNBoolean2bool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.MultiSelect = data
+		case "options":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("options"))
+			data, err := ec.unmarshalNAskUserOptionInput2ᚕᚖgithubᚗcomᚋhmansᚋbeansᚋpkgᚋbeangraphᚋmodelᚐAskUserOptionInputᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Options = data
+		}
+	}
+
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputBeanFilter(ctx context.Context, obj any) (model.BeanFilter, error) {
 	var it model.BeanFilter
 	asMap := map[string]any{}
@@ -11560,6 +11828,13 @@ func (ec *executionContext) _Mutation(ctx context.Context, sel ast.SelectionSet)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
+		case "answerAgentQuestions":
+			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
+				return ec._Mutation_answerAgentQuestions(ctx, field)
+			})
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		case "clearAgentSession":
 			out.Values[i] = ec.OperationContext.RootResolverMiddleware(innerCtx, func(ctx context.Context) (res graphql.Marshaler) {
 				return ec._Mutation_clearAgentSession(ctx, field)
@@ -12014,6 +12289,50 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_projectName(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "defaultBeanStatus":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_defaultBeanStatus(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "defaultBeanType":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_defaultBeanType(ctx, field)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
@@ -13009,6 +13328,26 @@ func (ec *executionContext) marshalNAgentMessageRole2githubᚗcomᚋhmansᚋbean
 	return v
 }
 
+func (ec *executionContext) unmarshalNAgentQuestionAnswerInput2ᚕᚖgithubᚗcomᚋhmansᚋbeansᚋpkgᚋbeangraphᚋmodelᚐAgentQuestionAnswerInputᚄ(ctx context.Context, v any) ([]*model.AgentQuestionAnswerInput, error) {
+	var vSlice []any
+	vSlice = graphql.CoerceList(v)
+	var err error
+	res := make([]*model.AgentQuestionAnswerInput, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNAgentQuestionAnswerInput2ᚖgithubᚗcomᚋhmansᚋbeansᚋpkgᚋbeangraphᚋmodelᚐAgentQuestionAnswerInput(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalNAgentQuestionAnswerInput2ᚖgithubᚗcomᚋhmansᚋbeansᚋpkgᚋbeangraphᚋmodelᚐAgentQuestionAnswerInput(ctx context.Context, v any) (*model.AgentQuestionAnswerInput, error) {
+	res, err := ec.unmarshalInputAgentQuestionAnswerInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
 func (ec *executionContext) marshalNAgentSession2githubᚗcomᚋhmansᚋbeansᚋpkgᚋbeangraphᚋmodelᚐAgentSession(ctx context.Context, sel ast.SelectionSet, v model.AgentSession) graphql.Marshaler {
 	return ec._AgentSession(ctx, sel, &v)
 }
@@ -13087,6 +13426,26 @@ func (ec *executionContext) marshalNAskUserOption2ᚖgithubᚗcomᚋhmansᚋbean
 	return ec._AskUserOption(ctx, sel, v)
 }
 
+func (ec *executionContext) unmarshalNAskUserOptionInput2ᚕᚖgithubᚗcomᚋhmansᚋbeansᚋpkgᚋbeangraphᚋmodelᚐAskUserOptionInputᚄ(ctx context.Context, v any) ([]*model.AskUserOptionInput, error) {
+	var vSlice []any
+	vSlice = graphql.CoerceList(v)
+	var err error
+	res := make([]*model.AskUserOptionInput, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNAskUserOptionInput2ᚖgithubᚗcomᚋhmansᚋbeansᚋpkgᚋbeangraphᚋmodelᚐAskUserOptionInput(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) unmarshalNAskUserOptionInput2ᚖgithubᚗcomᚋhmansᚋbeansᚋpkgᚋbeangraphᚋmodelᚐAskUserOptionInput(ctx context.Context, v any) (*model.AskUserOptionInput, error) {
+	res, err := ec.unmarshalInputAskUserOptionInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
 func (ec *executionContext) marshalNAskUserQuestion2ᚖgithubᚗcomᚋhmansᚋbeansᚋpkgᚋbeangraphᚋmodelᚐAskUserQuestion(ctx context.Context, sel ast.SelectionSet, v *model.AskUserQuestion) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
@@ -13095,6 +13454,11 @@ func (ec *executionContext) marshalNAskUserQuestion2ᚖgithubᚗcomᚋhmansᚋbe
 		return graphql.Null
 	}
 	return ec._AskUserQuestion(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalNAskUserQuestionInput2ᚖgithubᚗcomᚋhmansᚋbeansᚋpkgᚋbeangraphᚋmodelᚐAskUserQuestionInput(ctx context.Context, v any) (*model.AskUserQuestionInput, error) {
+	res, err := ec.unmarshalInputAskUserQuestionInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) marshalNBean2githubᚗcomᚋhmansᚋbeansᚋpkgᚋbeanᚐBean(ctx context.Context, sel ast.SelectionSet, v bean.Bean) graphql.Marshaler {
@@ -13923,6 +14287,24 @@ func (ec *executionContext) marshalOAskUserQuestion2ᚕᚖgithubᚗcomᚋhmans�
 	}
 
 	return ret
+}
+
+func (ec *executionContext) unmarshalOAskUserQuestionInput2ᚕᚖgithubᚗcomᚋhmansᚋbeansᚋpkgᚋbeangraphᚋmodelᚐAskUserQuestionInputᚄ(ctx context.Context, v any) ([]*model.AskUserQuestionInput, error) {
+	if v == nil {
+		return nil, nil
+	}
+	var vSlice []any
+	vSlice = graphql.CoerceList(v)
+	var err error
+	res := make([]*model.AskUserQuestionInput, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNAskUserQuestionInput2ᚖgithubᚗcomᚋhmansᚋbeansᚋpkgᚋbeangraphᚋmodelᚐAskUserQuestionInput(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
 }
 
 func (ec *executionContext) marshalOBean2ᚕᚖgithubᚗcomᚋhmansᚋbeansᚋpkgᚋbeanᚐBeanᚄ(ctx context.Context, sel ast.SelectionSet, v []*bean.Bean) graphql.Marshaler {

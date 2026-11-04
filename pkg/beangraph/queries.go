@@ -7,6 +7,7 @@ import (
 	"github.com/hmans/beans/pkg/bean"
 	"github.com/hmans/beans/pkg/beangraph/model"
 	"github.com/hmans/beans/pkg/beancore"
+	"github.com/hmans/beans/pkg/config"
 )
 
 // Bean returns a single bean by ID, or nil if not found.
@@ -49,6 +50,24 @@ func (r *CoreResolver) ProjectName(ctx context.Context) (string, error) {
 		return "", nil
 	}
 	return cfg.GetProjectName(), nil
+}
+
+// DefaultBeanStatus returns the status applied to new beans when none is given.
+func (r *CoreResolver) DefaultBeanStatus(ctx context.Context) (string, error) {
+	cfg := r.Core.Config()
+	if cfg == nil {
+		return config.DefaultStatus, nil
+	}
+	return cfg.GetDefaultStatus(), nil
+}
+
+// DefaultBeanType returns the type applied to new beans when none is given.
+func (r *CoreResolver) DefaultBeanType(ctx context.Context) (string, error) {
+	cfg := r.Core.Config()
+	if cfg == nil {
+		return config.DefaultType, nil
+	}
+	return cfg.GetDefaultType(), nil
 }
 
 // MainBranch returns the current branch of the main repository.

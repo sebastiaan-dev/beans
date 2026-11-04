@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Bean } from '$lib/beans.svelte';
   import { beansStore } from '$lib/beans.svelte';
+  import { configStore } from '$lib/config.svelte';
   import { client } from '$lib/graphqlClient';
   import { CreateBeanDocument, UpdateBeanDocument, type CreateBeanInput, type UpdateBeanInput } from '$lib/graphql/generated';
 
@@ -18,10 +19,15 @@
   /* eslint-disable svelte/valid-compile */
   // svelte-ignore state_referenced_locally
   let title = $state(bean?.title ?? '');
+  // Type and status follow the configured defaults (beans.default_type /
+  // default_status) until the user picks a value, so new beans show — and are
+  // created with — the project's real defaults even if config loads late.
   // svelte-ignore state_referenced_locally
-  let type = $state(bean?.type ?? 'task');
+  let typeChoice = $state<string | null>(bean?.type ?? null);
   // svelte-ignore state_referenced_locally
-  let status = $state(bean?.status ?? 'todo');
+  let statusChoice = $state<string | null>(bean?.status ?? null);
+  const type = $derived(typeChoice ?? configStore.defaultBeanType);
+  const status = $derived(statusChoice ?? configStore.defaultBeanStatus);
   // svelte-ignore state_referenced_locally
   let priority = $state(bean?.priority ?? 'normal');
   // svelte-ignore state_referenced_locally
@@ -139,7 +145,7 @@
           <select
             id="bean-type"
             class="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text focus:border-accent focus:ring-2 focus:ring-accent/50 focus:outline-none"
-            bind:value={type}
+            bind:value={() => type, (v) => (typeChoice = v)}
           >
             {#each types as t}
               <option value={t}>{t}</option>
@@ -154,7 +160,7 @@
           <select
             id="bean-status"
             class="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text focus:border-accent focus:ring-2 focus:ring-accent/50 focus:outline-none"
-            bind:value={status}
+            bind:value={() => status, (v) => (statusChoice = v)}
           >
             {#each statuses as s}
               <option value={s}>{s}</option>

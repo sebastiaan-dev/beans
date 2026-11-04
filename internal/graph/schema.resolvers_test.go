@@ -3282,7 +3282,6 @@ func TestListFiles(t *testing.T) {
 	})
 }
 
-
 // setupWorktreeResolver creates a git repo with a committed .beans/ directory
 // and a resolver backed by a real worktree manager.
 func setupWorktreeResolver(t *testing.T) (*Resolver, *beancore.Core, string) {
@@ -3399,4 +3398,95 @@ func TestMutationCreateWorktreeWithBean(t *testing.T) {
 			t.Errorf("worktrees = %v, want none", wts)
 		}
 	})
+}
+
+func TestQueryDefaultBeanStatusAndType(t *testing.T) {
+	resolver, core := setupTestResolver(t)
+	qr := resolver.Query()
+	ctx := context.Background()
+
+	status, err := qr.DefaultBeanStatus(ctx)
+	if err != nil || status != config.DefaultStatus {
+		t.Errorf("DefaultBeanStatus() = %q, %v; want %q", status, err, config.DefaultStatus)
+	}
+	typ, err := qr.DefaultBeanType(ctx)
+	if err != nil || typ != config.DefaultType {
+		t.Errorf("DefaultBeanType() = %q, %v; want %q", typ, err, config.DefaultType)
+	}
+
+	core.Config().Beans.DefaultStatus = "draft"
+	core.Config().Beans.DefaultType = "feature"
+	if status, _ := qr.DefaultBeanStatus(ctx); status != "draft" {
+		t.Errorf("DefaultBeanStatus() = %q, want draft", status)
+	}
+	if typ, _ := qr.DefaultBeanType(ctx); typ != "feature" {
+		t.Errorf("DefaultBeanType() = %q, want feature", typ)
+	}
+}
+
+func TestAnswerAgentQuestions(t *testing.T) {
+	// No claude binary on PATH: the resume spawn fails fast instead of
+	// launching a real agent.
+	t.Setenv("PATH", t.TempDir())
+
+	resolver, _ := setupTestResolver(t)
+	resolver.AgentMgr = agent.NewManager("", nil)
+	resolver.ProjectRoot = t.TempDir()
+	mr := &mutationResolver{resolver}
+	ctx := context.Background()
+
+	if _, err := mr.AnswerAgentQuestions(ctx, CentralSessionID, nil); err == nil {
+		t.Fatal("expected error without pending questions")
+	}
+
+	_, err := mr.SetAgentPendingInteraction(ctx, CentralSessionID, model.InteractionTypeAskUser, nil, []*model.AskUserQuestionInput{
+		{Header: "DB", Question: "Which database?", Options: []*model.AskUserOptionInput{{Label: "SQLite"}, {Label: "PostgreSQL"}}},
+		{Header: "Features", Question: "Which features?", MultiSelect: true, Options: []*model.AskUserOptionInput{{Label: "Auth"}, {Label: "Billing"}}},
+	})
+	if err != nil {
+		t.Fatalf("SetAgentPendingInteraction() error = %v", err)
+	}
+	session := resolver.AgentMgr.GetSession(CentralSessionID)
+	if session.PendingInteraction == nil || len(session.PendingInteraction.Questions) != 2 {
+		t.Fatalf("expected 2 pending questions, got %+v", session.PendingInteraction)
+	}
+
+	// Partial answers are rejected and keep the questions pending.
+	if _, err := mr.AnswerAgentQuestions(ctx, CentralSessionID, []*model.AgentQuestionAnswerInput{
+		{Question: "Which database?", Answers: []string{"SQLite"}},
+	}); err == nil {
+		t.Fatal("expected error for partial answers")
+	}
+	if s := resolver.AgentMgr.GetSession(CentralSessionID); s.PendingInteraction == nil {
+		t.Fatal("expected questions to stay pending after rejected answers")
+	}
+
+	ok, err := mr.AnswerAgentQuestions(ctx, CentralSessionID, []*model.AgentQuestionAnswerInput{
+		{Question: "Which features?", Answers: []string{"Auth", "Billing"}},
+		{Question: "Which database?", Answers: []string{"PostgreSQL"}},
+	})
+	if err != nil || !ok {
+		t.Fatalf("AnswerAgentQuestions() = %v, %v", ok, err)
+	}
+
+	// Wait for the (failing) resume spawn so it can't outlive the PATH override.
+	deadline := time.Now().Add(2 * time.Second)
+	for resolver.AgentMgr.GetSession(CentralSessionID).Status != agent.StatusError {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for resume attempt")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	session = resolver.AgentMgr.GetSession(CentralSessionID)
+	if session.PendingInteraction != nil {
+		t.Error("expected pending interaction to be cleared")
+	}
+	last := session.Messages[len(session.Messages)-1]
+	want := "Here are my answers to your questions:\n" +
+		"\n- \"Which database?\"=\"PostgreSQL\"" +
+		"\n- \"Which features?\"=\"Auth\", \"Billing\""
+	if last.Role != agent.RoleUser || last.Content != want {
+		t.Errorf("last message = %s %q, want user %q", last.Role, last.Content, want)
+	}
 }

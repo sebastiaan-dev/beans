@@ -1,14 +1,21 @@
 <script lang="ts">
-  import type { PendingInteraction, AskUserQuestionData, AskUserOption } from '$lib/agentChat.svelte';
+  import type {
+    PendingInteraction,
+    AskUserQuestionData,
+    AskUserOption,
+    QuestionAnswer
+  } from '$lib/agentChat.svelte';
+  import { untrack } from 'svelte';
   import { renderMarkdown } from '$lib/markdown';
 
   interface Props {
     interaction: PendingInteraction;
     onApprove: () => void;
-    onSendMessage: (message: string) => void;
+    /** Submit answers to all pending questions; resolves to false on failure. */
+    onAnswer: (answers: QuestionAnswer[]) => Promise<boolean>;
   }
 
-  let { interaction, onApprove, onSendMessage }: Props = $props();
+  let { interaction, onApprove, onAnswer }: Props = $props();
 
   // Render plan content as markdown when available
   let renderedPlanContent = $state<string | null>(null);
@@ -23,32 +30,79 @@
     }
   });
 
-  // Multi-select state for AskUserQuestion
-  let multiSelectChoices = $state<Set<string>>(new Set());
+  // --- AskUserQuestion form -------------------------------------------------
+  //
+  // One AskUserQuestion call can carry several questions. Claude expects all
+  // answers back together, so they're collected in a single form and submitted
+  // at once. (Answering one at a time made the agent resume after the first
+  // answer and re-ask the rest.) A lone single-select question keeps the
+  // one-click shortcut.
 
-  // Reset multi-select choices when the pending interaction changes
+  const questions = $derived(interaction.questions ?? []);
+  const oneClick = $derived(questions.length === 1 && !questions[0].multiSelect);
+
+  // Selected option labels and free-text "Other" answers, per question index.
+  let selections = $state<string[][]>([]);
+  let otherTexts = $state<string[]>([]);
+  let submitting = $state(false);
+
+  // Reset the form only when the questions themselves change. The session
+  // subscription delivers a fresh interaction object on every update, so
+  // keying on identity would wipe in-progress answers.
+  const questionsKey = $derived(JSON.stringify(questions));
+  let formKey: string | null = null;
   $effect(() => {
-    interaction;
-    multiSelectChoices = new Set();
+    if (questionsKey === formKey) return;
+    formKey = questionsKey;
+    untrack(() => {
+      selections = questions.map(() => []);
+      otherTexts = questions.map(() => '');
+      submitting = false;
+    });
   });
 
-  function handleOptionClick(q: AskUserQuestionData, opt: AskUserOption) {
+  function answersFor(index: number): string[] {
+    const other = otherTexts[index]?.trim() ?? '';
+    return [...(selections[index] ?? []), ...(other ? [other] : [])];
+  }
+
+  const answeredCount = $derived(questions.filter((_, i) => answersFor(i).length > 0).length);
+  const allAnswered = $derived(questions.length > 0 && answeredCount === questions.length);
+
+  function toggleOption(index: number, q: AskUserQuestionData, opt: AskUserOption) {
+    if (submitting) return;
+    if (oneClick) {
+      submit([{ question: q.question, answers: [opt.label] }]);
+      return;
+    }
+    const current = selections[index] ?? [];
     if (q.multiSelect) {
-      const next = new Set(multiSelectChoices);
-      if (next.has(opt.label)) {
-        next.delete(opt.label);
-      } else {
-        next.add(opt.label);
-      }
-      multiSelectChoices = next;
+      selections[index] = current.includes(opt.label)
+        ? current.filter((l) => l !== opt.label)
+        : [...current, opt.label];
     } else {
-      onSendMessage(opt.label);
+      selections[index] = current.includes(opt.label) ? [] : [opt.label];
+      otherTexts[index] = '';
     }
   }
 
-  function submitMultiSelect() {
-    if (multiSelectChoices.size === 0) return;
-    onSendMessage([...multiSelectChoices].join(', '));
+  function setOtherText(index: number, q: AskUserQuestionData, text: string) {
+    otherTexts[index] = text;
+    // A single-select question takes either an option or a custom answer.
+    if (!q.multiSelect && text.trim()) selections[index] = [];
+  }
+
+  function submitForm() {
+    if (!allAnswered || submitting) return;
+    submit(questions.map((q, i) => ({ question: q.question, answers: answersFor(i) })));
+  }
+
+  async function submit(answers: QuestionAnswer[]) {
+    submitting = true;
+    // On success the server clears the interaction and this form unmounts;
+    // on failure, re-enable it so the user can retry.
+    const ok = await onAnswer(answers);
+    if (!ok) submitting = false;
   }
 </script>
 
@@ -79,29 +133,41 @@
 {/if}
 
 {#if interaction.type === 'ASK_USER'}
-  <div class="border-t border-accent/30 bg-accent/5 px-4 py-3">
-    {#if interaction.questions?.length}
-      <div class="space-y-4">
-        {#each interaction.questions as q}
-          <div class="space-y-2">
-            <div>
+  <div class="border-t border-accent/30 bg-accent/5 px-4 py-3" data-testid="agent-questions">
+    {#if questions.length}
+      <form
+        class="space-y-4"
+        onsubmit={(e) => {
+          e.preventDefault();
+          submitForm();
+        }}
+      >
+        {#each questions as q, i (i)}
+          <fieldset class="space-y-2" disabled={submitting} data-testid="agent-question">
+            <legend class="contents">
               {#if q.header}
                 <span class="inline-block rounded bg-accent/15 px-1.5 py-0.5 text-xs font-bold text-accent">
                   {q.header}
                 </span>
               {/if}
               <p class="mt-1 text-sm text-text">{q.question}</p>
-            </div>
+              {#if q.multiSelect && !oneClick}
+                <p class="text-xs text-text-faint">Select all that apply</p>
+              {/if}
+            </legend>
             <div class="flex flex-col gap-1.5">
-              {#each q.options as opt}
+              {#each q.options as opt, j (j)}
+                {@const selected = selections[i]?.includes(opt.label) ?? false}
                 <button
+                  type="button"
+                  aria-pressed={oneClick ? undefined : selected}
                   class={[
-                    'cursor-pointer rounded border px-3 py-2 text-left text-xs transition-colors',
-                    q.multiSelect && multiSelectChoices.has(opt.label)
+                    'cursor-pointer rounded border px-3 py-2 text-left text-xs transition-colors disabled:cursor-default disabled:opacity-60',
+                    selected
                       ? 'border-accent bg-accent/15 text-accent'
                       : 'border-border hover:border-accent/50 hover:bg-accent/5'
                   ]}
-                  onclick={() => handleOptionClick(q, opt)}
+                  onclick={() => toggleOption(i, q, opt)}
                 >
                   <span class="font-bold text-text">{opt.label}</span>
                   {#if opt.description}
@@ -109,18 +175,37 @@
                   {/if}
                 </button>
               {/each}
+              {#if !oneClick}
+                <input
+                  type="text"
+                  aria-label={`Other answer: ${q.question}`}
+                  placeholder="Other…"
+                  class="rounded border border-border bg-surface px-3 py-2 text-xs text-text placeholder:text-text-faint focus:border-accent focus:outline-none"
+                  value={otherTexts[i] ?? ''}
+                  oninput={(e) => setOtherText(i, q, e.currentTarget.value)}
+                />
+              {/if}
             </div>
-            {#if q.multiSelect && multiSelectChoices.size > 0}
-              <button
-                onclick={submitMultiSelect}
-                class="cursor-pointer rounded bg-accent px-3 py-1.5 text-xs text-accent-text transition-colors hover:bg-accent/90"
-              >
-                Submit ({multiSelectChoices.size} selected)
-              </button>
+          </fieldset>
+        {/each}
+
+        {#if !oneClick}
+          <div class="flex items-center gap-3">
+            <button
+              type="submit"
+              disabled={!allAnswered || submitting}
+              class="cursor-pointer rounded bg-accent px-3 py-1.5 text-xs text-accent-text transition-colors hover:bg-accent/90 disabled:cursor-default disabled:opacity-50"
+            >
+              {submitting ? 'Sending…' : questions.length > 1 ? 'Submit answers' : 'Submit answer'}
+            </button>
+            {#if questions.length > 1}
+              <span class="text-xs text-text-muted">
+                {answeredCount} of {questions.length} answered
+              </span>
             {/if}
           </div>
-        {/each}
-      </div>
+        {/if}
+      </form>
       <p class="mt-3 text-xs text-text-faint">
         Or type a custom reply below.
       </p>

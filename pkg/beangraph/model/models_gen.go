@@ -55,6 +55,14 @@ type AgentMessageImage struct {
 	MediaType string `json:"mediaType"`
 }
 
+// The user's answer to one pending AskUserQuestion question
+type AgentQuestionAnswerInput struct {
+	// The question text being answered (must match a pending question)
+	Question string `json:"question"`
+	// Selected option labels and/or free-text answers (at least one)
+	Answers []string `json:"answers"`
+}
+
 // An agent chat session within a worktree
 type AgentSession struct {
 	// Bean ID (worktree identifier)
@@ -93,6 +101,12 @@ type AskUserOption struct {
 	Description string `json:"description"`
 }
 
+// Input for a selectable option within an AskUserQuestionInput
+type AskUserOptionInput struct {
+	Label       string `json:"label"`
+	Description string `json:"description"`
+}
+
 // A structured question with selectable options from the AskUserQuestion tool
 type AskUserQuestion struct {
 	// Short label displayed as a chip/tag
@@ -103,6 +117,14 @@ type AskUserQuestion struct {
 	MultiSelect bool `json:"multiSelect"`
 	// Available choices
 	Options []*AskUserOption `json:"options"`
+}
+
+// Input for a structured AskUserQuestion (used to simulate agent questions)
+type AskUserQuestionInput struct {
+	Header      string                `json:"header"`
+	Question    string                `json:"question"`
+	MultiSelect bool                  `json:"multiSelect"`
+	Options     []*AskUserOptionInput `json:"options"`
 }
 
 // Represents a change to a bean

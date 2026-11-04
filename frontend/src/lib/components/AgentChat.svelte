@@ -76,7 +76,7 @@
     <PendingInteraction
       interaction={pendingInteraction}
       onApprove={approveInteraction}
-      onSendMessage={(msg) => store.sendMessage(beanId, msg)}
+      onAnswer={(answers) => store.answerQuestions(beanId, answers)}
     />
   {/if}
 

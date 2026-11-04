@@ -72,6 +72,18 @@ type Query {
   projectName: String!
 
   """
+  Default status for new beans (from beans.default_status config).
+  Applied by createBean when no status is given.
+  """
+  defaultBeanStatus: String!
+
+  """
+  Default type for new beans (from beans.default_type config).
+  Applied by createBean when no type is given.
+  """
+  defaultBeanType: String!
+
+  """
   The current branch of the main repository.
   """
   mainBranch: String!
@@ -314,7 +326,20 @@ type Mutation {
   Set a pending interaction on an agent session (creates session if needed).
   Used to simulate blocking tool calls for testing the approval UI.
   """
-  setAgentPendingInteraction(beanId: ID!, type: InteractionType!, planContent: String): Boolean!
+  setAgentPendingInteraction(
+    beanId: ID!
+    type: InteractionType!
+    planContent: String
+    "Structured questions (for ASK_USER only)"
+    questions: [AskUserQuestionInput!]
+  ): Boolean!
+
+  """
+  Answer all questions of the agent's pending AskUserQuestion interaction at once.
+  Every pending question must be answered exactly once. The answers are sent to
+  the agent as a single user message, so the agent receives them together.
+  """
+  answerAgentQuestions(beanId: ID!, answers: [AgentQuestionAnswerInput!]!): Boolean!
 
   """
   Clear the agent session for a bean. Stops any running process, removes the
@@ -746,6 +771,34 @@ type AskUserOption {
   label: String!
   "Explanation of what this option means"
   description: String!
+}
+
+"""
+Input for a structured AskUserQuestion (used to simulate agent questions)
+"""
+input AskUserQuestionInput {
+  header: String!
+  question: String!
+  multiSelect: Boolean!
+  options: [AskUserOptionInput!]!
+}
+
+"""
+Input for a selectable option within an AskUserQuestionInput
+"""
+input AskUserOptionInput {
+  label: String!
+  description: String!
+}
+
+"""
+The user's answer to one pending AskUserQuestion question
+"""
+input AgentQuestionAnswerInput {
+  "The question text being answered (must match a pending question)"
+  question: String!
+  "Selected option labels and/or free-text answers (at least one)"
+  answers: [String!]!
 }
 
 """
