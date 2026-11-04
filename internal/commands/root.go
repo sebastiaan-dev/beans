@@ -24,8 +24,7 @@ func NewRootCmd() *cobra.Command {
 Track your work alongside your code and supercharge your coding agent with
 a full view of your project.`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			// Skip core initialization for init, prime, and version commands
-			if cmd.Name() == "init" || cmd.Name() == "prime" || cmd.Name() == "version" {
+			if !requiresProject(cmd) {
 				return nil
 			}
 
@@ -66,6 +65,20 @@ a full view of your project.`,
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Path to config file (default: searches upward for .beans.yml)")
 
 	return rootCmd
+}
+
+// requiresProject reports whether cmd needs a loaded beans project.
+// Commands that work outside of a project (setup, help, shell completion
+// scripts) must not fail just because no .beans directory exists.
+func requiresProject(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		switch c.Name() {
+		case "init", "prime", "version", "help", "completion",
+			cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
+			return false
+		}
+	}
+	return true
 }
 
 // resolveBeansPath determines the beans data directory path.
