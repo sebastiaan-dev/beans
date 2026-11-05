@@ -1,0 +1,3 @@
+#!/bin/sh
+# Fake Claude Code CLI for e2e tests — see fake-claude.mjs.
+exec node "$(dirname "$0")/fake-claude.mjs" "$@"

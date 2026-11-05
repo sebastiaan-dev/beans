@@ -10,7 +10,6 @@ import { test, expect } from './fixtures';
  */
 test.describe('Start Work bean sync', () => {
   // Start Work sends a prompt to the agent; never spawn a real one.
-  test.use({ stubAgent: true });
 
   test('the new workspace gets the bean including uncommitted edits', async ({
     beans,

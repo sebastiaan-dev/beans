@@ -291,17 +291,9 @@ func (r *mutationResolver) SendAgentMessage(ctx context.Context, beanID string, 
 		return false, fmt.Errorf("agent manager not available")
 	}
 
-	var workDir string
-	if beanID == CentralSessionID {
-		// Central agent chat runs in the project root
-		workDir = r.ProjectRoot
-	} else {
-		// Find the worktree path for this bean
-		var err error
-		workDir, err = r.findWorktreePath(beanID)
-		if err != nil {
-			return false, err
-		}
+	workDir, err := r.agentWorkDir(beanID)
+	if err != nil {
+		return false, err
 	}
 
 	var attachmentPaths []string
@@ -369,7 +361,7 @@ func (r *mutationResolver) SetAgentEffort(ctx context.Context, beanID string, ef
 }
 
 // SetAgentPendingInteraction is the resolver for the setAgentPendingInteraction field.
-func (r *mutationResolver) SetAgentPendingInteraction(ctx context.Context, beanID string, typeArg model.InteractionType, planContent *string) (bool, error) {
+func (r *mutationResolver) SetAgentPendingInteraction(ctx context.Context, beanID string, typeArg model.InteractionType, planContent *string, questions []*model.AskUserQuestionInput) (bool, error) {
 	if r.AgentMgr == nil {
 		return false, fmt.Errorf("agent manager not available")
 	}
@@ -386,7 +378,38 @@ func (r *mutationResolver) SetAgentPendingInteraction(ctx context.Context, beanI
 	if planContent != nil {
 		interaction.PlanContent = *planContent
 	}
+	for _, q := range questions {
+		opts := make([]agent.AskUserOption, len(q.Options))
+		for i, o := range q.Options {
+			opts[i] = agent.AskUserOption{Label: o.Label, Description: o.Description}
+		}
+		interaction.Questions = append(interaction.Questions, agent.AskUserQuestion{
+			Header:      q.Header,
+			Question:    q.Question,
+			MultiSelect: q.MultiSelect,
+			Options:     opts,
+		})
+	}
 	if err := r.AgentMgr.SetPendingInteraction(beanID, interaction); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// AnswerAgentQuestions is the resolver for the answerAgentQuestions field.
+func (r *mutationResolver) AnswerAgentQuestions(ctx context.Context, beanID string, answers []*model.AgentQuestionAnswerInput) (bool, error) {
+	if r.AgentMgr == nil {
+		return false, fmt.Errorf("agent manager not available")
+	}
+	workDir, err := r.agentWorkDir(beanID)
+	if err != nil {
+		return false, err
+	}
+	converted := make([]agent.QuestionAnswer, len(answers))
+	for i, a := range answers {
+		converted[i] = agent.QuestionAnswer{Question: a.Question, Answers: a.Answers}
+	}
+	if err := r.AgentMgr.AnswerQuestions(beanID, workDir, converted); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -838,6 +861,16 @@ func (r *queryResolver) AgentActions(ctx context.Context, beanID string, skipFor
 // ProjectName is the resolver for the projectName field.
 func (r *queryResolver) ProjectName(ctx context.Context) (string, error) {
 	return r.CoreResolver.ProjectName(ctx)
+}
+
+// DefaultBeanStatus is the resolver for the defaultBeanStatus field.
+func (r *queryResolver) DefaultBeanStatus(ctx context.Context) (string, error) {
+	return r.CoreResolver.DefaultBeanStatus(ctx)
+}
+
+// DefaultBeanType is the resolver for the defaultBeanType field.
+func (r *queryResolver) DefaultBeanType(ctx context.Context) (string, error) {
+	return r.CoreResolver.DefaultBeanType(ctx)
 }
 
 // MainBranch is the resolver for the mainBranch field.

@@ -151,6 +151,8 @@ subscription WorkspaceStatuses {
 
 query Config {
   projectName
+  defaultBeanStatus
+  defaultBeanType
   mainBranch
   agentEnabled
   worktreeBaseRef
@@ -252,6 +254,10 @@ mutation RemoveWorktree($id: ID!) {
 
 mutation SendAgentMessage($beanId: ID!, $message: String!, $images: [ImageInput!], $attachments: [FileAttachmentInput!]) {
   sendAgentMessage(beanId: $beanId, message: $message, images: $images, attachments: $attachments)
+}
+
+mutation AnswerAgentQuestions($beanId: ID!, $answers: [AgentQuestionAnswerInput!]!) {
+  answerAgentQuestions(beanId: $beanId, answers: $answers)
 }
 
 query ListFiles($workspaceId: ID, $prefix: String!, $limit: Int) {

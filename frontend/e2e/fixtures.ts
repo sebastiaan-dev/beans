@@ -1,15 +1,28 @@
 import { test as base } from '@playwright/test';
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
-import { chmodSync, cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { BacklogPage } from './pages/backlog-page';
 import { BoardPage } from './pages/board-page';
 
 const PROJECT_ROOT = join(import.meta.dirname, '../..');
-// Overridable so several e2e runs (e.g. parallel worktrees) don't collide.
-const BASE_PORT = Number(process.env.BEANS_E2E_BASE_PORT ?? 22900);
+const BASE_PORT = 22900;
+
+/**
+ * Pick a unique port for a test's beans-serve instance.
+ *
+ * BEANS_E2E_BASE_PORT confines all servers of a run to [base, base + 100),
+ * which lets several e2e runs share a machine without port collisions.
+ */
+function serverPort(workerIndex: number, parallelIndex: number): number {
+  const override = process.env.BEANS_E2E_BASE_PORT;
+  if (override) {
+    return Number(override) + ((workerIndex * 10 + parallelIndex) % 100);
+  }
+  return BASE_PORT + workerIndex * 100 + parallelIndex;
+}
 
 const GIT_ENV = {
   ...process.env,
@@ -84,6 +97,22 @@ async function waitForServer(port: number, timeoutMs = 10_000): Promise<void> {
   throw new Error(`Server on port ${port} did not start within ${timeoutMs}ms`);
 }
 
+/** Directory containing the fake `claude` CLI (see fake-claude/fake-claude.mjs). */
+const FAKE_CLAUDE_BIN = join(import.meta.dirname, 'fake-claude');
+
+/**
+ * Environment for beans-serve. The fake `claude` shadows any real Claude Code
+ * install on PATH, so agent sessions in e2e tests never start a real agent.
+ */
+function serverEnv(fakeClaudeDir: string): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    GIN_MODE: 'release',
+    PATH: `${FAKE_CLAUDE_BIN}${delimiter}${process.env.PATH ?? ''}`,
+    FAKE_CLAUDE_DIR: fakeClaudeDir
+  };
+}
+
 /**
  * Helper to run beans CLI commands against a specific beans path.
  */
@@ -92,7 +121,9 @@ class BeansCLI {
     readonly beansPath: string,
     readonly projectDir: string,
     private binaryPath: string,
-    readonly baseURL: string
+    readonly baseURL: string,
+    /** State directory of the fake claude CLI ($FAKE_CLAUDE_DIR). */
+    readonly fakeClaudeDir: string
   ) {}
 
   run(args: string[]): string {
@@ -181,12 +212,34 @@ class BeansCLI {
   }
 }
 
+type BeansDefaults = { status?: string; type?: string };
+
+/** Set beans.default_status / beans.default_type in a `.beans.yml` document. */
+function applyBeansDefaults(config: string, defaults: BeansDefaults): string {
+  const lines = config.split('\n');
+  const beansIdx = lines.indexOf('beans:');
+  if (beansIdx === -1) throw new Error('.beans.yml has no top-level "beans:" section');
+  const indent = /^(\s+)/.exec(lines[beansIdx + 1] ?? '')?.[1] ?? '  ';
+
+  const set = (key: string, value: string | undefined) => {
+    if (!value) return;
+    const line = `${indent}${key}: ${value}`;
+    const existing = lines.findIndex((l) => l.startsWith(`${indent}${key}:`));
+    if (existing === -1) lines.splice(beansIdx + 1, 0, line);
+    else lines[existing] = line;
+  };
+  set('default_status', defaults.status);
+  set('default_type', defaults.type);
+  return lines.join('\n');
+}
+
 type Fixtures = {
   /**
-   * When true, beans-serve gets a stub `claude` binary on its PATH so tests
-   * that trigger agent runs (e.g. Start Work) never spawn a real agent.
+   * Optional `beans.default_status` / `beans.default_type` values written to
+   * the project's `.beans.yml` before beans-serve starts.
+   * Override with `test.use({ beansDefaults: { status: 'draft' } })`.
    */
-  stubAgent: boolean;
+  beansDefaults: BeansDefaults | null;
   beans: BeansCLI;
   beansWithRun: BeansCLI;
   backlogPage: BacklogPage;
@@ -202,7 +255,6 @@ type WorkerFixtures = {
  * beans-serve process, and port. Full isolation — no shared state between tests.
  */
 export const test = base.extend<Fixtures, WorkerFixtures>({
-  stubAgent: [false, { option: true }],
 
   // Worker-scoped: run `beans init` once per worker, copy .beans dir for each test.
   // Fresh git repos are created per test (avoids stale git index/worktree state).
@@ -216,11 +268,14 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     { scope: 'worker' }
   ],
 
-  beans: async ({ page, beansTemplate, stubAgent }, use, testInfo) => {
+  beansDefaults: [null, { option: true }],
+
+  beans: async ({ page, beansTemplate, beansDefaults }, use, testInfo) => {
     const { beans: beansBin, beansServe } = getBinaries();
 
     // Fresh git repo per test (needed for worktree operations)
     const projectDir = mkdtempSync(join(tmpdir(), 'beans-e2e-'));
+    const fakeClaudeDir = mkdtempSync(join(tmpdir(), 'beans-e2e-claude-'));
     execFileSync('git', ['init', '-b', 'main'], { cwd: projectDir, timeout: 10_000 });
     execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], {
       cwd: projectDir,
@@ -230,21 +285,18 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     // Copy pre-initialized beans files from template (avoids expensive `beans init` per test)
     cpSync(join(beansTemplate, '.beans'), join(projectDir, '.beans'), { recursive: true });
     cpSync(join(beansTemplate, '.beans.yml'), join(projectDir, '.beans.yml'));
+    if (beansDefaults) {
+      const configPath = join(projectDir, '.beans.yml');
+      writeFileSync(
+        configPath,
+        applyBeansDefaults(readFileSync(configPath, 'utf-8'), beansDefaults)
+      );
+    }
 
     const beansPath = join(projectDir, '.beans');
 
     // Pick a unique port based on worker + test index
-    const port = BASE_PORT + testInfo.workerIndex * 100 + testInfo.parallelIndex;
-
-    const env: NodeJS.ProcessEnv = { ...process.env, GIN_MODE: 'release' };
-    // Kept outside the project so it doesn't show up in git status.
-    const binDir = stubAgent ? mkdtempSync(join(tmpdir(), 'beans-e2e-bin-')) : null;
-    if (binDir) {
-      const stub = join(binDir, 'claude');
-      writeFileSync(stub, '#!/bin/sh\nexit 0\n');
-      chmodSync(stub, 0o755);
-      env.PATH = `${binDir}:${process.env.PATH ?? ''}`;
-    }
+    const port = serverPort(testInfo.workerIndex, testInfo.parallelIndex);
 
     // Start beans-serve
     const server: ChildProcess = spawn(
@@ -252,7 +304,7 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
       ['--port', String(port), '--beans-path', beansPath],
       {
         cwd: projectDir,
-        env,
+        env: serverEnv(fakeClaudeDir),
         stdio: 'pipe'
       }
     );
@@ -265,12 +317,18 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
       // Navigate away so tests start fresh with goto()
       await page.goto('about:blank');
 
-      const cli = new BeansCLI(beansPath, projectDir, beansBin, `http://localhost:${port}`);
+      const cli = new BeansCLI(
+        beansPath,
+        projectDir,
+        beansBin,
+        `http://localhost:${port}`,
+        fakeClaudeDir
+      );
       await use(cli);
     } finally {
       server.kill();
       rmSync(projectDir, { recursive: true, force: true });
-      if (binDir) rmSync(binDir, { recursive: true, force: true });
+      rmSync(fakeClaudeDir, { recursive: true, force: true });
     }
   },
 
@@ -278,6 +336,7 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     const { beans: beansBin, beansServe } = getBinaries();
 
     const projectDir = mkdtempSync(join(tmpdir(), 'beans-e2e-'));
+    const fakeClaudeDir = mkdtempSync(join(tmpdir(), 'beans-e2e-claude-'));
     execFileSync('git', ['init', '-b', 'main'], { cwd: projectDir, timeout: 10_000 });
     execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], {
       cwd: projectDir,
@@ -293,14 +352,14 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     writeFileSync(configPath, config.replace(/run: ""/g, 'run: "sleep 300"'));
 
     const beansPath = join(projectDir, '.beans');
-    const port = BASE_PORT + testInfo.workerIndex * 100 + testInfo.parallelIndex;
+    const port = serverPort(testInfo.workerIndex, testInfo.parallelIndex);
 
     const server: ChildProcess = spawn(
       beansServe,
       ['--port', String(port), '--beans-path', beansPath],
       {
         cwd: projectDir,
-        env: { ...process.env, GIN_MODE: 'release' },
+        env: serverEnv(fakeClaudeDir),
         stdio: 'pipe'
       }
     );
@@ -310,11 +369,18 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
       await page.goto(`http://localhost:${port}/`);
       await page.goto('about:blank');
 
-      const cli = new BeansCLI(beansPath, projectDir, beansBin, `http://localhost:${port}`);
+      const cli = new BeansCLI(
+        beansPath,
+        projectDir,
+        beansBin,
+        `http://localhost:${port}`,
+        fakeClaudeDir
+      );
       await use(cli);
     } finally {
       server.kill();
       rmSync(projectDir, { recursive: true, force: true });
+      rmSync(fakeClaudeDir, { recursive: true, force: true });
     }
   },
 

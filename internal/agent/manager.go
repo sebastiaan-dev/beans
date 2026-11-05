@@ -162,6 +162,16 @@ func (m *Manager) GetSession(beanID string) *Session {
 // If no session exists, one is created. If no process is running, one is spawned.
 // Images are optional base64-decoded uploads that will be stored and forwarded to Claude.
 func (m *Manager) SendMessage(beanID, workDir, message string, images []ImageUpload, attachmentPaths ...string) error {
+	return m.sendMessage(beanID, workDir, images, attachmentPaths, func(*Session) (string, error) {
+		return message, nil
+	})
+}
+
+// sendMessage implements SendMessage. buildMessage runs under the manager lock
+// with the current session (nil if none exists yet) and returns the message to
+// send; returning an error aborts without touching the session. This lets
+// callers derive the message from session state atomically (see AnswerQuestions).
+func (m *Manager) sendMessage(beanID, workDir string, images []ImageUpload, attachmentPaths []string, buildMessage func(*Session) (string, error)) error {
 	// Save images to disk before acquiring the lock
 	var imageRefs []ImageRef
 	if m.store != nil && len(images) > 0 {
@@ -178,6 +188,11 @@ func (m *Manager) SendMessage(beanID, workDir, message string, images []ImageUpl
 
 	// Get or create session
 	session, ok := m.sessions[beanID]
+	message, err := buildMessage(session)
+	if err != nil {
+		m.mu.Unlock()
+		return err
+	}
 	if !ok {
 		session = m.loadOrCreateSession(beanID, workDir)
 		m.sessions[beanID] = session

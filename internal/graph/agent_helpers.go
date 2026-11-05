@@ -430,3 +430,12 @@ func (r *Resolver) findWorktreePath(beanID string) (string, error) {
 	}
 	return "", fmt.Errorf("no worktree found for bean %s", beanID)
 }
+
+// agentWorkDir returns the working directory for an agent session: the project
+// root for the central session, otherwise the bean's worktree path.
+func (r *Resolver) agentWorkDir(beanID string) (string, error) {
+	if beanID == CentralSessionID {
+		return r.ProjectRoot, nil
+	}
+	return r.findWorktreePath(beanID)
+}

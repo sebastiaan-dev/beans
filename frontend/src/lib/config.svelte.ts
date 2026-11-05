@@ -3,6 +3,9 @@ import { ConfigDocument } from './graphql/generated';
 
 class ConfigStore {
   projectName = $state('');
+  /** Default status/type for new beans (beans.default_status / default_type). */
+  defaultBeanStatus = $state('todo');
+  defaultBeanType = $state('task');
   mainBranch = $state('main');
   agentEnabled = $state(true);
   worktreeBaseRef = $state('main');
@@ -17,6 +20,8 @@ class ConfigStore {
     }
     if (result.data) {
       this.projectName = result.data.projectName;
+      this.defaultBeanStatus = result.data.defaultBeanStatus;
+      this.defaultBeanType = result.data.defaultBeanType;
       this.mainBranch = result.data.mainBranch;
       this.agentEnabled = result.data.agentEnabled;
       this.worktreeBaseRef = result.data.worktreeBaseRef;

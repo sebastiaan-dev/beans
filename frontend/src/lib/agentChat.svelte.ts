@@ -3,6 +3,7 @@ import { client } from './graphqlClient';
 import {
   AgentSessionChangedDocument,
   SendAgentMessageDocument,
+  AnswerAgentQuestionsDocument,
   StopAgentDocument,
   SetAgentPlanModeDocument,
   SetAgentActModeDocument,
@@ -19,6 +20,7 @@ import {
   type InteractionType,
   type ImageInput,
   type FileAttachmentInput,
+  type AgentQuestionAnswerInput,
 } from './graphql/generated';
 
 export type AgentMessageImage = GqlAgentMessageImage;
@@ -31,6 +33,7 @@ export type SubagentActivity = GqlSubagentActivity;
 export type AgentSession = AgentSessionFieldsFragment;
 export type ImageUploadInput = ImageInput;
 export type FileAttachment = FileAttachmentInput;
+export type QuestionAnswer = AgentQuestionAnswerInput;
 
 export class AgentChatStore {
   session = $state<AgentSession | null>(null);
@@ -136,6 +139,29 @@ export class AgentChatStore {
         images: images ?? null,
         attachments: attachments?.length ? attachments : null
       })
+      .toPromise();
+
+    this.sending = false;
+
+    if (result.error) {
+      this.error = result.error.message;
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Answer all questions of the pending AskUserQuestion interaction at once.
+   * The server formats the answers into a single user message and clears the
+   * interaction; both arrive via the session subscription.
+   */
+  async answerQuestions(beanId: string, answers: QuestionAnswer[]): Promise<boolean> {
+    this.sending = true;
+    this.error = null;
+
+    const result = await client
+      .mutation(AnswerAgentQuestionsDocument, { beanId, answers })
       .toPromise();
 
     this.sending = false;
