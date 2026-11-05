@@ -15,6 +15,7 @@ import type { Bean } from '$lib/beans.svelte';
 import { beansStore } from '$lib/beans.svelte';
 import { applyDrop, applyReparent } from '$lib/dragOrder';
 import { isBacklogRoot } from '$lib/backlog';
+import { foldState } from '$lib/foldState.svelte';
 
 export type DropMode = 'reorder' | 'reparent';
 
@@ -128,6 +129,8 @@ class BacklogDragState {
     if (mode === 'reparent' && reparentTarget) {
       const targetChildren = beansStore.children(reparentTarget);
       applyReparent(beanId, reparentTarget, targetChildren);
+      // Reveal the dropped bean if it landed in a collapsed parent.
+      foldState.expand(reparentTarget);
     } else {
       applyDrop(beans, beanId, targetIdx ?? beans.length, {
         newParentId: this.#dropParent(beanId, parentId),

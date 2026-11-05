@@ -9,6 +9,11 @@
     maxSize?: number;
     collapsed?: boolean;
     persistKey?: string;
+    /**
+     * Render the panel at this size and disable resizing it, without forgetting
+     * its regular (persisted) size — e.g. a sidebar collapsed to an icon rail.
+     */
+    fixedSize?: number;
   }
 
   interface Props {
@@ -105,7 +110,10 @@
 >
   {#each visibleIndices as panelIdx, vi (panelIdx)}
     <!-- Resize handle between consecutive visible panels -->
-    {#if vi > 0}
+    {#if vi > 0 && (panels[visibleIndices[vi - 1]].fixedSize !== undefined || panels[panelIdx].fixedSize !== undefined)}
+      <!-- Divider only: a fixed-size neighbour can't be resized -->
+      <span class={['block shrink-0 bg-border', isHorizontal ? 'w-px' : 'h-px']}></span>
+    {:else if vi > 0}
       <button
         class={[
           'group relative z-10 shrink-0 border-0 rounded-none bg-transparent p-0',
@@ -134,7 +142,7 @@
     {:else}
       <div
         class="flex shrink-0 flex-col overflow-hidden"
-        style="{isHorizontal ? 'width' : 'height'}: {sizes[panelIdx]}px"
+        style="{isHorizontal ? 'width' : 'height'}: {panels[panelIdx].fixedSize ?? sizes[panelIdx]}px"
       >
         {@render panels[panelIdx].content()}
       </div>

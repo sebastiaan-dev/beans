@@ -3,6 +3,7 @@
   import { beansStore } from '$lib/beans.svelte';
   import { backlogDrag } from '$lib/backlogDrag.svelte';
   import type { TreeFilterResult } from '$lib/filter';
+  import { foldState } from '$lib/foldState.svelte';
   import BeanCard from './BeanCard.svelte';
   import BeanItem from './BeanItem.svelte';
 
@@ -45,6 +46,19 @@
   /** Shown only as context for a matching descendant. */
   const contextOnly = $derived(!!filter && !filter.matched.has(bean.id));
 
+  const hasChildren = $derived(filteredChildren.length > 0);
+  // While a filter is active, matches inside folded parents stay visible.
+  const collapsed = $derived(hasChildren && !filter && foldState.isCollapsed(bean.id));
+  const childrenId = $derived(`bean-children-${bean.id}`);
+  const childCountLabel = $derived(
+    `${filteredChildren.length} ${filteredChildren.length === 1 ? 'child' : 'children'}`
+  );
+
+  function handleFoldClick(e: MouseEvent) {
+    e.stopPropagation();
+    foldState.toggle(bean.id);
+  }
+
   function handleClick(e: MouseEvent) {
     e.stopPropagation();
     onSelect?.(bean);
@@ -62,7 +76,7 @@
 
   {#if contextParent}
     <div
-      class="flex min-w-0 items-center gap-1 px-1 pb-0.5 text-[10px] text-text-faint"
+      class="ml-5 flex min-w-0 items-center gap-1 px-1 pb-0.5 text-[10px] text-text-faint"
       data-parent-context
       title="Parent: {contextParent.title} ({contextParent.status})"
     >
@@ -72,32 +86,62 @@
     </div>
   {/if}
 
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class={[
-      'rounded transition-all',
-      backlogDrag.draggedBeanId === bean.id && 'opacity-40',
-      contextOnly && 'opacity-60',
-      backlogDrag.isReparentTarget(bean.id) && 'ring-2 ring-accent ring-offset-1'
-    ]}
-    draggable="true"
-    ondragstart={(e) => backlogDrag.startDrag(e, bean)}
-    ondragend={() => backlogDrag.endDrag()}
-    ondragover={(e) => backlogDrag.hoverCard(e, parentId, index, bean.id, sectionStatus)}
-    onclick={handleClick}
-  >
-    <BeanCard
-      {bean}
-      variant="list"
-      selected={selectedId === bean.id}
-      onclick={() => onSelect?.(bean)}
-    />
+  <div class="flex items-stretch">
+    {#if hasChildren}
+      <button
+        type="button"
+        class="flex w-5 shrink-0 cursor-pointer flex-col items-center justify-center rounded text-text-faint transition-colors hover:bg-surface hover:text-text focus-visible:outline-2 focus-visible:outline-accent"
+        aria-expanded={!collapsed}
+        aria-controls={childrenId}
+        aria-label="{collapsed ? 'Expand' : 'Collapse'} {bean.title} ({childCountLabel})"
+        title={collapsed ? `Expand (${childCountLabel})` : 'Collapse'}
+        data-fold-toggle
+        onclick={handleFoldClick}
+      >
+        <span
+          class={[
+            'icon-[uil--angle-right] size-4 transition-transform',
+            !collapsed && 'rotate-90'
+          ]}
+        ></span>
+        {#if collapsed}
+          <span class="text-[9px] leading-none font-medium tabular-nums" data-child-count
+            >{filteredChildren.length}</span
+          >
+        {/if}
+      </button>
+    {:else}
+      <span class="w-5 shrink-0" aria-hidden="true"></span>
+    {/if}
+
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class={[
+        'min-w-0 flex-1 rounded transition-all',
+        backlogDrag.draggedBeanId === bean.id && 'opacity-40',
+        contextOnly && 'opacity-60',
+        backlogDrag.isReparentTarget(bean.id) && 'ring-2 ring-accent ring-offset-1'
+      ]}
+      draggable="true"
+      ondragstart={(e) => backlogDrag.startDrag(e, bean)}
+      ondragend={() => backlogDrag.endDrag()}
+      ondragover={(e) => backlogDrag.hoverCard(e, parentId, index, bean.id, sectionStatus)}
+      onclick={handleClick}
+    >
+      <BeanCard
+        {bean}
+        variant="list"
+        selected={selectedId === bean.id}
+        onclick={() => onSelect?.(bean)}
+      />
+    </div>
   </div>
 
-  {#if filteredChildren.length > 0}
+  {#if hasChildren && !collapsed}
     <div
-      class="ml-6"
+      id={childrenId}
+      class="ml-5"
       ondragover={(e) => backlogDrag.hoverList(e, bean.id, filteredChildren.length)}
       ondragleave={(e) => backlogDrag.leaveList(e, e.currentTarget, bean.id)}
       ondrop={(e) => backlogDrag.drop(e, bean.id, filteredChildren)}
