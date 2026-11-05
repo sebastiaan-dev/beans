@@ -24,6 +24,9 @@
   import ViewToolbar from './ViewToolbar.svelte';
   import AgentActions from './AgentActions.svelte';
   import ConfirmModal from './ConfirmModal.svelte';
+  import CommandMessage from './CommandMessage.svelte';
+  import { toasts } from '$lib/toasts.svelte';
+  import { isDetached, workspaceLabel, workspaceTooltip } from '$lib/workspaces';
 
   interface Props {
     worktreeId: string;
@@ -123,10 +126,14 @@
 
   async function handleDestroy() {
     confirmingDestroy = false;
+    const id = worktreeId;
+    const label = worktreeStore.labelFor(id) ?? id;
     ui.navigateTo('planning');
     // The backend stops the run process and terminal sessions before removing the worktree.
-    if (await worktreeStore.removeWorktree(worktreeId)) {
-      ui.forgetWorkspace(worktreeId);
+    if (await worktreeStore.removeWorktree(id)) {
+      ui.forgetWorkspace(id);
+    } else {
+      toasts.error(`Could not destroy workspace "${label}"`, worktreeStore.error ?? undefined);
     }
   }
 
@@ -141,6 +148,13 @@
   const worktreePath = $derived(worktree?.path);
 
   const setupRunning = $derived(worktree?.setupStatus === 'RUNNING');
+  const setupFailed = $derived(worktree?.setupStatus === 'FAILED');
+  // The setup failure banner can be hidden; it comes back if setup fails again
+  // with a different message.
+  let dismissedSetupError = $state<string | null>(null);
+  const setupError = $derived(
+    setupFailed ? worktree?.setupError || 'Workspace setup failed.' : null
+  );
 
   let scrollToBottomTrigger = $state(0);
 </script>
@@ -263,6 +277,20 @@
       <span class="icon-[simple-icons--visualstudiocode] size-4"></span>
       VS Code
     </button>
+    {#if worktree}
+      <span
+        class="ml-2 flex min-w-0 items-center gap-1 truncate font-mono text-xs text-text-faint"
+        title={workspaceTooltip(worktree)}
+        data-workspace-branch
+      >
+        <span class="icon-[uil--code-branch] block size-3.5 shrink-0"></span>
+        {#if isDetached(worktree)}
+          <span class="italic">detached</span>
+        {:else}
+          <span class="truncate">{worktree.branch}</span>
+        {/if}
+      </span>
+    {/if}
     {#snippet right()}
       <AgentActions beanId={worktreeId} {agentBusy} onExecute={() => scrollToBottomTrigger++} />
       {#if worktree?.pullRequest && configStore.worktreeIntegrateMode === 'pr'}
@@ -297,6 +325,38 @@
     {/snippet}
   </ViewToolbar>
 
+  {#if setupRunning}
+    <div
+      class="flex items-center gap-2 border-b border-border bg-surface px-4 py-1.5 text-xs text-text-muted"
+      role="status"
+      data-setup-status="running"
+    >
+      <span class="loader shrink-0 !size-3"></span>
+      {configStore.isWorktrunk
+        ? 'Setting up workspace: running worktrunk pre-start hooks and the setup command…'
+        : 'Setting up workspace: running the setup command…'}
+    </div>
+  {:else if setupError && dismissedSetupError !== setupError}
+    <div
+      class="flex items-start gap-2 border-b border-danger/30 bg-danger/5 px-4 py-2.5"
+      role="alert"
+      data-setup-status="failed"
+    >
+      <span class="icon-[uil--exclamation-triangle] mt-0.5 block size-4 shrink-0 text-danger"></span>
+      <div class="min-w-0 flex-1">
+        <p class="text-xs font-semibold text-danger">Workspace setup failed</p>
+        <CommandMessage message={setupError} class="mt-1 max-h-48 overflow-y-auto text-text-muted" />
+      </div>
+      <button
+        class="shrink-0 cursor-pointer px-1 text-xs text-text-faint hover:text-text"
+        aria-label="Dismiss setup error"
+        onclick={() => (dismissedSetupError = setupError)}
+      >
+        ✕
+      </button>
+    </div>
+  {/if}
+
   <div class="flex min-h-0 flex-1 flex-col">
     <SplitPane
       direction="vertical"
@@ -309,8 +369,12 @@
 </div>
 
 {#if confirmingDestroy}
-  {@const label = worktree?.name ?? worktreeId}
-  {@const runNote = isRunning ? ' Its running process will be stopped.' : ''}
+  {@const label = worktree ? workspaceLabel(worktree) : worktreeId}
+  {@const runNote =
+    (isRunning ? ' Its running process will be stopped.' : '') +
+    (configStore.isWorktrunk
+      ? " Worktrunk's pre-remove/post-remove hooks run, and the branch is deleted only if it is merged."
+      : '')}
   {@const warning = hasNoChanges
     ? `Are you sure you want to destroy the worktree for "${label}"?${runNote} This cannot be undone.`
     : `The worktree "${label}" has uncommitted changes that will be lost.${runNote} Are you sure you want to destroy it? This cannot be undone.`}

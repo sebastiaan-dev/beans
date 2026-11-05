@@ -15,6 +15,8 @@
   import BeanForm from '$lib/components/BeanForm.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import SplitPane from '$lib/components/SplitPane.svelte';
+  import Toaster from '$lib/components/Toaster.svelte';
+  import { toasts } from '$lib/toasts.svelte';
 
   preloadHighlighter();
 
@@ -44,14 +46,28 @@
   // Fall back to planning view if agents are disabled or the workspace's worktree is removed.
   // Wait for worktreeStore to initialize before checking — otherwise a cold page load
   // to a workspace route would redirect before the subscription delivers data.
+  // Workspaces can also disappear because of something outside this view (e.g.
+  // `wt remove` in a terminal); tell the user why they were sent away.
+  let redirectingFrom: string | null = null;
   $effect(() => {
-    if (
-      !ui.isPlanning &&
-      worktreeStore.initialized &&
-      (!configStore.agentEnabled || (ui.activeView !== MAIN_WORKSPACE_ID && !worktreeStore.hasWorktree(ui.activeView)))
-    ) {
+    if (ui.isPlanning) redirectingFrom = null;
+    if (ui.isPlanning || !worktreeStore.initialized) return;
+    if (!configStore.agentEnabled) {
       ui.navigateTo('planning');
+      return;
     }
+    const id = ui.activeView;
+    if (id === MAIN_WORKSPACE_ID || worktreeStore.hasWorktree(id)) return;
+    // Navigation is async: don't notify twice while it is in flight.
+    if (redirectingFrom === id) return;
+    redirectingFrom = id;
+    const label = worktreeStore.labelFor(id);
+    toasts.show(
+      label ? `Workspace "${label}" was removed` : `Workspace "${id}" does not exist`,
+      { message: label ? 'Its worktree no longer exists, so you are back in Planning.' : undefined }
+    );
+    ui.forgetWorkspace(id);
+    ui.navigateTo('planning');
   });
 
   // Fold state of bean trees is stored per project.
@@ -119,6 +135,8 @@
     />
   {/if}
 </div>
+
+<Toaster />
 
 {#if ui.showForm}
   <BeanForm

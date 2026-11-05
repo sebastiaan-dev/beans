@@ -21,11 +21,9 @@
   const hasWorktree = $derived(variant !== 'compact' && !!linkedWorktreeId);
   const agentRunning = $derived(hasWorktree && linkedWorktreeId != null && agentStatusesStore.isRunning(linkedWorktreeId));
 
-  const worktreeLabel = $derived.by(() => {
-    if (!linkedWorktreeId) return '';
-    const wt = worktreeStore.worktrees.find((w) => w.id === linkedWorktreeId);
-    return wt?.name ?? linkedWorktreeId;
-  });
+  const worktreeLabel = $derived(
+    linkedWorktreeId ? (worktreeStore.labelFor(linkedWorktreeId) ?? linkedWorktreeId) : ''
+  );
 
   function handleWorktreeClick(e: MouseEvent) {
     e.stopPropagation();

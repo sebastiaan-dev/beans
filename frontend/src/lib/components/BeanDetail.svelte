@@ -9,6 +9,7 @@
   import { SendAgentMessageDocument, UpdateBeanStatusDocument, ArchiveBeanDocument } from '$lib/graphql/generated';
   import BeanCard from './BeanCard.svelte';
   import RenderedMarkdown from './RenderedMarkdown.svelte';
+  import CommandMessage from './CommandMessage.svelte';
 
   interface Props {
     bean: Bean;
@@ -93,7 +94,7 @@
 
     // Pass the bean so the server writes its current version (including
     // uncommitted edits) into the new worktree before the agent starts.
-    const wt = await worktreeStore.createWorktree(bean.id);
+    const wt = await worktreeStore.createWorktree({ beanId: bean.id });
     if (!wt) {
       worktreeError = worktreeStore.error;
       startingWork = false;
@@ -218,10 +219,10 @@
   <!-- Error -->
   {#if worktreeError}
     <div class="mb-6 rounded-lg border border-danger/30 bg-danger/5 p-3">
-      <div class="flex items-center justify-between">
-        <div class="flex min-w-0 items-center gap-2">
+      <div class="flex items-start justify-between gap-2">
+        <div class="flex min-w-0 items-baseline gap-2">
           <span class="shrink-0 text-xs font-semibold text-danger uppercase">Error</span>
-          <span class="truncate text-xs text-danger/80">{worktreeError}</span>
+          <CommandMessage message={worktreeError} class="min-w-0 text-danger/80" />
         </div>
         <button
           class="cursor-pointer px-1 text-xs text-danger/60 hover:text-danger"
