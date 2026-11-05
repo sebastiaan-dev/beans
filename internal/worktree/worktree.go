@@ -372,8 +372,8 @@ func (m *Manager) DetectBeanIDs(worktreePath string) []string {
 // It stores the human-readable name as metadata.
 // The worktree is placed in the configured worktree root directory.
 func (m *Manager) Create(name string) (*Worktree, error) {
-	if name == "" {
-		return nil, fmt.Errorf("worktree name must not be empty")
+	if err := ValidateName(name); err != nil {
+		return nil, err
 	}
 
 	// Use the name as the worktree ID so branch and directory match

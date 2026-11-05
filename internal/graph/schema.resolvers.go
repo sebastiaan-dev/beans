@@ -259,16 +259,40 @@ func (r *mutationResolver) RemoveWorktree(ctx context.Context, id string) (bool,
 		return false, fmt.Errorf("worktree support not available")
 	}
 
-	// Stop the workspace's run process and shell terminal before touching the
-	// worktree: processes still running inside it would keep files open (causing
-	// permission errors on removal) or keep running against a deleted directory.
-	// CloseAndBlock waits for the processes to exit (force-killing them after a
-	// grace period) and prevents a reconnecting client from respawning a session
-	// until the removal has finished.
+	// Stop the workspace's run process, shell terminal and agent before
+	// touching the worktree: processes still running inside it would keep files
+	// open (causing permission errors on removal) or keep running against a
+	// deleted directory. CloseAndBlock and StopAndBlock wait for the processes
+	// to exit (force-killing them after a grace period) and prevent a
+	// reconnecting client from respawning a session until the removal has
+	// finished. They run concurrently so their grace periods don't add up.
+	var (
+		wg                              sync.WaitGroup
+		releaseTerminals, releaseAgents func()
+	)
 	if r.TerminalMgr != nil {
-		release := r.TerminalMgr.CloseAndBlock(id, id+RunSessionSuffix)
-		defer release()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			releaseTerminals = r.TerminalMgr.CloseAndBlock(id, id+RunSessionSuffix)
+		}()
 	}
+	if r.AgentMgr != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			releaseAgents = r.AgentMgr.StopAndBlock(id)
+		}()
+	}
+	wg.Wait()
+	defer func() {
+		if releaseTerminals != nil {
+			releaseTerminals()
+		}
+		if releaseAgents != nil {
+			releaseAgents()
+		}
+	}()
 
 	// Find the worktree path before removing (for unwatching)
 	worktrees, _ := r.WorktreeMgr.List()
@@ -809,7 +833,7 @@ func (r *queryResolver) AgentActions(ctx context.Context, beanID string, skipFor
 	// Check if this worktree exists and gather its state
 	var branch string
 	if r.WorktreeMgr != nil {
-		actCtx.MainRepoHasChanges = gitutil.HasChanges(r.WorktreeMgr.RepoRoot())
+		actCtx.MainRepoHasChanges = mainRepoHasNonBeanChanges(r.WorktreeMgr.RepoRoot(), r.Core.Root())
 
 		if wts, err := r.WorktreeMgr.List(); err == nil {
 			for _, wt := range wts {

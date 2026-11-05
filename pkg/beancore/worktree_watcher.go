@@ -253,13 +253,25 @@ func (c *Core) handleWorktreeChanges(wt *worktreeWatcher, changes map[string]fsn
 		isCreateOrWrite := op&fsnotify.Create != 0 || op&fsnotify.Write != 0
 
 		if isDelete && !isCreateOrWrite {
-			// File was deleted in the worktree. Either revert to the
-			// main-repo version or remove the bean from runtime.
 			filename := filepath.Base(path)
 			id, _ := bean.ParseFilename(filename)
 			if id == "" {
 				continue
 			}
+
+			// The bean was moved or renamed within the worktree (e.g. into
+			// archive/, or a stale copy was replaced): the worktree still has
+			// it, so merge the remaining copy instead of dropping the bean.
+			if remaining := findBeanFilesIn(wt.beansDir, id); len(remaining) > 0 {
+				path = remaining[0]
+				isCreateOrWrite = true
+			}
+		}
+
+		if isDelete && !isCreateOrWrite {
+			// File was deleted in the worktree. Either revert to the
+			// main-repo version or remove the bean from runtime.
+			id, _ := bean.ParseFilename(filepath.Base(path))
 
 			// Try to load from the main .beans/ directory.
 			// The filename may differ (different slug), so search by ID.
@@ -411,36 +423,51 @@ func (c *Core) WriteBeanToWorktree(id, worktreePath string) (bool, error) {
 	if relPath == "" {
 		relPath = bean.BuildFilename(b.ID, b.Slug)
 	}
-	target := filepath.Join(beansDir, relPath)
 
-	changed := false
-	upToDate := false
-	for _, path := range findBeanFilesIn(beansDir, b.ID) {
-		if path == target {
-			wtBean, loadErr := c.loadBeanFrom(path, beansDir)
-			upToDate = loadErr == nil && wtBean.ETag() == b.ETag()
-			continue
-		}
-		if err := os.Remove(path); err != nil {
-			return changed, fmt.Errorf("removing stale worktree copy of %s: %w", b.ID, err)
-		}
-		changed = true
-	}
-	if upToDate {
-		return changed, nil
+	// Leave an identical copy alone, so no spurious change is introduced.
+	if wtBean, err := c.loadBeanFrom(filepath.Join(beansDir, relPath), beansDir); err == nil && wtBean.ETag() == b.ETag() {
+		return removeStaleBeanCopies(beansDir, b.ID, filepath.Join(beansDir, relPath))
 	}
 
 	content, err := b.Render()
 	if err != nil {
-		return changed, err
+		return false, err
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-		return changed, fmt.Errorf("creating worktree beans dir: %w", err)
-	}
-	if err := os.WriteFile(target, content, 0644); err != nil {
-		return changed, fmt.Errorf("writing worktree bean: %w", err)
+	if _, err := writeWorktreeBeanFile(beansDir, b.ID, relPath, content); err != nil {
+		return true, err
 	}
 	return true, nil
+}
+
+// writeWorktreeBeanFile writes a bean file at relPath (relative to beansDir)
+// and removes any other copies of the bean (e.g. a stale slug, or the other
+// side of archive/), so the directory never holds two files with the same ID.
+// Returns whether stale copies were removed.
+func writeWorktreeBeanFile(beansDir, id, relPath string, content []byte) (bool, error) {
+	target := filepath.Join(beansDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		return false, fmt.Errorf("creating worktree beans dir: %w", err)
+	}
+	if err := os.WriteFile(target, content, 0644); err != nil {
+		return false, fmt.Errorf("writing worktree bean: %w", err)
+	}
+	return removeStaleBeanCopies(beansDir, id, target)
+}
+
+// removeStaleBeanCopies removes all files for the bean in beansDir (including
+// archive/) except keep. Returns whether any file was removed.
+func removeStaleBeanCopies(beansDir, id, keep string) (bool, error) {
+	removed := false
+	for _, path := range findBeanFilesIn(beansDir, id) {
+		if path == keep {
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			return removed, fmt.Errorf("removing stale worktree copy of %s: %w", id, err)
+		}
+		removed = true
+	}
+	return removed, nil
 }
 
 // findBeanFilesIn returns the paths of all bean files for the given ID in a

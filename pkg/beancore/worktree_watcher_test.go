@@ -718,3 +718,163 @@ func TestMainCatchesUpWithWorktree(t *testing.T) {
 		}
 	})
 }
+
+// TestUpdateRoutedToWorktreeKeepsOneFile verifies that an update written to a
+// worktree replaces the worktree's copy of the bean instead of adding a second
+// file with the same ID next to it.
+func TestUpdateRoutedToWorktreeKeepsOneFile(t *testing.T) {
+	beanFiles := func(t *testing.T, wtBeansDir, id string) []string {
+		t.Helper()
+		var rel []string
+		for _, p := range findBeanFilesIn(wtBeansDir, id) {
+			r, _ := filepath.Rel(wtBeansDir, p)
+			rel = append(rel, r)
+		}
+		return rel
+	}
+
+	t.Run("auto-routed update of a bean archived in the worktree", func(t *testing.T) {
+		core, _ := setupTestCore(t)
+		createTestBean(t, core, "jq-1", "Archived In Worktree", "todo")
+		if err := core.StartWatching(); err != nil {
+			t.Fatal(err)
+		}
+		defer core.Unwatch()
+
+		wtDir := t.TempDir()
+		wtBeansDir := filepath.Join(wtDir, BeansDir)
+		if err := os.MkdirAll(filepath.Join(wtBeansDir, ArchiveDir), 0755); err != nil {
+			t.Fatal(err)
+		}
+		events, unsub := core.Subscribe()
+		defer unsub()
+		if err := core.WatchWorktreeBeans(wtDir); err != nil {
+			t.Fatal(err)
+		}
+		defer core.UnwatchWorktreeBeans(wtDir)
+
+		// The worktree's agent completed and archived the bean.
+		content := "---\ntitle: Archived In Worktree\nstatus: completed\ntype: task\n---\n\nDone.\n"
+		archived := filepath.Join(wtBeansDir, ArchiveDir, "jq-1--archived-in-worktree.md")
+		if err := os.WriteFile(archived, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.After(3 * time.Second)
+		for core.WorktreeForBean("jq-1") != wtDir {
+			select {
+			case <-events:
+			case <-deadline:
+				t.Fatal("timed out waiting for the worktree copy to be linked")
+			}
+		}
+
+		// Edit in the UI: auto-routed to the linked worktree.
+		b, err := core.Get("jq-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.Body = "Edited in the UI"
+		if err := core.Update(b, nil); err != nil {
+			t.Fatalf("Update() error = %v", err)
+		}
+
+		files := beanFiles(t, wtBeansDir, "jq-1")
+		if len(files) != 1 || files[0] != filepath.Join(ArchiveDir, "jq-1--archived-in-worktree.md") {
+			t.Fatalf("worktree bean files = %v, want only the archived copy", files)
+		}
+		data, err := os.ReadFile(archived)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), "Edited in the UI") {
+			t.Errorf("archived copy was not updated:\n%s", data)
+		}
+	})
+
+	t.Run("explicit worktree path with a differently named copy", func(t *testing.T) {
+		core, _ := setupTestCore(t)
+		b := createTestBean(t, core, "jq-2", "New Title", "todo")
+
+		wtDir := t.TempDir()
+		wtBeansDir := filepath.Join(wtDir, BeansDir)
+		if err := os.MkdirAll(wtBeansDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		stale := filepath.Join(wtBeansDir, "jq-2--old-slug.md")
+		if err := os.WriteFile(stale, []byte("---\ntitle: Old\nstatus: todo\ntype: task\n---\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		b.Body = "Routed explicitly"
+		if err := core.Update(b, nil, WithWorktreePath(wtDir)); err != nil {
+			t.Fatalf("Update() error = %v", err)
+		}
+		files := beanFiles(t, wtBeansDir, "jq-2")
+		if len(files) != 1 || files[0] != "jq-2--new-title.md" {
+			t.Fatalf("worktree bean files = %v, want only jq-2--new-title.md", files)
+		}
+	})
+}
+
+// TestWorktreeBeanMovedWithinWorktree verifies that moving a bean file within
+// a worktree (e.g. into archive/, or replacing a stale copy) keeps the bean in
+// runtime state, regardless of the order in which the watcher sees the
+// removal of the old file and the creation of the new one.
+func TestWorktreeBeanMovedWithinWorktree(t *testing.T) {
+	for i := 0; i < 5; i++ {
+		core, _ := setupTestCore(t)
+		if err := core.StartWatching(); err != nil {
+			t.Fatal(err)
+		}
+
+		wtDir := t.TempDir()
+		wtBeansDir := filepath.Join(wtDir, BeansDir)
+		if err := os.MkdirAll(filepath.Join(wtBeansDir, ArchiveDir), 0755); err != nil {
+			t.Fatal(err)
+		}
+		// A bean that only exists in the worktree.
+		oldPath := filepath.Join(wtBeansDir, "mv-1--moved.md")
+		if err := os.WriteFile(oldPath, []byte("---\ntitle: Moved\nstatus: todo\ntype: task\n---\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := core.WatchWorktreeBeans(wtDir); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := core.Get("mv-1"); err != nil {
+			t.Fatalf("worktree-only bean should be loaded: %v", err)
+		}
+
+		events, unsub := core.Subscribe()
+		newPath := filepath.Join(wtBeansDir, ArchiveDir, "mv-1--moved.md")
+		if err := os.WriteFile(newPath, []byte("---\ntitle: Moved\nstatus: completed\ntype: task\n---\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(oldPath); err != nil {
+			t.Fatal(err)
+		}
+
+		// Wait until the watcher has processed both changes.
+		deadline := time.After(3 * time.Second)
+	wait:
+		for {
+			select {
+			case <-events:
+				time.Sleep(300 * time.Millisecond) // allow a second debounced batch
+				break wait
+			case <-deadline:
+				t.Fatal("timed out waiting for worktree events")
+			}
+		}
+		unsub()
+
+		b, err := core.Get("mv-1")
+		if err != nil {
+			t.Fatalf("iteration %d: bean dropped after moving it within the worktree: %v", i, err)
+		}
+		if b.Status != "completed" || b.Path != filepath.Join(ArchiveDir, "mv-1--moved.md") {
+			t.Errorf("iteration %d: bean = status %q path %q, want the archived copy", i, b.Status, b.Path)
+		}
+		core.UnwatchWorktreeBeans(wtDir)
+		core.Unwatch()
+	}
+}
