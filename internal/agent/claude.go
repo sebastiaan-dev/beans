@@ -150,13 +150,17 @@ func (m *Manager) sendToProcess(proc *runningProcess, beanID, message string, im
 	return err
 }
 
+// DefaultClaudeBinary is the Claude Code executable used when a Manager has no
+// explicit path configured (see Manager.SetClaudePath). It is resolved via PATH.
+const DefaultClaudeBinary = "claude"
+
 // spawnAndRun spawns a claude CLI process and reads its output.
 // This runs in a goroutine — it blocks until the process exits.
 func (m *Manager) spawnAndRun(beanID string, session *Session) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	args := buildClaudeArgs(session)
-	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd := exec.CommandContext(ctx, m.claudeBinary(), args...)
 	cmd.Dir = session.WorkDir
 	cmd.Env = buildClaudeEnv()
 	configureProcessGroup(cmd)

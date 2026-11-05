@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -154,6 +155,12 @@ func newListModel(resolver *beangraph.CoreResolver, cfg *config.Config) listMode
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
 	l.SetShowHelp(false)
+	// bubbles/list binds Quit to "q" and "esc". In this app esc means "back"
+	// (clear selection/filters), so it must never quit; only q and ctrl+c do.
+	l.KeyMap.Quit = key.NewBinding(
+		key.WithKeys("q"),
+		key.WithHelp("q", "quit"),
+	)
 	applyListTheme(&l)
 	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 1, 1)
 
