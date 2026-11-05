@@ -250,7 +250,7 @@ func (b *worktrunkBackend) remove(repoRoot string, wt *Worktree) error {
 // Stdin is empty, so wt never waits for an interactive approval prompt.
 func (b *worktrunkBackend) run(args ...string) ([]byte, []byte, error) {
 	cmd := exec.Command(b.bin, args...)
-	cmd.Env = commandEnv()
+	cmd.Env = ChildEnv()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

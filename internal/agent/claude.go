@@ -926,17 +926,3 @@ func buildClaudeArgs(session *Session) []string {
 	}
 	return args
 }
-
-// buildClaudeEnv creates the environment for the claude process,
-// stripping CLAUDECODE to allow nested sessions.
-func buildClaudeEnv() []string {
-	env := os.Environ()
-	filtered := make([]string, 0, len(env))
-	for _, e := range env {
-		if strings.HasPrefix(e, "CLAUDECODE=") {
-			continue
-		}
-		filtered = append(filtered, e)
-	}
-	return filtered
-}

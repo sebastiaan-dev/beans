@@ -247,18 +247,6 @@ func TestIsApprovalFailure(t *testing.T) {
 	}
 }
 
-func TestCommandEnvDropsDirectives(t *testing.T) {
-	t.Setenv("WORKTRUNK_DIRECTIVE_CD_FILE", "/tmp/cd")
-	t.Setenv("WORKTRUNK_CONFIG_PATH", "/tmp/config.toml")
-	env := strings.Join(commandEnv(), "\n")
-	if strings.Contains(env, "WORKTRUNK_DIRECTIVE_CD_FILE") {
-		t.Error("directive variable must be dropped")
-	}
-	if !strings.Contains(env, "WORKTRUNK_CONFIG_PATH=/tmp/config.toml") {
-		t.Error("other worktrunk variables must be kept")
-	}
-}
-
 func TestApprovalErrorMessageRemoval(t *testing.T) {
 	msg := (&ApprovalError{RepoRoot: "/repo", Operation: "removal", Output: "▲ repo needs approval"}).Error()
 	for _, want := range []string{"was not removed", "▲ repo needs approval", "wt config approvals add", "try again"} {
