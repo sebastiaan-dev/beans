@@ -146,7 +146,10 @@
     if (ui.activeView === id) {
       ui.navigateTo('planning');
     }
-    await worktreeStore.removeWorktree(id);
+    // The backend stops the run process and terminal sessions before removing the worktree.
+    if (await worktreeStore.removeWorktree(id)) {
+      ui.forgetWorkspace(id);
+    }
   }
 </script>
 

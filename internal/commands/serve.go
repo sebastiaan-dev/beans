@@ -169,7 +169,7 @@ func runServer(port int, origins []string) error {
 	// Run sessions use "${workspaceId}__run" as session ID — strip the
 	// suffix so they share the same port as the workspace's shell session.
 	termMgr := terminal.NewManager(func(sessionID string) []string {
-		workspaceID := strings.TrimSuffix(sessionID, "__run")
+		workspaceID := strings.TrimSuffix(sessionID, graph.RunSessionSuffix)
 		port, err := portAlloc.Get(workspaceID)
 		if err != nil {
 			return nil

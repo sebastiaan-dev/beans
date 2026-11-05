@@ -4,6 +4,7 @@
     StartRunDocument,
     StopRunDocument,
     IsRunningDocument,
+    WorkspacePortDocument,
     OpenInEditorDocument
   } from '$lib/graphql/generated';
   import { changesStore } from '$lib/changes.svelte';
@@ -35,6 +36,12 @@
   let runPort = $state(0);
 
   const runSessionId = $derived(worktreeId + '__run');
+  // Terminal open state is remembered per workspace (see UIState).
+  const terminalOpen = $derived(ui.isTerminalOpen(worktreeId));
+
+  function toggleTerminal() {
+    ui.toggleTerminal(worktreeId);
+  }
   const hasRunCommand = $derived(!!configStore.worktreeRunCommand);
 
   async function handleRun() {
@@ -85,14 +92,23 @@
     }
   });
 
-  // Check initial run state on mount
+  // Check initial run state on mount (the run may have been started earlier,
+  // before switching away from this workspace).
   $effect(() => {
     const id = worktreeId;
-    client.query(IsRunningDocument, { workspaceId: id }).toPromise().then((result) => {
-      if (result.data?.isRunning) {
+    client
+      .query(IsRunningDocument, { workspaceId: id }, { requestPolicy: 'network-only' })
+      .toPromise()
+      .then(async (result) => {
+        if (!result.data?.isRunning || id !== worktreeId) return;
         isRunning = true;
-      }
-    });
+        const portResult = await client
+          .query(WorkspacePortDocument, { workspaceId: id }, { requestPolicy: 'network-only' })
+          .toPromise();
+        if (portResult.data && id === worktreeId) {
+          runPort = portResult.data.workspacePort;
+        }
+      });
   });
 
   onDestroy(() => {
@@ -108,7 +124,10 @@
   async function handleDestroy() {
     confirmingDestroy = false;
     ui.navigateTo('planning');
-    await worktreeStore.removeWorktree(worktreeId);
+    // The backend stops the run process and terminal sessions before removing the worktree.
+    if (await worktreeStore.removeWorktree(worktreeId)) {
+      ui.forgetWorkspace(worktreeId);
+    }
   }
 
   const destroying = $derived(worktreeStore.isDestroying(worktreeId));
@@ -139,7 +158,7 @@
     <div class="pane-toolbar">
       <span>Terminal</span>
       <div class="flex-1"></div>
-      <button onclick={() => ui.toggleTerminal()} class="btn-icon cursor-pointer" title="Close">&#x2715;</button>
+      <button onclick={toggleTerminal} class="btn-icon cursor-pointer" title="Close">&#x2715;</button>
     </div>
     <TerminalPane sessionId={worktreeId} hideToolbar />
   </div>
@@ -157,7 +176,7 @@
 {/snippet}
 
 {#snippet terminalPanel()}
-  {#if ui.showTerminal && isRunning}
+  {#if terminalOpen && isRunning}
     <SplitPane
       direction="horizontal"
       panels={[
@@ -165,7 +184,7 @@
         { content: runPane, size: 500, persistKey: 'workspace-shell-run' }
       ]}
     />
-  {:else if ui.showTerminal && ui.terminalInitialized}
+  {:else if terminalOpen}
     {@render shellPane()}
   {:else if isRunning}
     {@render runPane()}
@@ -200,7 +219,7 @@
 {/snippet}
 
 <div class="flex h-full flex-col">
-  <ViewToolbar>
+  <ViewToolbar {terminalOpen} onToggleTerminal={toggleTerminal}>
     {#if hasRunCommand}
       {#if isRunning}
         <button
@@ -283,7 +302,7 @@
       direction="vertical"
       panels={[
         { content: mainContent },
-        { content: terminalPanel, size: 300, collapsed: !(ui.showTerminal || isRunning), persistKey: 'workspace-terminal' }
+        { content: terminalPanel, size: 300, collapsed: !(terminalOpen || isRunning), persistKey: 'workspace-terminal' }
       ]}
     />
   </div>
@@ -291,9 +310,10 @@
 
 {#if confirmingDestroy}
   {@const label = worktree?.name ?? worktreeId}
+  {@const runNote = isRunning ? ' Its running process will be stopped.' : ''}
   {@const warning = hasNoChanges
-    ? `Are you sure you want to destroy the worktree for "${label}"? This cannot be undone.`
-    : `The worktree "${label}" has uncommitted changes that will be lost. Are you sure you want to destroy it? This cannot be undone.`}
+    ? `Are you sure you want to destroy the worktree for "${label}"?${runNote} This cannot be undone.`
+    : `The worktree "${label}" has uncommitted changes that will be lost.${runNote} Are you sure you want to destroy it? This cannot be undone.`}
   <ConfirmModal
     title="Destroy Worktree"
     message={warning}

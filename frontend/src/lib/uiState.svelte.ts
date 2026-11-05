@@ -115,15 +115,23 @@ class UIState {
     localStorage.setItem('beans-changes-pane', this.showChanges ? 'true' : 'false');
   }
 
-  // Terminal pane (always hidden by default, not persisted)
-  showTerminal = $state(false);
-  terminalInitialized = $state(false);
+  // Terminal pane open state, per workspace (keyed by workspace ID; hidden by
+  // default, not persisted). Each workspace remembers its own state so opening
+  // the terminal in one workspace doesn't open it in the others.
+  private terminalOpenByWorkspace = $state<Record<string, boolean>>({});
 
-  toggleTerminal() {
-    this.showTerminal = !this.showTerminal;
-    if (this.showTerminal) {
-      this.terminalInitialized = true;
-    }
+  isTerminalOpen(workspaceId: string): boolean {
+    return this.terminalOpenByWorkspace[workspaceId] ?? false;
+  }
+
+  toggleTerminal(workspaceId: string) {
+    this.terminalOpenByWorkspace[workspaceId] = !this.isTerminalOpen(workspaceId);
+  }
+
+  /** Drop per-workspace UI state (e.g. after the workspace was destroyed). */
+  forgetWorkspace(workspaceId: string) {
+    delete this.terminalOpenByWorkspace[workspaceId];
+    delete this.selectedBeanByView[workspaceId];
   }
 
   // Filter text (persisted to localStorage)
