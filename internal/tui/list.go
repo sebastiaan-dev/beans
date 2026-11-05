@@ -574,65 +574,116 @@ func (m listModel) viewContent(innerHeight int) string {
 	return border.Render(m.list.View())
 }
 
-// Footer renders the help/status footer for the list view.
-func (m listModel) Footer() string {
-	var help string
+// keyHint is a single "key description" entry in a footer.
+type keyHint struct {
+	key  string
+	desc string
+}
 
+func (h keyHint) render() string {
+	return helpKeyStyle.Render(h.key) + " " + helpStyle.Render(h.desc)
+}
+
+// footerHintSeparator separates hints in a footer.
+const footerHintSeparator = "  "
+
+// renderHints renders footer hints on a single line that fits within width.
+// Hints are given in order of importance; pinned hints are always shown at the
+// end. Less important hints that do not fit are dropped, so the footer never
+// wraps or gets cut off mid-hint. A width <= 0 means unlimited.
+func renderHints(hints, pinned []keyHint, width int) string {
+	render := func(hs []keyHint) string {
+		parts := make([]string, len(hs))
+		for i, h := range hs {
+			parts[i] = h.render()
+		}
+		return strings.Join(parts, footerHintSeparator)
+	}
+
+	if width <= 0 {
+		return render(append(append([]keyHint{}, hints...), pinned...))
+	}
+
+	used := lipgloss.Width(render(pinned))
+	var shown []keyHint
+	for _, h := range hints {
+		w := lipgloss.Width(h.render()) + lipgloss.Width(footerHintSeparator)
+		if used+w > width {
+			continue
+		}
+		shown = append(shown, h)
+		used += w
+	}
+	line := render(append(shown, pinned...))
+	// Even the pinned hints may not fit on very narrow terminals.
+	return lipgloss.NewStyle().MaxWidth(width).Render(line)
+}
+
+// footerHints returns the list footer hints in order of importance, plus the
+// hints that must always be shown.
+func (m listModel) footerHints() (hints, pinned []keyHint) {
+	hideLabel := "hide done"
+	if m.filters.hideResolved {
+		hideLabel = "show done"
+	}
+	pinned = []keyHint{{"?", "help"}, {"q", "quit"}}
+
+	switch {
+	case len(m.selectedBeans) > 0:
+		hints = []keyHint{
+			{"esc", "clear selection"},
+			{"space", "toggle"},
+			{"s", "status"},
+			{"t", "type"},
+			{"P", "priority"},
+			{"p", "parent"},
+			{"y", "copy id"},
+		}
+	case m.hasActiveFilter():
+		hints = []keyHint{
+			{"esc", "clear filter"},
+			{"F", "filters"},
+			{"enter", "view"},
+			{"/", "search"},
+			{"H", hideLabel},
+			{"c", "create"},
+			{"e", "edit"},
+			{"s", "status"},
+			{"t", "type"},
+			{"P", "priority"},
+			{"p", "parent"},
+			{"b", "blocking"},
+			{"space", "select"},
+			{"y", "copy id"},
+		}
+	default:
+		hints = []keyHint{
+			{"enter", "view"},
+			{"/", "search"},
+			{"F", "filters"},
+			{"c", "create"},
+			{"e", "edit"},
+			{"s", "status"},
+			{"t", "type"},
+			{"P", "priority"},
+			{"p", "parent"},
+			{"b", "blocking"},
+			{"space", "select"},
+			{"y", "copy id"},
+			{"H", hideLabel},
+		}
+	}
+	return hints, pinned
+}
+
+// Footer renders the help/status footer for the list view. It always fits on
+// a single line of the terminal width.
+func (m listModel) Footer() string {
 	// Show selection count if any beans are selected
 	var selectionPrefix string
 	if len(m.selectedBeans) > 0 {
 		selectionStyle := lipgloss.NewStyle().Foreground(ui.ColorWarning).Bold(true)
 		selectionPrefix = selectionStyle.Render(fmt.Sprintf("(%d selected) ", len(m.selectedBeans)))
-	}
-
-	hideLabel := "hide done"
-	if m.filters.hideResolved {
-		hideLabel = "show done"
-	}
-
-	if len(m.selectedBeans) > 0 {
-		// When beans are selected, show esc to clear selection
-		help = helpKeyStyle.Render("space") + " " + helpStyle.Render("toggle") + "  " +
-			helpKeyStyle.Render("P") + " " + helpStyle.Render("priority") + "  " +
-			helpKeyStyle.Render("s") + " " + helpStyle.Render("status") + "  " +
-			helpKeyStyle.Render("t") + " " + helpStyle.Render("type") + "  " +
-			helpKeyStyle.Render("y") + " " + helpStyle.Render("copy id") + "  " +
-			helpKeyStyle.Render("esc") + " " + helpStyle.Render("clear selection") + "  " +
-			helpKeyStyle.Render("?") + " " + helpStyle.Render("help") + "  " +
-			helpKeyStyle.Render("q") + " " + helpStyle.Render("quit")
-	} else if m.hasActiveFilter() {
-		// Filter keys come first so they stay visible when the footer is cut off
-		help = helpKeyStyle.Render("esc") + " " + helpStyle.Render("clear filter") + "  " +
-			helpKeyStyle.Render("F") + " " + helpStyle.Render("filters") + "  " +
-			helpKeyStyle.Render("H") + " " + helpStyle.Render(hideLabel) + "  " +
-			helpKeyStyle.Render("space") + " " + helpStyle.Render("select") + "  " +
-			helpKeyStyle.Render("enter") + " " + helpStyle.Render("view") + "  " +
-			helpKeyStyle.Render("b") + " " + helpStyle.Render("blocking") + "  " +
-			helpKeyStyle.Render("c") + " " + helpStyle.Render("create") + "  " +
-			helpKeyStyle.Render("e") + " " + helpStyle.Render("edit") + "  " +
-			helpKeyStyle.Render("p") + " " + helpStyle.Render("parent") + "  " +
-			helpKeyStyle.Render("P") + " " + helpStyle.Render("priority") + "  " +
-			helpKeyStyle.Render("s") + " " + helpStyle.Render("status") + "  " +
-			helpKeyStyle.Render("t") + " " + helpStyle.Render("type") + "  " +
-			helpKeyStyle.Render("y") + " " + helpStyle.Render("copy id") + "  " +
-			helpKeyStyle.Render("?") + " " + helpStyle.Render("help") + "  " +
-			helpKeyStyle.Render("q") + " " + helpStyle.Render("quit")
-	} else {
-		help = helpKeyStyle.Render("space") + " " + helpStyle.Render("select") + "  " +
-			helpKeyStyle.Render("enter") + " " + helpStyle.Render("view") + "  " +
-			helpKeyStyle.Render("b") + " " + helpStyle.Render("blocking") + "  " +
-			helpKeyStyle.Render("c") + " " + helpStyle.Render("create") + "  " +
-			helpKeyStyle.Render("e") + " " + helpStyle.Render("edit") + "  " +
-			helpKeyStyle.Render("p") + " " + helpStyle.Render("parent") + "  " +
-			helpKeyStyle.Render("P") + " " + helpStyle.Render("priority") + "  " +
-			helpKeyStyle.Render("s") + " " + helpStyle.Render("status") + "  " +
-			helpKeyStyle.Render("t") + " " + helpStyle.Render("type") + "  " +
-			helpKeyStyle.Render("y") + " " + helpStyle.Render("copy id") + "  " +
-			helpKeyStyle.Render("/") + " " + helpStyle.Render("search") + "  " +
-			helpKeyStyle.Render("F") + " " + helpStyle.Render("filters") + "  " +
-			helpKeyStyle.Render("H") + " " + helpStyle.Render(hideLabel) + "  " +
-			helpKeyStyle.Render("?") + " " + helpStyle.Render("help") + "  " +
-			helpKeyStyle.Render("q") + " " + helpStyle.Render("quit")
 	}
 
 	// Show status message if present, otherwise show help
@@ -641,9 +692,17 @@ func (m listModel) Footer() string {
 		statusStyle := lipgloss.NewStyle().Foreground(ui.ColorSuccess).Bold(true)
 		footer += statusStyle.Render(m.statusMessage)
 	} else {
-		footer += help
+		hintsWidth := 0
+		if m.width > 0 {
+			hintsWidth = max(m.width-lipgloss.Width(selectionPrefix), 1)
+		}
+		hints, pinned := m.footerHints()
+		footer += renderHints(hints, pinned, hintsWidth)
 	}
 
+	if m.width > 0 {
+		footer = lipgloss.NewStyle().MaxWidth(m.width).Render(footer)
+	}
 	return footer
 }
 

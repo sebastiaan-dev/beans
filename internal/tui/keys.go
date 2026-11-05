@@ -1,6 +1,30 @@
 package tui
 
-import "github.com/charmbracelet/bubbles/key"
+import (
+	"github.com/charmbracelet/bubbles/key"
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+// splitBatchedRunes splits a key message that carries several runes into one
+// single-rune key message per rune.
+//
+// When a terminal delivers several characters in a single read (fast typing,
+// tmux send-keys, or a paste without bracketed paste mode), bubbletea emits a
+// single KeyRunes message containing all of them, e.g. "gt". Shortcut handling
+// compares msg.String() against single keys, so such messages would otherwise
+// be ignored. Bracketed pastes are never split, since they are explicitly text.
+//
+// It reports false if msg is not a splittable multi-rune message.
+func splitBatchedRunes(msg tea.KeyMsg) ([]tea.KeyMsg, bool) {
+	if msg.Type != tea.KeyRunes || msg.Paste || len(msg.Runes) < 2 {
+		return nil, false
+	}
+	keys := make([]tea.KeyMsg, len(msg.Runes))
+	for i, r := range msg.Runes {
+		keys[i] = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}, Alt: msg.Alt}
+	}
+	return keys, true
+}
 
 // KeyMap defines the key bindings for the TUI
 type KeyMap struct {
