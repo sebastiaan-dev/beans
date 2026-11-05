@@ -1023,3 +1023,60 @@ func TestSetDefaultEffort_EmptyMeansNoEffort(t *testing.T) {
 		t.Errorf("expected empty effort, got %q", snap.Effort)
 	}
 }
+
+func TestClearSession_DeletesPersistedConversation(t *testing.T) {
+	beansDir := t.TempDir()
+	m := NewManager(beansDir, nil)
+	if err := m.store.appendMessage("ws", Message{Role: RoleUser, Content: "hello"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.store.saveSessionID("ws", "claude-session"); err != nil {
+		t.Fatal(err)
+	}
+	if s := m.GetSession("ws"); s == nil || s.SessionID != "claude-session" {
+		t.Fatalf("persisted session not loaded: %+v", s)
+	}
+
+	if err := m.ClearSession("ws"); err != nil {
+		t.Fatal(err)
+	}
+	if s := m.GetSession("ws"); s != nil {
+		t.Errorf("GetSession after clear = %+v, want nil", s)
+	}
+	if msgs, sessionID, err := m.store.load("ws"); err != nil || len(msgs) != 0 || sessionID != "" {
+		t.Errorf("store after clear: msgs=%v sessionID=%q err=%v, want empty", msgs, sessionID, err)
+	}
+}
+
+// TestClearSession_DuringGetSessionLoad verifies that a conversation loaded
+// from disk by GetSession is not materialized again when ClearSession runs
+// between the load and the materialization.
+func TestClearSession_DuringGetSessionLoad(t *testing.T) {
+	beansDir := t.TempDir()
+	m := NewManager(beansDir, nil)
+	if err := m.store.appendMessage("ws", Message{Role: RoleUser, Content: "hello"}); err != nil {
+		t.Fatal(err)
+	}
+
+	cleared := false
+	testHookAfterLoad = func(beanID string) {
+		if beanID == "ws" && !cleared {
+			cleared = true
+			_ = m.ClearSession("ws")
+		}
+	}
+	defer func() { testHookAfterLoad = nil }()
+
+	if s := m.GetSession("ws"); s != nil {
+		t.Errorf("GetSession = %+v, want nil (cleared during load)", s)
+	}
+	if !cleared {
+		t.Fatal("hook did not run")
+	}
+	m.mu.RLock()
+	_, inMemory := m.sessions["ws"]
+	m.mu.RUnlock()
+	if inMemory {
+		t.Error("cleared session was resurrected in memory")
+	}
+}

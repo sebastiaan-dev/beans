@@ -11,6 +11,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/hmans/beans/pkg/bean"
+	"github.com/hmans/beans/pkg/config"
 )
 
 // worktreeWatcher tracks a single worktree's .beans/ directory.
@@ -18,6 +19,25 @@ type worktreeWatcher struct {
 	worktreePath string // root of the worktree (e.g., ~/.beans/worktrees/<project>/<id>)
 	beansDir     string // .beans/ dir inside the worktree
 	done         chan struct{}
+
+	// refreshMu serializes the initial scan and the processing of event
+	// batches, so changed-bean sets are applied in the order they were computed.
+	refreshMu sync.Mutex
+
+	// changed holds the IDs of the beans the worktree changed relative to its
+	// base (see worktreeChangedBeanIDs), recomputed whenever the worktree's
+	// .beans/ directory changes. Only these beans may override runtime state.
+	// changedKnown is false if the set couldn't be determined (not a git
+	// worktree, or no merge-base with the base ref); every copy that differs
+	// from the main version counts as a change then. Guarded by Core.mu.
+	changed      map[string]bool
+	changedKnown bool
+}
+
+// mayChange reports whether the worktree's copy of a bean may count as a
+// worktree change. Must be called with Core.mu held.
+func (wt *worktreeWatcher) mayChange(id string) bool {
+	return !wt.changedKnown || wt.changed[id]
 }
 
 // WatchWorktreeBeans starts watching a worktree's .beans/ directory for bean changes.
@@ -79,10 +99,10 @@ func (c *Core) WatchWorktreeBeans(worktreePath string) error {
 		return nil
 	})
 
-	// Initial scan: load existing bean files from the worktree into runtime state.
+	// Initial scan: load the worktree's bean changes into runtime state.
 	// Without this, beans created in worktrees won't be resolvable via Get()
 	// until the watcher picks up a change event.
-	c.loadWorktreeBeansInitial(wt)
+	c.fanOut(c.loadWorktreeBeansInitial(wt))
 
 	// Start the watcher goroutine
 	go c.worktreeWatchLoop(wt, watcher)
@@ -91,45 +111,187 @@ func (c *Core) WatchWorktreeBeans(worktreePath string) error {
 	return nil
 }
 
-// loadWorktreeBeansInitial scans a worktree's .beans/ directory and loads
-// bean files that differ from the main version into runtime state.
-// Only beans that are new or modified compared to main are loaded and linked.
-func (c *Core) loadWorktreeBeansInitial(wt *worktreeWatcher) {
-	entries, err := os.ReadDir(wt.beansDir)
-	if err != nil {
-		return
+// loadWorktreeBeansInitial merges the beans a worktree changed relative to its
+// base into runtime state and returns the resulting events. A worktree created
+// from the base ref holds the committed version of every bean; those untouched
+// copies must not override main's uncommitted edits or another worktree's
+// change, so only beans in the worktree's changed set are considered.
+func (c *Core) loadWorktreeBeansInitial(wt *worktreeWatcher) []BeanEvent {
+	wt.refreshMu.Lock()
+	defer wt.refreshMu.Unlock()
+
+	changed, known := worktreeChangedBeanIDs(wt.worktreePath, c.worktreeBaseRef())
+	ids := changed
+	if !known {
+		ids = beanIDsIn(wt.beansDir)
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.worktreeWatchers[wt.worktreePath] != wt {
+		return nil // unwatched meanwhile
+	}
+	wt.changed, wt.changedKnown = changed, known
 
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+	var events []BeanEvent
+	for _, id := range sortedIDs(ids) {
+		if ev, ok := c.resolveWorktreeBeanLocked(id); ok {
+			events = append(events, ev)
+		}
+	}
+	return events
+}
+
+// worktreeBaseRef returns the ref worktree changes are computed against.
+func (c *Core) worktreeBaseRef() string {
+	if c.config == nil {
+		return config.DefaultWorktreeBaseRef
+	}
+	return c.config.GetWorktreeBaseRef()
+}
+
+// resolveWorktreeBeanLocked decides which version of a bean runtime state shows
+// and applies it, returning the event for subscribers if anything changed.
+//
+// A watched worktree's copy is a candidate if the worktree changed the bean
+// relative to its base and the copy differs from the main version (runtime
+// state for unlinked beans, main's file for linked ones, whose runtime state
+// is a worktree's). Without candidates, a linked bean reverts to main's file
+// (or is dropped if main doesn't have it). With several candidates, the most
+// recently modified copy wins (ties broken by worktree path): it is the latest
+// edit, matching what live updates show, and the result doesn't depend on the
+// order in which worktrees are watched. Must be called with c.mu held.
+func (c *Core) resolveWorktreeBeanLocked(id string) (BeanEvent, bool) {
+	prev := c.beans[id]
+	prevLink, linked := c.worktreeLinks[id]
+
+	base := prev
+	if linked {
+		base = nil
+		if mainPath := c.findMainBeanFile(id); mainPath != "" {
+			mainBean, err := c.loadBeanFrom(mainPath, c.root)
+			if err != nil {
+				c.logWarn("failed to load bean from %s: %v", mainPath, err)
+				return BeanEvent{}, false
+			}
+			base = mainBean
+		}
+	}
+
+	type candidate struct {
+		path    string
+		b       *bean.Bean
+		modTime time.Time
+	}
+	var candidates []candidate
+	for path, wt := range c.worktreeWatchers {
+		if !wt.mayChange(id) {
 			continue
 		}
+		b, modTime := c.loadWorktreeCopyWithModTimeLocked(wt.beansDir, id)
+		if b == nil || (base != nil && base.ETag() == b.ETag()) {
+			continue
+		}
+		candidates = append(candidates, candidate{path, b, modTime})
+	}
 
-		path := filepath.Join(wt.beansDir, entry.Name())
-		newBean, err := c.loadBeanFrom(path, wt.beansDir)
+	if len(candidates) == 0 {
+		if !linked {
+			return BeanEvent{}, false
+		}
+		delete(c.worktreeLinks, id)
+		delete(c.dirty, id)
+		if base == nil {
+			delete(c.beans, id)
+			if c.searchIndex != nil {
+				_ = c.searchIndex.DeleteBean(id)
+			}
+			return BeanEvent{Type: EventDeleted, BeanID: id}, true
+		}
+		c.beans[id] = base
+		if c.searchIndex != nil {
+			_ = c.searchIndex.IndexBean(base)
+		}
+		return BeanEvent{Type: EventUpdated, Bean: base, BeanID: id}, true
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		if !candidates[i].modTime.Equal(candidates[j].modTime) {
+			return candidates[i].modTime.After(candidates[j].modTime)
+		}
+		return candidates[i].path < candidates[j].path
+	})
+	winner := candidates[0]
+	if len(candidates) > 1 && winner.path != prevLink {
+		paths := make([]string, len(candidates))
+		for i, cand := range candidates {
+			paths[i] = cand.path
+		}
+		c.logWarn("bean %s is changed in several worktrees (%s); showing the most recently modified one: %s",
+			id, strings.Join(paths, ", "), winner.path)
+	}
+
+	if linked && prevLink == winner.path && prev != nil && prev.Path == winner.b.Path && prev.ETag() == winner.b.ETag() {
+		return BeanEvent{}, false
+	}
+	c.beans[id] = winner.b
+	c.dirty[id] = true // came from a worktree, not persisted to main
+	c.worktreeLinks[id] = winner.path
+	if c.searchIndex != nil {
+		if err := c.searchIndex.IndexBean(winner.b); err != nil {
+			c.logWarn("failed to index worktree bean %s: %v", id, err)
+		}
+	}
+	if prev == nil {
+		return BeanEvent{Type: EventCreated, Bean: winner.b, BeanID: id}, true
+	}
+	return BeanEvent{Type: EventUpdated, Bean: winner.b, BeanID: id}, true
+}
+
+// loadWorktreeCopyWithModTimeLocked loads a worktree's copy of a bean and its
+// modification time, or returns nil if the worktree has none (or it can't be
+// parsed). Must be called with c.mu held.
+func (c *Core) loadWorktreeCopyWithModTimeLocked(beansDir, id string) (*bean.Bean, time.Time) {
+	for _, path := range findBeanFilesIn(beansDir, id) {
+		info, err := os.Stat(path)
 		if err != nil {
 			continue
 		}
-
-		// Only load and link if the bean differs from the main version.
-		// Worktrees branch from main, so most beans are identical copies.
-		if existing, exists := c.beans[newBean.ID]; exists {
-			if existing.ETag() == newBean.ETag() {
-				continue // Same content as main — skip
-			}
-		}
-
-		c.beans[newBean.ID] = newBean
-		c.dirty[newBean.ID] = true
-		c.worktreeLinks[newBean.ID] = wt.worktreePath
-
-		if c.searchIndex != nil {
-			_ = c.searchIndex.IndexBean(newBean)
+		if b, err := c.loadBeanFrom(path, beansDir); err == nil {
+			return b, info.ModTime()
 		}
 	}
+	return nil, time.Time{}
+}
+
+// beanIDsIn returns the IDs of all bean files in a .beans/ directory,
+// including its archive/ subdirectory.
+func beanIDsIn(beansDir string) map[string]bool {
+	ids := make(map[string]bool)
+	for _, dir := range []string{beansDir, filepath.Join(beansDir, ArchiveDir)} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			if id, _ := bean.ParseFilename(entry.Name()); id != "" {
+				ids[id] = true
+			}
+		}
+	}
+	return ids
+}
+
+func sortedIDs(ids map[string]bool) []string {
+	sorted := make([]string, 0, len(ids))
+	for id := range ids {
+		sorted = append(sorted, id)
+	}
+	sort.Strings(sorted)
+	return sorted
 }
 
 // UnwatchWorktreeBeans stops watching a worktree's .beans/ directory.
@@ -300,147 +462,56 @@ func (c *Core) worktreeWatchLoop(wt *worktreeWatcher, watcher *fsnotify.Watcher)
 	}
 }
 
-// handleWorktreeChanges processes bean file changes from a worktree.
-// Creates/writes are merged into runtime state as dirty.
-// Deletes either revert to the main-repo version or remove the bean from runtime.
+// handleWorktreeChanges processes bean file changes from a worktree. It
+// recomputes the worktree's changed-bean set and re-resolves the beans whose
+// files changed or whose membership in the set changed. A file event for a
+// bean the worktree hasn't changed relative to its base (e.g. a checkout or
+// rebase rewriting the base version) doesn't affect runtime state, unless the
+// bean was linked to this worktree: then the worktree reverted its change and
+// the bean falls back to another worktree's change or main's version.
 func (c *Core) handleWorktreeChanges(wt *worktreeWatcher, changes map[string]fsnotify.Op) {
 	if len(changes) == 0 {
 		return
 	}
 
+	wt.refreshMu.Lock()
+	defer wt.refreshMu.Unlock()
+
+	changed, known := worktreeChangedBeanIDs(wt.worktreePath, c.worktreeBaseRef())
+
+	ids := make(map[string]bool)
+	for path := range changes {
+		if id, _ := bean.ParseFilename(filepath.Base(path)); id != "" {
+			ids[id] = true
+		}
+	}
+
 	c.mu.Lock()
+	if c.worktreeWatchers[wt.worktreePath] != wt {
+		c.mu.Unlock()
+		return // unwatched meanwhile
+	}
+	// Beans entering or leaving the changed set (e.g. after a commit was
+	// dropped by a rebase) are re-resolved too.
+	for id := range wt.changed {
+		if !changed[id] {
+			ids[id] = true
+		}
+	}
+	for id := range changed {
+		if !wt.changed[id] {
+			ids[id] = true
+		}
+	}
+	wt.changed, wt.changedKnown = changed, known
 
 	var events []BeanEvent
-
-	for path, op := range changes {
-		isDelete := op&fsnotify.Remove != 0 || op&fsnotify.Rename != 0
-		isCreateOrWrite := op&fsnotify.Create != 0 || op&fsnotify.Write != 0
-
-		if isDelete && !isCreateOrWrite {
-			filename := filepath.Base(path)
-			id, _ := bean.ParseFilename(filename)
-			if id == "" {
-				continue
-			}
-
-			// The bean was moved or renamed within the worktree (e.g. into
-			// archive/, or a stale copy was replaced): the worktree still has
-			// it, so merge the remaining copy instead of dropping the bean.
-			if remaining := findBeanFilesIn(wt.beansDir, id); len(remaining) > 0 {
-				path = remaining[0]
-				isCreateOrWrite = true
-			}
+	for _, id := range sortedIDs(ids) {
+		if !wt.mayChange(id) && c.worktreeLinks[id] != wt.worktreePath {
+			continue // untouched by this worktree: its copy is irrelevant
 		}
-
-		if isDelete && !isCreateOrWrite {
-			// File was deleted in the worktree. Either revert to the
-			// main-repo version or remove the bean from runtime.
-			id, _ := bean.ParseFilename(filepath.Base(path))
-
-			// Try to load from the main .beans/ directory.
-			// The filename may differ (different slug), so search by ID.
-			mainPath := c.findMainBeanFile(id)
-			if mainPath != "" {
-				mainBean, err := c.loadBeanFrom(mainPath, c.root)
-				if err != nil {
-					continue
-				}
-				// Bean exists in main — revert to that version
-				c.beans[id] = mainBean
-				delete(c.dirty, id)
-				delete(c.worktreeLinks, id)
-
-				if c.searchIndex != nil {
-					_ = c.searchIndex.IndexBean(mainBean)
-				}
-
-				events = append(events, BeanEvent{
-					Type:   EventUpdated,
-					Bean:   mainBean,
-					BeanID: id,
-				})
-			} else if _, existed := c.beans[id]; existed {
-				// Bean was worktree-only — remove from runtime
-				delete(c.beans, id)
-				delete(c.dirty, id)
-				delete(c.worktreeLinks, id)
-
-				if c.searchIndex != nil {
-					_ = c.searchIndex.DeleteBean(id)
-				}
-
-				events = append(events, BeanEvent{
-					Type:   EventDeleted,
-					BeanID: id,
-				})
-			}
-			continue
-		}
-
-		if !isCreateOrWrite {
-			continue
-		}
-
-		// Check the file still exists (handles rapid create+delete)
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			continue
-		}
-
-		newBean, err := c.loadBeanFrom(path, wt.beansDir)
-		if err != nil {
-			c.logWarn("failed to load worktree bean from %s: %v", path, err)
-			continue
-		}
-
-		// Compare against the main repo's version on disk.
-		// If they match (e.g. after a rebase), don't link — this bean
-		// isn't actually modified in the worktree.
-		mainPath := c.findMainBeanFile(newBean.ID)
-		if mainPath != "" {
-			mainBean, mainErr := c.loadBeanFrom(mainPath, c.root)
-			if mainErr == nil && mainBean.ETag() == newBean.ETag() {
-				// Worktree version matches main — clear any stale link
-				if _, wasLinked := c.worktreeLinks[newBean.ID]; wasLinked {
-					c.beans[newBean.ID] = mainBean
-					delete(c.dirty, newBean.ID)
-					delete(c.worktreeLinks, newBean.ID)
-					if c.searchIndex != nil {
-						_ = c.searchIndex.IndexBean(mainBean)
-					}
-					events = append(events, BeanEvent{
-						Type:   EventUpdated,
-						Bean:   mainBean,
-						BeanID: newBean.ID,
-					})
-				}
-				continue
-			}
-		}
-
-		_, existed := c.beans[newBean.ID]
-		c.beans[newBean.ID] = newBean
-		c.dirty[newBean.ID] = true // Mark as dirty — came from worktree, not persisted to main
-		c.worktreeLinks[newBean.ID] = wt.worktreePath
-
-		// Update search index
-		if c.searchIndex != nil {
-			if err := c.searchIndex.IndexBean(newBean); err != nil {
-				c.logWarn("failed to index worktree bean %s: %v", newBean.ID, err)
-			}
-		}
-
-		if existed {
-			events = append(events, BeanEvent{
-				Type:   EventUpdated,
-				Bean:   newBean,
-				BeanID: newBean.ID,
-			})
-		} else {
-			events = append(events, BeanEvent{
-				Type:   EventCreated,
-				Bean:   newBean,
-				BeanID: newBean.ID,
-			})
+		if ev, ok := c.resolveWorktreeBeanLocked(id); ok {
+			events = append(events, ev)
 		}
 	}
 
@@ -555,34 +626,12 @@ func findBeanFilesIn(beansDir, id string) []string {
 	return paths
 }
 
-// loadWorktreeCopyLocked loads a worktree's copy of a bean, or returns nil if
-// the worktree has none (or it can't be parsed). Must be called with c.mu held.
-func (c *Core) loadWorktreeCopyLocked(worktreePath, id string) *bean.Bean {
-	beansDir := filepath.Join(worktreePath, BeansDir)
-	for _, path := range findBeanFilesIn(beansDir, id) {
-		if b, err := c.loadBeanFrom(path, beansDir); err == nil {
-			return b
-		}
-	}
-	return nil
-}
-
-// findMainBeanFile searches the main .beans/ directory for a file matching the
-// given bean ID. Returns the full path or empty string if not found.
-// Must be called with c.mu held.
+// findMainBeanFile searches the main .beans/ directory (including archive/)
+// for a file matching the given bean ID. Returns the full path or empty string
+// if not found. Must be called with c.mu held.
 func (c *Core) findMainBeanFile(id string) string {
-	entries, err := os.ReadDir(c.root)
-	if err != nil {
-		return ""
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-			continue
-		}
-		fileID, _ := bean.ParseFilename(entry.Name())
-		if fileID == id {
-			return filepath.Join(c.root, entry.Name())
-		}
+	if paths := findBeanFilesIn(c.root, id); len(paths) > 0 {
+		return paths[0]
 	}
 	return ""
 }

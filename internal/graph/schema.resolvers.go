@@ -307,6 +307,16 @@ func (r *mutationResolver) RemoveWorktree(ctx context.Context, id string) (bool,
 		return false, err
 	}
 
+	// Forget the workspace's agent conversation (including its Claude session
+	// ID): otherwise a new workspace with the same name would show the old chat
+	// and resume the old Claude session in the new directory. Done while new
+	// agent processes are still blocked; subscribers get an empty session.
+	if r.AgentMgr != nil {
+		if err := r.AgentMgr.ClearSession(id); err != nil {
+			log.Printf("[worktree] warning: failed to clear agent session for %s: %v", id, err)
+		}
+	}
+
 	// Free the workspace port
 	if r.PortAlloc != nil {
 		r.PortAlloc.Free(id)
