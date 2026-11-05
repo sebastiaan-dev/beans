@@ -2,7 +2,7 @@
   import type { Bean } from '$lib/beans.svelte';
   import { beansStore } from '$lib/beans.svelte';
   import { backlogDrag } from '$lib/backlogDrag.svelte';
-  import { matchesFilter } from '$lib/filter';
+  import type { TreeFilterResult } from '$lib/filter';
   import BeanCard from './BeanCard.svelte';
   import BeanItem from './BeanItem.svelte';
 
@@ -14,7 +14,8 @@
     depth?: number;
     selectedId?: string | null;
     onSelect?: (bean: Bean) => void;
-    filterText?: string;
+    /** Active planning filter (null = unfiltered): hides non-matching subtrees. */
+    filter?: TreeFilterResult | null;
     /** Status of the backlog section this bean is in (for cross-section drag) */
     sectionStatus?: string;
     /** Show the bean's parent when it is rendered outside its parent's subtree */
@@ -28,7 +29,7 @@
     depth = 0,
     selectedId = null,
     onSelect,
-    filterText = '',
+    filter = null,
     sectionStatus,
     showParentContext = false
   }: Props = $props();
@@ -39,8 +40,10 @@
 
   const children = $derived(beansStore.children(bean.id));
   const filteredChildren = $derived(
-    filterText ? children.filter((child) => matchesFilter(child, filterText)) : children
+    filter ? children.filter((child) => filter.visible.has(child.id)) : children
   );
+  /** Shown only as context for a matching descendant. */
+  const contextOnly = $derived(!!filter && !filter.matched.has(bean.id));
 
   function handleClick(e: MouseEvent) {
     e.stopPropagation();
@@ -48,7 +51,7 @@
   }
 </script>
 
-<div class="bean-item my-1" data-bean-id={bean.id}>
+<div class="bean-item my-1" data-bean-id={bean.id} data-filter-context={contextOnly || undefined}>
   <!-- Drop indicator before this card -->
   <div
     class={[
@@ -75,6 +78,7 @@
     class={[
       'rounded transition-all',
       backlogDrag.draggedBeanId === bean.id && 'opacity-40',
+      contextOnly && 'opacity-60',
       backlogDrag.isReparentTarget(bean.id) && 'ring-2 ring-accent ring-offset-1'
     ]}
     draggable="true"
@@ -107,7 +111,7 @@
           depth={depth + 1}
           {selectedId}
           {onSelect}
-          {filterText}
+          {filter}
           {sectionStatus}
         />
       {/each}

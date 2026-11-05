@@ -17,6 +17,7 @@ fragment BeanFields on Bean {
   order
   parentId
   blockingIds
+  blockedByIds
   worktreeId
 }
 
