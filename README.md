@@ -112,6 +112,23 @@ worktree:
 
 `wt` must be on the PATH of `beans serve`; your own worktrunk configuration (including `WORKTRUNK_CONFIG_PATH`) applies.
 
+### Starting a bean in a worktree from the terminal
+
+`beans start <id> --worktree` (`-w`) is the terminal counterpart of Beans UI's Start Work: it creates a worktree for the bean (or reuses it if it already exists), copies the bean into the worktree's `.beans/` (including uncommitted edits from the main worktree) and sets it to `in-progress` there. The bean in the main worktree is left unchanged; the status change travels with the branch. On a rerun, a bean the worktree already changed is not overwritten.
+
+```bash
+beans start abc1 -w                                    # create/reuse the worktree, print its path
+beans start abc1 -w --name login                       # pick the worktree/branch name
+beans start abc1 -w -x claude -- "Work on bean abc1"   # then launch an agent in it
+```
+
+- **Name:** derived from the bean (`<id>-<slug>`, shortened to 40 characters, e.g. `abc1-add-login-form`) unless you pass `--name`.
+- **worktrunk backend:** beans runs your normal `wt switch [--create] <name> --base <worktree.base_ref> --no-cd` in your terminal, so *all* your hooks run, including switch hooks (e.g. a tmux `post-switch` hook), and `wt` can prompt you to approve project hooks. For a new worktree, `worktree.setup` runs afterwards.
+- **git backend:** the worktree is created exactly like Beans UI does (branch `beans/<name>` under `worktree.path`) and beans waits for `worktree.setup`.
+- **Changing directory:** beans can't change your shell's directory, so `cd` into the printed path (or `wt switch <name>`), or use `--exec`/`-x` to run a program in the worktree once the bean is prepared; arguments after `--` are passed to it, and beans exits with its exit code. `--json` prints the worktree path in `path`.
+
+A running `beans serve` picks up the new worktree and the in-progress bean by itself.
+
 ## Agent Configuration
 
 The most basic way to teach your agent about Beans is to simply add the following instruction to your `AGENTS.md`, `CLAUDE.md`, or equivalent file:
