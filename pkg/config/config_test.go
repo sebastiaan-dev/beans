@@ -1617,3 +1617,73 @@ server:
 		}
 	})
 }
+
+func TestGetWorktreeBackend(t *testing.T) {
+	tests := []struct {
+		name  string
+		value WorktreeBackend
+		want  WorktreeBackend
+		valid bool
+	}{
+		{"default (empty)", "", WorktreeBackendGit, true},
+		{"git", WorktreeBackendGit, WorktreeBackendGit, true},
+		{"worktrunk", WorktreeBackendWorktrunk, WorktreeBackendWorktrunk, true},
+		{"invalid value is reported as-is", "wt", "wt", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Default()
+			cfg.Worktree.Backend = tt.value
+			got := cfg.GetWorktreeBackend()
+			if got != tt.want {
+				t.Errorf("GetWorktreeBackend() = %q, want %q", got, tt.want)
+			}
+			if IsValidWorktreeBackend(got) != tt.valid {
+				t.Errorf("IsValidWorktreeBackend(%q) = %v, want %v", got, !tt.valid, tt.valid)
+			}
+		})
+	}
+}
+
+func TestWorktreeBackendLoadAndSave(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, ConfigFileName)
+	if err := os.WriteFile(configPath, []byte("beans:\n  prefix: test-\nworktree:\n  backend: worktrunk\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.GetWorktreeBackend() != WorktreeBackendWorktrunk {
+		t.Fatalf("GetWorktreeBackend() = %q, want worktrunk", cfg.GetWorktreeBackend())
+	}
+
+	// Saving writes the backend with a comment; the default config says git.
+	saveDir := t.TempDir()
+	def := DefaultWithPrefix("test-")
+	def.SetConfigDir(saveDir)
+	if err := def.Save(saveDir); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(saveDir, ConfigFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "backend: git") || !strings.Contains(content, "# Worktree backend") || !strings.Contains(content, "worktrunk") {
+		t.Errorf("saved config lacks the documented backend key:\n%s", content)
+	}
+
+	cfg.SetConfigDir(saveDir)
+	if err := cfg.Save(saveDir); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Load(filepath.Join(saveDir, ConfigFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.GetWorktreeBackend() != WorktreeBackendWorktrunk {
+		t.Errorf("round trip lost the backend: %q", reloaded.GetWorktreeBackend())
+	}
+}

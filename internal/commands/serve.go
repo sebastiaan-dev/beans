@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -20,8 +21,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hmans/beans/internal/agent"
-	"github.com/hmans/beans/internal/gitutil"
 	"github.com/hmans/beans/internal/cors"
+	"github.com/hmans/beans/internal/gitutil"
 	"github.com/hmans/beans/internal/graph"
 	"github.com/hmans/beans/internal/portalloc"
 	"github.com/hmans/beans/internal/terminal"
@@ -33,8 +34,8 @@ import (
 )
 
 var (
-	servePort    int
-	corsOrigins  []string
+	servePort   int
+	corsOrigins []string
 )
 
 var serveCmd = &cobra.Command{
@@ -115,38 +116,34 @@ func runServer(port int, origins []string) error {
 		log.Printf("[beans] WARNING: found old worktrees in %s — worktrees are now created in %s. You may want to recreate existing worktrees and remove the old directory.", oldWorktreeDir, worktreeRoot)
 	}
 
+	backend, err := worktree.NewBackend(string(cfg.GetWorktreeBackend()))
+	if err != nil {
+		return fmt.Errorf("worktree backend: %w", err)
+	}
+	if backend.Kind() == worktree.BackendWorktrunk {
+		log.Printf("[beans] worktree backend: worktrunk (worktree paths come from worktrunk's worktree-path template; %s only holds metadata)", worktreeRoot)
+	}
+
 	wtManager := worktree.NewManager(cfg.ConfigDir(), worktreeRoot, cfg.GetWorktreeBaseRef(), cfg.GetWorktreeSetup(),
 		worktree.WithFetchTimeout(cfg.GetWorktreeFetchTimeout()),
+		worktree.WithBackend(backend),
 	)
-
-	// Watch existing worktrees for bean changes
-	if existingWTs, err := wtManager.List(); err == nil {
-		for _, wt := range existingWTs {
-			if err := core.WatchWorktreeBeans(wt.Path); err != nil {
-				fmt.Printf("[beans] warning: failed to watch worktree %s: %v\n", wt.ID, err)
-			}
-		}
-	}
 
 	// Create workspace port allocator and allocate port for central workspace
 	portAlloc := portalloc.NewDefault()
 	portAlloc.Allocate(graph.CentralSessionID)
 
-	// Restore persisted ports for existing worktrees (or allocate new ones)
-	if existingWTs, err := wtManager.List(); err == nil {
-		for _, wt := range existingWTs {
-			var port int
-			if savedPort := wtManager.GetPort(wt.ID); savedPort > 0 {
-				port = portAlloc.AllocateSpecific(wt.ID, savedPort)
-			} else {
-				port = portAlloc.Allocate(wt.ID)
-			}
-			// Persist the port (writes back the actual port, which may differ
-			// from the saved one if there was a conflict).
-			if err := wtManager.SavePort(wt.ID, port); err != nil {
-				log.Printf("[beans] warning: failed to save port for %s: %v", wt.ID, err)
-			}
-		}
+	// Keep bean watchers and workspace ports in sync with the worktrees that
+	// exist, including ones created or removed outside beans (wt switch -c,
+	// wt remove, git worktree add/remove). Runs at startup and whenever the
+	// repository's worktrees change.
+	syncWorkspaces := newWorkspaceSyncer(wtManager, portAlloc)
+	syncWorkspaces()
+	stopWorktreeWatch, err := wtManager.WatchExternalChanges(syncWorkspaces)
+	if err != nil {
+		log.Printf("[beans] warning: not watching for worktree changes made outside beans: %v", err)
+	} else {
+		defer stopWorktreeWatch()
 	}
 
 	// Create terminal session manager with workspace port injection.
@@ -206,8 +203,8 @@ func runServer(port int, origins []string) error {
 		if beanID == graph.CentralSessionID {
 			return fmt.Sprintf("You are the central planning agent for the beans project. Your working directory is the main repository at: %s\nNEVER merge pull requests. After creating a PR, stop and report the URL. Do not run `gh pr merge` or any equivalent.\nNEVER assume CI checks are absent. Checks take time to register after a push. If `gh pr checks` returns empty, it means checks haven't started yet, not that none are configured.", filepath.Dir(core.Root()))
 		}
-		wtPath := wtManager.WorktreePath(beanID)
-		if wtPath == "" {
+		wtPath, err := wtManager.Path(beanID)
+		if err != nil {
 			return ""
 		}
 		return fmt.Sprintf("You are a workspace agent working in a git worktree. Your worktree ID is %q and your working directory is: %s\nAll file modifications MUST be within this directory. NEVER modify files in the main repository or other worktrees.\nNEVER force-push to main. NEVER push to origin/main. The Integrate action is local-only.\nNEVER merge pull requests. After creating a PR, stop and report the URL. Do not run `gh pr merge` or any equivalent.\nNEVER assume CI checks are absent. Checks take time to register after a push. If `gh pr checks` returns empty, it means checks haven't started yet, not that none are configured.", beanID, wtPath)
@@ -447,3 +444,53 @@ func RegisterServeCmd(root *cobra.Command) {
 	root.AddCommand(serveCmd)
 }
 
+// newWorkspaceSyncer returns a function that reconciles runtime state with the
+// repository's worktrees: it watches the .beans/ directories of all workspaces
+// (and stops watching removed ones), restores or allocates ports for new
+// workspaces and frees the ports of removed ones. Calls are serialized.
+func newWorkspaceSyncer(wtManager *worktree.Manager, portAlloc *portalloc.Allocator) func() {
+	var mu sync.Mutex
+	known := map[string]bool{}
+	return func() {
+		mu.Lock()
+		defer mu.Unlock()
+
+		wts, err := wtManager.List()
+		if err != nil {
+			log.Printf("[beans] warning: failed to list worktrees: %v", err)
+			return
+		}
+
+		paths := make([]string, 0, len(wts))
+		current := make(map[string]bool, len(wts))
+		for _, wt := range wts {
+			paths = append(paths, wt.Path)
+			current[wt.ID] = true
+			if known[wt.ID] {
+				continue
+			}
+			// Restore the persisted port (or allocate a new one) and write
+			// back the actual port, which may differ from the saved one if
+			// there was a conflict.
+			var port int
+			if savedPort := wtManager.GetPort(wt.ID); savedPort > 0 {
+				port = portAlloc.AllocateSpecific(wt.ID, savedPort)
+			} else {
+				port = portAlloc.Allocate(wt.ID)
+			}
+			if err := wtManager.SavePort(wt.ID, port); err != nil {
+				log.Printf("[beans] warning: failed to save port for %s: %v", wt.ID, err)
+			}
+		}
+		for id := range known {
+			if !current[id] {
+				portAlloc.Free(id)
+			}
+		}
+		known = current
+
+		if err := core.SyncWorktreeWatchers(paths); err != nil {
+			log.Printf("[beans] warning: %v", err)
+		}
+	}
+}

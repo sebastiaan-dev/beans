@@ -222,6 +222,7 @@ type ComplexityRoot struct {
 		MainBranch            func(childComplexity int) int
 		ProjectName           func(childComplexity int) int
 		WorkspacePort         func(childComplexity int, workspaceID string) int
+		WorktreeBackend       func(childComplexity int) int
 		WorktreeBaseRef       func(childComplexity int) int
 		WorktreeIntegrateMode func(childComplexity int) int
 		WorktreeRunCommand    func(childComplexity int) int
@@ -330,6 +331,7 @@ type QueryResolver interface {
 	WorkspacePort(ctx context.Context, workspaceID string) (int, error)
 	IsRunning(ctx context.Context, workspaceID string) (bool, error)
 	WorktreeIntegrateMode(ctx context.Context) (string, error)
+	WorktreeBackend(ctx context.Context) (string, error)
 	ListFiles(ctx context.Context, workspaceID *string, prefix string, limit *int) ([]*model.FileEntry, error)
 }
 type SubscriptionResolver interface {
@@ -1329,6 +1331,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Query.WorkspacePort(childComplexity, args["workspaceId"].(string)), true
+	case "Query.worktreeBackend":
+		if e.complexity.Query.WorktreeBackend == nil {
+			break
+		}
+
+		return e.complexity.Query.WorktreeBackend(childComplexity), true
 	case "Query.worktreeBaseRef":
 		if e.complexity.Query.WorktreeBaseRef == nil {
 			break
@@ -7485,6 +7493,35 @@ func (ec *executionContext) fieldContext_Query_worktreeIntegrateMode(_ context.C
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_worktreeBackend(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_worktreeBackend,
+		func(ctx context.Context) (any, error) {
+			return ec.resolvers.Query().WorktreeBackend(ctx)
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_worktreeBackend(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query_listFiles(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -12487,6 +12524,28 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_worktreeIntegrateMode(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "worktreeBackend":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_worktreeBackend(ctx, field)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}

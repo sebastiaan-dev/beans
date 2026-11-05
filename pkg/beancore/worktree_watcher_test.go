@@ -878,3 +878,90 @@ func TestWorktreeBeanMovedWithinWorktree(t *testing.T) {
 		core.Unwatch()
 	}
 }
+
+func TestSyncWorktreeWatchers(t *testing.T) {
+	core, _ := setupTestCore(t)
+	createTestBean(t, core, "sync-1", "Original", "todo")
+
+	newWorktree := func(t *testing.T) string {
+		t.Helper()
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, BeansDir), 0755); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	a, b := newWorktree(t), newWorktree(t)
+	noBeans := t.TempDir() // a worktree without .beans/ (yet)
+	defer core.UnwatchAllWorktrees()
+
+	if err := core.SyncWorktreeWatchers([]string{a, b, noBeans}); err != nil {
+		t.Fatalf("SyncWorktreeWatchers: %v", err)
+	}
+	if got := core.WatchedWorktrees(); len(got) != 2 {
+		t.Fatalf("watched = %v, want %s and %s", got, a, b)
+	}
+
+	// A path that resolves to an already-watched worktree is not watched twice.
+	if resolved, err := filepath.EvalSymlinks(a); err == nil && resolved != a {
+		if err := core.SyncWorktreeWatchers([]string{resolved, b, noBeans}); err != nil {
+			t.Fatal(err)
+		}
+		if got := core.WatchedWorktrees(); len(got) != 2 {
+			t.Fatalf("after symlinked path: watched = %v, want 2 entries", got)
+		}
+	}
+
+	// The worktree without .beans/ gets one: the next sync picks it up.
+	if err := os.MkdirAll(filepath.Join(noBeans, BeansDir), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// b is gone (removed outside beans): it is unwatched and its links cleared.
+	content := "---\ntitle: Changed in b\nstatus: todo\ntype: task\n---\n"
+	if err := os.WriteFile(filepath.Join(b, BeansDir, "sync-1--original.md"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.SyncWorktreeWatchers([]string{a, b, noBeans}); err != nil {
+		t.Fatal(err)
+	}
+	// The write is picked up by b's watcher and links the bean to b.
+	deadline := time.Now().Add(3 * time.Second)
+	for core.WorktreeForBean("sync-1") == "" && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if link := core.WorktreeForBean("sync-1"); link != b {
+		t.Fatalf("worktree link for sync-1 = %q, want %q", link, b)
+	}
+	if err := core.SyncWorktreeWatchers([]string{a, noBeans}); err != nil {
+		t.Fatal(err)
+	}
+	got := core.WatchedWorktrees()
+	want := []string{a, noBeans}
+	if len(got) != 2 || !containsAll(got, want) {
+		t.Fatalf("watched = %v, want %v", got, want)
+	}
+	if link := core.WorktreeForBean("sync-1"); link != "" {
+		t.Errorf("worktree link for sync-1 = %q after its worktree was unwatched, want none", link)
+	}
+
+	// An empty list stops all watchers.
+	if err := core.SyncWorktreeWatchers(nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := core.WatchedWorktrees(); len(got) != 0 {
+		t.Fatalf("watched = %v after syncing an empty list, want none", got)
+	}
+}
+
+func containsAll(have, want []string) bool {
+	set := map[string]bool{}
+	for _, h := range have {
+		set[h] = true
+	}
+	for _, w := range want {
+		if !set[w] {
+			return false
+		}
+	}
+	return true
+}

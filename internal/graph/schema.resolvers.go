@@ -135,7 +135,7 @@ func (r *mutationResolver) WriteTerminalInput(ctx context.Context, sessionID str
 		if sessionID == CentralSessionID {
 			workDir = r.ProjectRoot
 		} else if r.WorktreeMgr != nil {
-			workDir = r.WorktreeMgr.WorktreePath(sessionID)
+			workDir, _ = r.WorktreeMgr.Path(sessionID)
 		}
 		if workDir == "" {
 			return false, fmt.Errorf("terminal session %q not found and cannot resolve work dir", sessionID)
@@ -169,7 +169,7 @@ func (r *mutationResolver) StartRun(ctx context.Context, workspaceID string) (in
 	if workspaceID == CentralSessionID {
 		workDir = r.ProjectRoot
 	} else if r.WorktreeMgr != nil {
-		workDir = r.WorktreeMgr.WorktreePath(workspaceID)
+		workDir, _ = r.WorktreeMgr.Path(workspaceID)
 	}
 	if workDir == "" {
 		return 0, fmt.Errorf("cannot resolve work directory for workspace %q", workspaceID)
@@ -967,6 +967,19 @@ func (r *queryResolver) WorktreeIntegrateMode(ctx context.Context) (string, erro
 		return string(config.IntegrateModeLocal), nil
 	}
 	return string(cfg.GetWorktreeIntegrate()), nil
+}
+
+// WorktreeBackend is the resolver for the worktreeBackend field.
+// Reports the backend of the running worktree manager, falling back to the
+// configured value when worktree support isn't available.
+func (r *queryResolver) WorktreeBackend(ctx context.Context) (string, error) {
+	if r.WorktreeMgr != nil {
+		return string(r.WorktreeMgr.Backend()), nil
+	}
+	if cfg := r.Core.Config(); cfg != nil {
+		return string(cfg.GetWorktreeBackend()), nil
+	}
+	return string(config.WorktreeBackendGit), nil
 }
 
 // ListFiles is the resolver for the listFiles field.

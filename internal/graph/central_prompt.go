@@ -54,7 +54,7 @@ You have access to the beans CLI and can use it (including ` + "`beans query`" +
 
 STARTING WORK ON A BEAN:
 The beans CLI (` + "`beans graphql`, `beans query`" + `) runs GraphQL in-process against the .beans/ files and CANNOT create workspaces or start agents. Use the running server's GraphQL HTTP endpoint (` + graphqlURL + `) instead. This does the same as the "Start Work" button on a bean in the UI:
-1. Create the workspace. <workspace-name> becomes its ID and the git branch beans/<workspace-name>; use a short slug of lowercase letters, digits and '-' that is not already in use (e.g. "fix-login-timeout"). Passing the bean ID copies the bean's current version into the workspace.
+1. Create the workspace. <workspace-name> becomes its ID and its git branch (beans/<workspace-name>, or just <workspace-name> when the project uses the worktrunk worktree backend); use a short slug of lowercase letters, digits and '-' that is not already in use (e.g. "fix-login-timeout"). Passing the bean ID copies the bean's current version into the workspace.
    ` + createCmd + `
    The workspace ID is data.createWorktree.id in the response. If the response contains "errors", report them to the user.
 2. Start the workspace's agent on the bean:

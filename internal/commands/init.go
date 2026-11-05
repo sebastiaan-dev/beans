@@ -5,11 +5,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/spf13/cobra"
 	"github.com/hmans/beans/internal/gitutil"
 	"github.com/hmans/beans/internal/output"
+	"github.com/hmans/beans/internal/worktree"
 	"github.com/hmans/beans/pkg/beancore"
 	"github.com/hmans/beans/pkg/config"
+	"github.com/spf13/cobra"
 )
 
 var initJSON bool
@@ -81,8 +82,24 @@ var initCmd = &cobra.Command{
 		}
 
 		fmt.Println("Initialized beans project")
+		if hint := worktrunkInitHint(projectDir); hint != "" {
+			fmt.Println(hint)
+		}
 		return nil
 	},
+}
+
+// worktrunkInitHint suggests the worktrunk backend when a config file was
+// written and worktrunk (wt) is on PATH. Init stays non-interactive and never
+// switches the backend itself: the backend changes branch naming and where
+// worktrees live, so it is opt-in. The generated config contains
+// `backend: git` with a comment describing both values.
+func worktrunkInitHint(projectDir string) string {
+	if projectDir == "" || !worktree.WorktrunkAvailable() {
+		return ""
+	}
+	return fmt.Sprintf("Found worktrunk (wt) on PATH. To manage workspaces with it, set `worktree.backend: worktrunk` in %s.",
+		filepath.Join(projectDir, config.ConfigFileName))
 }
 
 func RegisterInitCmd(root *cobra.Command) {

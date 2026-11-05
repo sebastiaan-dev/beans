@@ -91,6 +91,27 @@ Flags take precedence over environment variables. A config file set via `--confi
 export BEANS_CONFIG=~/my-beans/.beans.yml
 ```
 
+### Workspaces with worktrunk
+
+Beans UI (`beans serve`) runs each workspace in its own git worktree. By default (`worktree.backend: git`) beans creates them itself: branch `beans/<name>`, directory `~/.beans/worktrees/<project>/<name>` (or `worktree.path`), and only `beans/*` worktrees show up as workspaces.
+
+If you use [worktrunk](https://worktrunk.dev) (`wt`), let it manage the worktrees instead:
+
+```yaml
+worktree:
+  backend: worktrunk
+```
+
+`beans init` writes `backend: git` and tells you when `wt` is on your PATH; `beans check` shows the same hint. With the worktrunk backend:
+
+- **Naming:** a workspace named `fix-login` gets the branch `fix-login` (no `beans/` prefix). Its directory comes from worktrunk's `worktree-path` template, e.g. `~/repos/myproject.fix-login`. `worktree.path` no longer decides where worktrees go; beans only keeps its per-workspace metadata (name, description, port) there.
+- **All worktrees are workspaces:** every linked worktree of the repository is listed, however it was created (`wt switch -c`, `git worktree add`, beans). The main worktree is never listed. A workspace's ID is derived from its branch (`feat/login` → `feat-login`, like worktrunk's `sanitize` filter; detached worktrees keep their previous ID or use their directory name; collisions get a short hash suffix), and its default name is the branch.
+- **External changes:** beans watches the repository's `.git/worktrees/` directory, so worktrees created or removed outside beans appear and disappear in Beans UI within a moment.
+- **Hooks:** creating a workspace runs `wt switch --create <name> --base <worktree.base_ref> --no-hooks`, then worktrunk's creation hooks: `pre-start` (blocking), beans' own `worktree.setup` command, and `post-start` (in the background, as worktrunk does). Switch hooks (`pre-switch`, `post-switch`) don't run, because no shell is switching. The workspace's setup status covers `pre-start` and `worktree.setup`. Destroying a workspace stops its agent and terminals, then runs `wt remove <branch> --force --foreground`, so `pre-remove`/`post-remove` hooks run, uncommitted changes are discarded, and the branch is deleted only when it is merged.
+- **Approvals:** beans never approves worktrunk project hooks for you (no `--yes`), and `wt` can't ask without a terminal. If a project hook isn't approved yet, the workspace's setup fails with a message saying so (and no hooks or `worktree.setup` run), and removal fails until you approve. Run `wt config approvals add` in the repository to review and approve the hooks, then `wt hook pre-start` / `wt hook post-start` in the new worktree.
+
+`wt` must be on the PATH of `beans serve`; your own worktrunk configuration (including `WORKTRUNK_CONFIG_PATH`) applies.
+
 ## Agent Configuration
 
 The most basic way to teach your agent about Beans is to simply add the following instruction to your `AGENTS.md`, `CLAUDE.md`, or equivalent file:

@@ -125,6 +125,15 @@ type Query {
   worktreeIntegrateMode: String!
 
   """
+  The worktree backend (from worktree.backend config).
+  "git" = branches beans/<name> under worktree.path; only beans/* worktrees are workspaces.
+  "worktrunk" = managed with worktrunk (wt): plain branch names, worktrunk's path
+  template and hooks; every linked worktree of the repository is a workspace.
+  Defaults to "git".
+  """
+  worktreeBackend: String!
+
+  """
   List files tracked by git in a workspace directory.
   Performs case-insensitive substring matching — space-separated terms must all
   match somewhere in the file path. Used for @-mention autocomplete.

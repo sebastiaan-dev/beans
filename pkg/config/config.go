@@ -90,8 +90,26 @@ const (
 	IntegrateModePR    IntegrateMode = "pr"
 )
 
+// WorktreeBackend selects how beans creates, lists and removes worktrees.
+type WorktreeBackend string
+
+const (
+	// WorktreeBackendGit manages worktrees with plain git: branches are named
+	// beans/<name>, worktrees live under worktree.path, and only beans/*
+	// branches are listed as workspaces.
+	WorktreeBackendGit WorktreeBackend = "git"
+	// WorktreeBackendWorktrunk manages worktrees with worktrunk (`wt`):
+	// branches are named <name>, paths come from worktrunk's worktree-path
+	// template, worktrunk's creation and removal hooks run, and every linked
+	// worktree of the repository is listed as a workspace.
+	WorktreeBackendWorktrunk WorktreeBackend = "worktrunk"
+)
+
 // WorktreeConfig defines settings for git worktree management.
 type WorktreeConfig struct {
+	// Backend selects the worktree backend: "git" (default) or "worktrunk".
+	Backend WorktreeBackend `yaml:"backend,omitempty"`
+
 	// BaseRef is the git ref to use as the starting point for new worktree branches.
 	// Default: "main"
 	BaseRef string `yaml:"base_ref,omitempty"`
@@ -99,6 +117,9 @@ type WorktreeConfig struct {
 	// Path is the directory where worktrees are created.
 	// Default: ~/.beans/worktrees/<project-name>/
 	// Supports ~ for home directory.
+	// With the worktrunk backend, worktrees are placed by worktrunk's
+	// worktree-path template instead and this directory only holds beans'
+	// per-worktree metadata files.
 	Path string `yaml:"path,omitempty"`
 
 	// Setup is a shell command to run inside a worktree after creation (e.g. "pnpm install").
@@ -420,6 +441,9 @@ func (c *Config) toYAMLNode() *yaml.Node {
 
 	// Build the worktree mapping
 	worktreeMapping := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	backendKey := strNode("backend")
+	backendKey.HeadComment = "Worktree backend: \"git\" (branches beans/<name> under worktree.path) or\n\"worktrunk\" (uses `wt`: plain branch names, worktrunk's path template and hooks)"
+	worktreeMapping.Content = append(worktreeMapping.Content, backendKey, strNode(string(c.GetWorktreeBackend())))
 	if c.Worktree.BaseRef != "" {
 		key := strNode("base_ref")
 		key.HeadComment = "Git ref to use as the base for new worktree branches (default: main)"
@@ -727,6 +751,21 @@ func (c *Config) GetWorktreeBaseRef() string {
 		return DefaultWorktreeBaseRef
 	}
 	return c.Worktree.BaseRef
+}
+
+// GetWorktreeBackend returns the configured worktree backend.
+// Returns "git" if not set. Invalid values are returned as-is so callers can
+// report them (see IsValidWorktreeBackend).
+func (c *Config) GetWorktreeBackend() WorktreeBackend {
+	if c.Worktree.Backend == "" {
+		return WorktreeBackendGit
+	}
+	return c.Worktree.Backend
+}
+
+// IsValidWorktreeBackend reports whether b is a known worktree backend.
+func IsValidWorktreeBackend(b WorktreeBackend) bool {
+	return b == WorktreeBackendGit || b == WorktreeBackendWorktrunk
 }
 
 // GetWorktreeSetup returns the configured setup command for new worktrees.
