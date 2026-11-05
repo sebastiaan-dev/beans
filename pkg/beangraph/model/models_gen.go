@@ -201,9 +201,9 @@ type BranchStatus struct {
 type CreateBeanInput struct {
 	// Bean title (required)
 	Title string `json:"title"`
-	// Bean type (defaults to 'task')
+	// Bean type (defaults to the configured default_type, or 'task')
 	Type *string `json:"type,omitempty"`
-	// Status (defaults to 'todo')
+	// Status (defaults to the configured default_status, or 'todo')
 	Status *string `json:"status,omitempty"`
 	// Priority level (defaults to 'normal')
 	Priority *string `json:"priority,omitempty"`
