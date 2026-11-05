@@ -264,8 +264,15 @@ type Mutation {
 
   """
   Create a new worktree. Returns the created worktree with a generated ID.
+
+  If beanId is given (Start Work), the bean as beans-serve currently sees it is
+  written into the new worktree's .beans/ directory before returning. The
+  worktree is created from the base ref, which doesn't contain uncommitted edits
+  made in the main working copy (e.g. via Beans UI), so without this the agent
+  would work from a stale or missing bean. The written file is a normal change
+  on the worktree branch and travels with its PR.
   """
-  createWorktree(name: String!): Worktree!
+  createWorktree(name: String!, beanId: ID): Worktree!
 
   """
   Remove a worktree by its ID (works for both bean-attached and standalone worktrees).

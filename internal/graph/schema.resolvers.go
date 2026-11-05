@@ -202,14 +202,39 @@ func (r *mutationResolver) StopRun(ctx context.Context, workspaceID string) (boo
 }
 
 // CreateWorktree is the resolver for the createWorktree field.
-func (r *mutationResolver) CreateWorktree(ctx context.Context, name string) (*model.Worktree, error) {
+func (r *mutationResolver) CreateWorktree(ctx context.Context, name string, beanID *string) (*model.Worktree, error) {
 	if r.WorktreeMgr == nil {
 		return nil, fmt.Errorf("worktree support not available")
+	}
+
+	// Validate the bean before creating anything, so a typo doesn't leave an
+	// orphaned worktree behind.
+	var workBeanID string
+	if beanID != nil && *beanID != "" {
+		id, ok := r.Core.NormalizeID(*beanID)
+		if !ok {
+			return nil, fmt.Errorf("bean not found: %s", *beanID)
+		}
+		workBeanID = id
 	}
 
 	wt, err := r.WorktreeMgr.Create(name)
 	if err != nil {
 		return nil, err
+	}
+
+	// Give the worktree the bean as beans-serve sees it (hmans/beans#176).
+	// Only the bean being worked on is copied: it is part of the work and will
+	// be changed on the branch anyway. Copying related beans (parents,
+	// children) would add unrelated changes to the branch that could conflict
+	// with later edits on main.
+	if workBeanID != "" {
+		if _, err := r.Core.WriteBeanToWorktree(workBeanID, wt.Path); err != nil {
+			if rmErr := r.WorktreeMgr.Remove(wt.ID); rmErr != nil {
+				log.Printf("[worktree] warning: failed to remove worktree %s after error: %v", wt.ID, rmErr)
+			}
+			return nil, fmt.Errorf("writing bean %s to worktree: %w", workBeanID, err)
+		}
 	}
 
 	// Allocate a workspace port for this worktree and persist it

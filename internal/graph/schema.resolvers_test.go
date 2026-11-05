@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hmans/beans/internal/agent"
+	"github.com/hmans/beans/internal/worktree"
 	"github.com/hmans/beans/pkg/beangraph"
 	"github.com/hmans/beans/pkg/beangraph/model"
 	"github.com/hmans/beans/pkg/bean"
@@ -3281,3 +3282,121 @@ func TestListFiles(t *testing.T) {
 	})
 }
 
+
+// setupWorktreeResolver creates a git repo with a committed .beans/ directory
+// and a resolver backed by a real worktree manager.
+func setupWorktreeResolver(t *testing.T) (*Resolver, *beancore.Core, string) {
+	t.Helper()
+	repoDir := t.TempDir()
+	beansDir := filepath.Join(repoDir, ".beans")
+	if err := os.MkdirAll(beansDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args, out, err)
+		}
+	}
+	git("init", "-b", "main")
+
+	core := beancore.New(beansDir, config.Default())
+	core.SetWarnWriter(nil)
+	if err := core.Load(); err != nil {
+		t.Fatal(err)
+	}
+	createTestBean(t, core, "sw-1", "Start Work Bean", "todo")
+	git("add", ".beans")
+	git("commit", "-m", "beans")
+
+	mgr := worktree.NewManager(repoDir, t.TempDir(), "main", "", worktree.WithFetchTimeout(0))
+	resolver := &Resolver{CoreResolver: &beangraph.CoreResolver{Core: core}, WorktreeMgr: mgr}
+	t.Cleanup(core.UnwatchAllWorktrees)
+	return resolver, core, repoDir
+}
+
+func TestMutationCreateWorktreeWithBean(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("writes the runtime version of the bean into the new worktree", func(t *testing.T) {
+		resolver, core, _ := setupWorktreeResolver(t)
+
+		// Uncommitted edit in the main working copy, as made via Beans UI.
+		b, _ := core.Get("sw-1")
+		b.Body = "Fresh description, not committed yet"
+		if err := core.Update(b, nil); err != nil {
+			t.Fatal(err)
+		}
+
+		beanID := "sw-1"
+		wt, err := resolver.Mutation().CreateWorktree(ctx, "ws-with-bean", &beanID)
+		if err != nil {
+			t.Fatalf("CreateWorktree() error = %v", err)
+		}
+		data, err := os.ReadFile(filepath.Join(wt.Path, ".beans", "sw-1--start-work-bean.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), "Fresh description, not committed yet") {
+			t.Errorf("worktree bean is stale:\n%s", data)
+		}
+		if core.IsDirty("sw-1") || core.WorktreeForBean("sw-1") != "" {
+			t.Error("bean must not become dirty or linked by Start Work")
+		}
+	})
+
+	t.Run("without a bean the worktree is a plain checkout of the base ref", func(t *testing.T) {
+		resolver, core, _ := setupWorktreeResolver(t)
+		b, _ := core.Get("sw-1")
+		b.Body = "uncommitted"
+		if err := core.Update(b, nil); err != nil {
+			t.Fatal(err)
+		}
+
+		wt, err := resolver.Mutation().CreateWorktree(ctx, "ws-plain", nil)
+		if err != nil {
+			t.Fatalf("CreateWorktree() error = %v", err)
+		}
+		data, err := os.ReadFile(filepath.Join(wt.Path, ".beans", "sw-1--start-work-bean.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), "uncommitted") {
+			t.Error("plain worktree should not receive runtime bean state")
+		}
+	})
+
+	t.Run("short IDs are resolved", func(t *testing.T) {
+		resolver, core, _ := setupWorktreeResolver(t)
+		core.Config().Beans.Prefix = "sw-"
+		short := "1"
+		wt, err := resolver.Mutation().CreateWorktree(ctx, "ws-short", &short)
+		if err != nil {
+			t.Fatalf("CreateWorktree() error = %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(wt.Path, ".beans", "sw-1--start-work-bean.md")); err != nil {
+			t.Error(err)
+		}
+	})
+
+	t.Run("unknown bean fails without creating a worktree", func(t *testing.T) {
+		resolver, _, _ := setupWorktreeResolver(t)
+		missing := "does-not-exist"
+		if _, err := resolver.Mutation().CreateWorktree(ctx, "ws-missing", &missing); err == nil {
+			t.Fatal("expected error for unknown bean")
+		}
+		wts, err := resolver.WorktreeMgr.List()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(wts) != 0 {
+			t.Errorf("worktrees = %v, want none", wts)
+		}
+	})
+}

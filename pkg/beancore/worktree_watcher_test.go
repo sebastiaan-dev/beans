@@ -3,6 +3,7 @@ package beancore
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -430,6 +431,290 @@ Working on this in a worktree.
 
 		if count != 0 {
 			t.Errorf("expected 0 worktree watchers after UnwatchAll, got %d", count)
+		}
+	})
+}
+
+func TestWriteBeanToWorktree(t *testing.T) {
+	readFile := func(t *testing.T, path string) string {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%s) error = %v", path, err)
+		}
+		return string(data)
+	}
+	render := func(t *testing.T, core *Core, id string) string {
+		t.Helper()
+		b, err := core.Get(id)
+		if err != nil {
+			t.Fatalf("Get(%s) error = %v", id, err)
+		}
+		content, err := b.Render()
+		if err != nil {
+			t.Fatalf("Render() error = %v", err)
+		}
+		return string(content)
+	}
+	// newWorktree simulates a worktree created from the base ref: a copy of
+	// the main .beans/ directory as it was at that point.
+	newWorktree := func(t *testing.T, mainBeansDir string) (string, string) {
+		t.Helper()
+		wtDir := t.TempDir()
+		wtBeansDir := filepath.Join(wtDir, BeansDir)
+		if err := os.CopyFS(wtBeansDir, os.DirFS(mainBeansDir)); err != nil {
+			t.Fatalf("CopyFS() error = %v", err)
+		}
+		return wtDir, wtBeansDir
+	}
+
+	t.Run("overwrites a stale worktree copy with the runtime version", func(t *testing.T) {
+		core, beansDir := setupTestCore(t)
+		b := createTestBean(t, core, "sync-1", "Sync Me", "todo")
+		wtDir, wtBeansDir := newWorktree(t, beansDir)
+
+		// Edit made in the UI after the base ref was cut (uncommitted on main).
+		b.Body = "Edited just before Start Work"
+		if err := core.Update(b, nil); err != nil {
+			t.Fatalf("Update() error = %v", err)
+		}
+
+		changed, err := core.WriteBeanToWorktree("sync-1", wtDir)
+		if err != nil {
+			t.Fatalf("WriteBeanToWorktree() error = %v", err)
+		}
+		if !changed {
+			t.Error("changed = false, want true")
+		}
+		got := readFile(t, filepath.Join(wtBeansDir, "sync-1--sync-me.md"))
+		if want := render(t, core, "sync-1"); got != want {
+			t.Errorf("worktree bean =\n%s\nwant\n%s", got, want)
+		}
+		if core.IsDirty("sync-1") || core.WorktreeForBean("sync-1") != "" {
+			t.Error("writing to the worktree must not mark the bean dirty or linked")
+		}
+	})
+
+	t.Run("writes runtime-only state", func(t *testing.T) {
+		core, beansDir := setupTestCore(t)
+		b := createTestBean(t, core, "sync-2", "Runtime", "todo")
+		wtDir, wtBeansDir := newWorktree(t, beansDir)
+
+		b.Status = "in-progress"
+		if err := core.Update(b, nil, WithPersist(false)); err != nil {
+			t.Fatalf("Update() error = %v", err)
+		}
+		if _, err := core.WriteBeanToWorktree("sync-2", wtDir); err != nil {
+			t.Fatalf("WriteBeanToWorktree() error = %v", err)
+		}
+		if got := readFile(t, filepath.Join(wtBeansDir, "sync-2--runtime.md")); !strings.Contains(got, "status: in-progress") {
+			t.Errorf("worktree bean missing runtime status:\n%s", got)
+		}
+	})
+
+	t.Run("creates beans missing from the worktree", func(t *testing.T) {
+		core, beansDir := setupTestCore(t)
+		wtDir, wtBeansDir := newWorktree(t, beansDir)
+		createTestBean(t, core, "sync-3", "Never Committed", "todo")
+
+		changed, err := core.WriteBeanToWorktree("sync-3", wtDir)
+		if err != nil || !changed {
+			t.Fatalf("WriteBeanToWorktree() = %v, %v; want true, nil", changed, err)
+		}
+		if got, want := readFile(t, filepath.Join(wtBeansDir, "sync-3--never-committed.md")), render(t, core, "sync-3"); got != want {
+			t.Errorf("worktree bean =\n%s\nwant\n%s", got, want)
+		}
+	})
+
+	t.Run("leaves identical copies untouched", func(t *testing.T) {
+		core, beansDir := setupTestCore(t)
+		createTestBean(t, core, "sync-4", "Same", "todo")
+		// Non-canonical formatting with identical content must not be rewritten.
+		mainPath := filepath.Join(beansDir, "sync-4--same.md")
+		original := readFile(t, mainPath)
+		wtDir, wtBeansDir := newWorktree(t, beansDir)
+		wtPath := filepath.Join(wtBeansDir, "sync-4--same.md")
+		reordered := strings.Replace(original, "status: todo\ntype: task\n", "type: task\nstatus: todo\n", 1)
+		if reordered == original {
+			t.Fatalf("unexpected bean rendering:\n%s", original)
+		}
+		if err := os.WriteFile(wtPath, []byte(reordered), 0644); err != nil {
+			t.Fatal(err)
+		}
+		before := readFile(t, wtPath)
+
+		changed, err := core.WriteBeanToWorktree("sync-4", wtDir)
+		if err != nil {
+			t.Fatalf("WriteBeanToWorktree() error = %v", err)
+		}
+		if changed {
+			t.Error("changed = true, want false for identical content")
+		}
+		if after := readFile(t, wtPath); after != before {
+			t.Errorf("identical worktree copy was rewritten:\n%q\nwant\n%q", after, before)
+		}
+	})
+
+	t.Run("replaces copies under a stale filename", func(t *testing.T) {
+		core, beansDir := setupTestCore(t)
+		b := createTestBean(t, core, "sync-5", "Old Title", "todo")
+		wtDir, wtBeansDir := newWorktree(t, beansDir)
+
+		// Rename the bean's file on main (new slug).
+		newPath := "sync-5--new-title.md"
+		if err := os.Rename(filepath.Join(beansDir, b.Path), filepath.Join(beansDir, newPath)); err != nil {
+			t.Fatal(err)
+		}
+		b.Path = newPath
+		b.Slug = "new-title"
+		b.Title = "New Title"
+		if err := core.Update(b, nil); err != nil {
+			t.Fatalf("Update() error = %v", err)
+		}
+
+		if _, err := core.WriteBeanToWorktree("sync-5", wtDir); err != nil {
+			t.Fatalf("WriteBeanToWorktree() error = %v", err)
+		}
+		if got := findBeanFilesIn(wtBeansDir, "sync-5"); len(got) != 1 || got[0] != filepath.Join(wtBeansDir, newPath) {
+			t.Errorf("worktree copies = %v, want only %s", got, newPath)
+		}
+	})
+
+	t.Run("keeps archived beans in archive", func(t *testing.T) {
+		core, beansDir := setupTestCore(t)
+		createTestBean(t, core, "sync-6", "Archived", "completed")
+		wtDir, wtBeansDir := newWorktree(t, beansDir)
+		if err := core.Archive("sync-6"); err != nil {
+			t.Fatalf("Archive() error = %v", err)
+		}
+
+		if _, err := core.WriteBeanToWorktree("sync-6", wtDir); err != nil {
+			t.Fatalf("WriteBeanToWorktree() error = %v", err)
+		}
+		want := filepath.Join(wtBeansDir, ArchiveDir, "sync-6--archived.md")
+		if got := findBeanFilesIn(wtBeansDir, "sync-6"); len(got) != 1 || got[0] != want {
+			t.Errorf("worktree copies = %v, want only %s", got, want)
+		}
+	})
+
+	t.Run("unknown bean", func(t *testing.T) {
+		core, _ := setupTestCore(t)
+		if _, err := core.WriteBeanToWorktree("nope", t.TempDir()); err != ErrNotFound {
+			t.Errorf("error = %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("watching afterwards does not link the synced bean", func(t *testing.T) {
+		core, beansDir := setupTestCore(t)
+		b := createTestBean(t, core, "sync-7", "Watched", "todo")
+		wtDir, _ := newWorktree(t, beansDir)
+		b.Body = "uncommitted edit"
+		if err := core.Update(b, nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := core.WriteBeanToWorktree("sync-7", wtDir); err != nil {
+			t.Fatal(err)
+		}
+		if err := core.WatchWorktreeBeans(wtDir); err != nil {
+			t.Fatal(err)
+		}
+		defer core.UnwatchWorktreeBeans(wtDir)
+		if core.IsDirty("sync-7") || core.WorktreeForBean("sync-7") != "" {
+			t.Error("synced bean must not be dirty or linked after initial worktree scan")
+		}
+	})
+}
+
+func TestMainCatchesUpWithWorktree(t *testing.T) {
+	// waitFor polls until cond holds or fails the test.
+	waitFor := func(t *testing.T, what string, cond func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Second)
+		for !cond() {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for %s", what)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	setup := func(t *testing.T) (*Core, string, string, string) {
+		t.Helper()
+		core, beansDir := setupTestCore(t)
+		if err := core.StartWatching(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { core.Unwatch() })
+
+		wtDir := t.TempDir()
+		wtBeansDir := filepath.Join(wtDir, BeansDir)
+		if err := os.MkdirAll(wtBeansDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		// A bean created by an agent in the worktree.
+		content := "---\ntitle: Agent Bean\nstatus: todo\ntype: task\n---\n\nFiled by the agent.\n"
+		if err := os.WriteFile(filepath.Join(wtBeansDir, "merge-1--agent-bean.md"), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := core.WatchWorktreeBeans(wtDir); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { core.UnwatchWorktreeBeans(wtDir) })
+		if core.WorktreeForBean("merge-1") != wtDir || !core.IsDirty("merge-1") {
+			t.Fatal("expected the worktree bean to be dirty and linked")
+		}
+		return core, beansDir, wtDir, content
+	}
+
+	t.Run("merging the worktree bean into main clears the link", func(t *testing.T) {
+		core, beansDir, wtDir, content := setup(t)
+
+		// The branch is merged: the identical file lands on main.
+		if err := os.WriteFile(filepath.Join(beansDir, "merge-1--agent-bean.md"), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "link to clear", func() bool { return core.WorktreeForBean("merge-1") == "" })
+		if core.IsDirty("merge-1") {
+			t.Error("bean should no longer be dirty once it is on main")
+		}
+
+		// Edits now go to main, not into the worktree.
+		b, err := core.Get("merge-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.Body = "Edited after merge"
+		if err := core.Update(b, nil); err != nil {
+			t.Fatal(err)
+		}
+		mainData, _ := os.ReadFile(filepath.Join(beansDir, "merge-1--agent-bean.md"))
+		if !strings.Contains(string(mainData), "Edited after merge") {
+			t.Errorf("edit was not written to main:\n%s", mainData)
+		}
+		wtData, _ := os.ReadFile(filepath.Join(wtDir, BeansDir, "merge-1--agent-bean.md"))
+		if strings.Contains(string(wtData), "Edited after merge") {
+			t.Error("edit must not be routed into the merged worktree")
+		}
+	})
+
+	t.Run("main lagging behind the worktree keeps the worktree version", func(t *testing.T) {
+		core, beansDir, wtDir, _ := setup(t)
+
+		older := "---\ntitle: Agent Bean\nstatus: draft\ntype: task\n---\n"
+		if err := os.WriteFile(filepath.Join(beansDir, "merge-1--agent-bean.md"), []byte(older), 0644); err != nil {
+			t.Fatal(err)
+		}
+		// Give the main watcher time to process the change.
+		time.Sleep(debounceDelay + 300*time.Millisecond)
+
+		if got := core.WorktreeForBean("merge-1"); got != wtDir {
+			t.Errorf("WorktreeForBean() = %q, want %q", got, wtDir)
+		}
+		b, err := core.Get("merge-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b.Status != "todo" || !core.IsDirty("merge-1") {
+			t.Errorf("runtime bean = status %q dirty %v, want worktree version (todo, dirty)", b.Status, core.IsDirty("merge-1"))
 		}
 	})
 }

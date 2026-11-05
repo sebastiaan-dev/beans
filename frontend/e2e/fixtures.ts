@@ -1,6 +1,6 @@
 import { test as base } from '@playwright/test';
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +8,8 @@ import { BacklogPage } from './pages/backlog-page';
 import { BoardPage } from './pages/board-page';
 
 const PROJECT_ROOT = join(import.meta.dirname, '../..');
-const BASE_PORT = 22900;
+// Overridable so several e2e runs (e.g. parallel worktrees) don't collide.
+const BASE_PORT = Number(process.env.BEANS_E2E_BASE_PORT ?? 22900);
 
 const GIT_ENV = {
   ...process.env,
@@ -138,6 +139,31 @@ class BeansCLI {
     return data.worktrees;
   }
 
+  /** Create a workspace (git worktree) via the GraphQL API. */
+  async createWorktree(name: string): Promise<{ id: string; path: string; branch: string }> {
+    const data = await this.graphql<{
+      createWorktree: { id: string; path: string; branch: string };
+    }>(`mutation { createWorktree(name: ${JSON.stringify(name)}) { id path branch } }`);
+    return data.createWorktree;
+  }
+
+  /**
+   * Run the beans CLI inside a worktree, against the worktree's own .beans/
+   * directory — exactly like an agent working in that workspace would.
+   */
+  runInWorktree(worktreePath: string, args: string[]): string {
+    return execFileSync(this.binaryPath, ['--beans-path', join(worktreePath, '.beans'), ...args], {
+      cwd: worktreePath,
+      encoding: 'utf-8',
+      timeout: 10_000
+    });
+  }
+
+  /** Run git in the given directory with a deterministic identity. */
+  git(cwd: string, args: string[]): string {
+    return execFileSync('git', args, { cwd, encoding: 'utf-8', timeout: 10_000, env: GIT_ENV });
+  }
+
   /** Create a file in a worktree directory to simulate uncommitted changes. */
   createFileInWorktree(worktreePath: string, filename: string, content: string): void {
     writeFileSync(join(worktreePath, filename), content);
@@ -156,6 +182,11 @@ class BeansCLI {
 }
 
 type Fixtures = {
+  /**
+   * When true, beans-serve gets a stub `claude` binary on its PATH so tests
+   * that trigger agent runs (e.g. Start Work) never spawn a real agent.
+   */
+  stubAgent: boolean;
   beans: BeansCLI;
   beansWithRun: BeansCLI;
   backlogPage: BacklogPage;
@@ -171,6 +202,8 @@ type WorkerFixtures = {
  * beans-serve process, and port. Full isolation — no shared state between tests.
  */
 export const test = base.extend<Fixtures, WorkerFixtures>({
+  stubAgent: [false, { option: true }],
+
   // Worker-scoped: run `beans init` once per worker, copy .beans dir for each test.
   // Fresh git repos are created per test (avoids stale git index/worktree state).
   beansTemplate: [
@@ -183,7 +216,7 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     { scope: 'worker' }
   ],
 
-  beans: async ({ page, beansTemplate }, use, testInfo) => {
+  beans: async ({ page, beansTemplate, stubAgent }, use, testInfo) => {
     const { beans: beansBin, beansServe } = getBinaries();
 
     // Fresh git repo per test (needed for worktree operations)
@@ -203,13 +236,23 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     // Pick a unique port based on worker + test index
     const port = BASE_PORT + testInfo.workerIndex * 100 + testInfo.parallelIndex;
 
+    const env: NodeJS.ProcessEnv = { ...process.env, GIN_MODE: 'release' };
+    // Kept outside the project so it doesn't show up in git status.
+    const binDir = stubAgent ? mkdtempSync(join(tmpdir(), 'beans-e2e-bin-')) : null;
+    if (binDir) {
+      const stub = join(binDir, 'claude');
+      writeFileSync(stub, '#!/bin/sh\nexit 0\n');
+      chmodSync(stub, 0o755);
+      env.PATH = `${binDir}:${process.env.PATH ?? ''}`;
+    }
+
     // Start beans-serve
     const server: ChildProcess = spawn(
       beansServe,
       ['--port', String(port), '--beans-path', beansPath],
       {
         cwd: projectDir,
-        env: { ...process.env, GIN_MODE: 'release' },
+        env,
         stdio: 'pipe'
       }
     );
@@ -227,6 +270,7 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     } finally {
       server.kill();
       rmSync(projectDir, { recursive: true, force: true });
+      if (binDir) rmSync(binDir, { recursive: true, force: true });
     }
   },
 

@@ -14,6 +14,7 @@
 import type { Bean } from '$lib/beans.svelte';
 import { beansStore } from '$lib/beans.svelte';
 import { applyDrop, applyReparent } from '$lib/dragOrder';
+import { isBacklogRoot } from '$lib/backlog';
 
 export type DropMode = 'reorder' | 'reparent';
 
@@ -129,10 +130,23 @@ class BacklogDragState {
       applyReparent(beanId, reparentTarget, targetChildren);
     } else {
       applyDrop(beans, beanId, targetIdx ?? beans.length, {
-        newParentId: parentId,
+        newParentId: this.#dropParent(beanId, parentId),
         newStatus: newStatus ?? undefined
       });
     }
+  }
+
+  /**
+   * Parent to assign when reordering into a sibling group. Beans whose parent is
+   * outside the backlog are listed as section roots (see isBacklogRoot); moving
+   * them around among the roots must not silently detach them from that parent.
+   */
+  #dropParent(beanId: string, parentId: string | null): string | null | undefined {
+    if (parentId !== null) return parentId;
+    const bean = beansStore.get(beanId);
+    if (!bean?.parentId) return null;
+    const visible = new Map(beansStore.all.map((b) => [b.id, b]));
+    return isBacklogRoot(bean, visible) ? undefined : null;
   }
 
   /** Check if a drop indicator should show at this position */

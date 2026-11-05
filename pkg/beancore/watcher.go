@@ -316,6 +316,20 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			}
 
 			_, existed := c.beans[newBean.ID]
+
+			// A bean linked to a worktree is shown in its worktree version. Once
+			// main has caught up with that version (e.g. the worktree branch was
+			// merged), the link is stale: drop it so edits go to main again
+			// instead of being routed into the worktree. If the worktree still has
+			// its own changes on top, keep showing those, like the initial
+			// worktree scan does.
+			if wtPath, linked := c.worktreeLinks[newBean.ID]; linked {
+				if wtBean := c.loadWorktreeCopyLocked(wtPath, newBean.ID); wtBean != nil && wtBean.ETag() != newBean.ETag() {
+					continue
+				}
+				delete(c.worktreeLinks, newBean.ID)
+			}
+
 			c.beans[newBean.ID] = newBean
 			delete(c.dirty, newBean.ID) // Disk is now up-to-date
 

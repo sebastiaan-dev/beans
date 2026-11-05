@@ -1,6 +1,7 @@
 package beancore
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -377,6 +378,102 @@ func (c *Core) handleWorktreeChanges(wt *worktreeWatcher, changes map[string]fsn
 	if len(events) > 0 && c.onWorktreeBeansChanged != nil {
 		c.onWorktreeBeansChanged()
 	}
+}
+
+// WriteBeanToWorktree writes the runtime version of a bean into a worktree's
+// .beans/ directory, so that an agent started in that worktree sees the bean as
+// beans-serve sees it. New worktrees are created from the configured base ref,
+// which doesn't include uncommitted edits to the main working copy (e.g. a
+// description edited in Beans UI just before Start Work), runtime-only changes,
+// or beans that were never committed at all.
+//
+// The file becomes a change on the worktree's branch and travels with its PR,
+// like any other bean change made in the worktree. If the worktree already has
+// identical content, nothing is written, so no spurious change is introduced.
+// Copies of the bean under a different filename (e.g. a stale slug, or the
+// other side of archive/) are removed so the worktree never holds two files
+// with the same ID.
+//
+// Runtime state is not modified: the worktree copy equals the runtime version,
+// so it is neither dirty nor linked until the worktree changes it.
+// Returns whether the worktree's .beans/ directory was changed.
+func (c *Core) WriteBeanToWorktree(id, worktreePath string) (bool, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	b, _, err := c.findBeanLocked(id)
+	if err != nil {
+		return false, err
+	}
+
+	beansDir := filepath.Join(worktreePath, BeansDir)
+	relPath := b.Path
+	if relPath == "" {
+		relPath = bean.BuildFilename(b.ID, b.Slug)
+	}
+	target := filepath.Join(beansDir, relPath)
+
+	changed := false
+	upToDate := false
+	for _, path := range findBeanFilesIn(beansDir, b.ID) {
+		if path == target {
+			wtBean, loadErr := c.loadBeanFrom(path, beansDir)
+			upToDate = loadErr == nil && wtBean.ETag() == b.ETag()
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			return changed, fmt.Errorf("removing stale worktree copy of %s: %w", b.ID, err)
+		}
+		changed = true
+	}
+	if upToDate {
+		return changed, nil
+	}
+
+	content, err := b.Render()
+	if err != nil {
+		return changed, err
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		return changed, fmt.Errorf("creating worktree beans dir: %w", err)
+	}
+	if err := os.WriteFile(target, content, 0644); err != nil {
+		return changed, fmt.Errorf("writing worktree bean: %w", err)
+	}
+	return true, nil
+}
+
+// findBeanFilesIn returns the paths of all bean files for the given ID in a
+// .beans/ directory, including its archive/ subdirectory.
+func findBeanFilesIn(beansDir, id string) []string {
+	var paths []string
+	for _, dir := range []string{beansDir, filepath.Join(beansDir, ArchiveDir)} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+				continue
+			}
+			if fileID, _ := bean.ParseFilename(entry.Name()); fileID == id {
+				paths = append(paths, filepath.Join(dir, entry.Name()))
+			}
+		}
+	}
+	return paths
+}
+
+// loadWorktreeCopyLocked loads a worktree's copy of a bean, or returns nil if
+// the worktree has none (or it can't be parsed). Must be called with c.mu held.
+func (c *Core) loadWorktreeCopyLocked(worktreePath, id string) *bean.Bean {
+	beansDir := filepath.Join(worktreePath, BeansDir)
+	for _, path := range findBeanFilesIn(beansDir, id) {
+		if b, err := c.loadBeanFrom(path, beansDir); err == nil {
+			return b
+		}
+	}
+	return nil
 }
 
 // findMainBeanFile searches the main .beans/ directory for a file matching the
