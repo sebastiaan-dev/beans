@@ -5,12 +5,13 @@
 
   let { planningView }: { planningView: 'backlog' | 'board' } = $props();
   import { backlogDrag } from '$lib/backlogDrag.svelte';
-  import { matchesFilter } from '$lib/filter';
+  import { planningFilter } from '$lib/planningFilter.svelte';
   import BeanItem from '$lib/components/BeanItem.svelte';
   import BoardView from '$lib/components/BoardView.svelte';
   import BeanPane from '$lib/components/BeanPane.svelte';
   import SplitPane from '$lib/components/SplitPane.svelte';
   import FilterInput from '$lib/components/FilterInput.svelte';
+  import FilterChips from '$lib/components/FilterChips.svelte';
   import ViewToolbar from '$lib/components/ViewToolbar.svelte';
 
   let filterInput = $state<FilterInput | null>(null);
@@ -20,13 +21,10 @@
   const todoRoots = $derived(backlogRoots(beansStore.all, 'todo'));
   const draftRoots = $derived(backlogRoots(beansStore.all, 'draft'));
 
+  // Keep roots that match the filter or have a matching descendant.
   function filterBeans(beans: Bean[]) {
-    const text = ui.filterText;
-    if (!text) return beans;
-    return beans.filter((bean) => {
-      if (matchesFilter(bean, text)) return true;
-      return beansStore.children(bean.id).some((child) => matchesFilter(child, text));
-    });
+    const tree = planningFilter.tree;
+    return tree ? beans.filter((bean) => tree.visible.has(bean.id)) : beans;
   }
 
   const filteredTodoBeans = $derived(filterBeans(todoRoots));
@@ -74,13 +72,14 @@
         Board
       </button>
     </div>
-    <div class="mx-3 w-60">
+    <div class="mx-3 w-72 transition-[width] focus-within:w-[32rem]">
       <FilterInput bind:this={filterInput} />
     </div>
     {#snippet right()}
       <button class="btn-primary" onclick={() => ui.openCreateForm()}>+ New Bean</button>
     {/snippet}
   </ViewToolbar>
+  <FilterChips />
 
   <div class="flex min-h-0 flex-1 overflow-hidden">
     {#snippet backlogBoard()}
@@ -109,7 +108,7 @@
                       index={i}
                       selectedId={ui.currentBean?.id}
                       onSelect={(b) => ui.selectBean(b)}
-                      filterText={ui.filterText}
+                      filter={planningFilter.tree}
                       sectionStatus={status}
                       showParentContext
                     />
