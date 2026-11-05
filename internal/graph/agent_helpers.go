@@ -530,7 +530,7 @@ func (r *Resolver) findWorktreePath(beanID string) (string, error) {
 	if r.WorktreeMgr == nil {
 		return "", fmt.Errorf("worktree manager not available")
 	}
-	wts, err := r.WorktreeMgr.List()
+	wts, err := r.WorktreeMgr.ListBasic()
 	if err != nil {
 		return "", fmt.Errorf("list worktrees: %w", err)
 	}

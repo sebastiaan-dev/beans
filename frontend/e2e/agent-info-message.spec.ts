@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { test, expect, findWorktrunk } from '/Users/sgerrits/repos/beans.fix-flaky-tests-and-info-markdown/frontend/e2e/fixtures';
+import { test, expect, findWorktrunk } from './fixtures';
 
 /**
  * Info messages in the agent chat (posted by the server, e.g. when workspace

@@ -5,6 +5,8 @@
     confirmLabel?: string;
     cancelLabel?: string;
     danger?: boolean;
+    /** Disable the confirm button (e.g. while required information is loading). */
+    confirmDisabled?: boolean;
     onConfirm: () => void;
     onCancel: () => void;
   }
@@ -15,6 +17,7 @@
     confirmLabel = 'Confirm',
     cancelLabel = 'Cancel',
     danger = false,
+    confirmDisabled = false,
     onConfirm,
     onCancel
   }: Props = $props();
@@ -48,11 +51,12 @@
       </button>
       <button
         class={[
-          'cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+          'cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
           danger
             ? 'bg-danger text-white hover:opacity-90'
             : 'bg-accent text-accent-text hover:opacity-90'
         ]}
+        disabled={confirmDisabled}
         onclick={onConfirm}
       >
         {confirmLabel}

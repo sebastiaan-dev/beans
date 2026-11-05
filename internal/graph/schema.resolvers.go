@@ -295,7 +295,7 @@ func (r *mutationResolver) RemoveWorktree(ctx context.Context, id string) (bool,
 	}()
 
 	// Find the worktree path before removing (for unwatching)
-	worktrees, _ := r.WorktreeMgr.List()
+	worktrees, _ := r.WorktreeMgr.ListBasic()
 	for _, wt := range worktrees {
 		if wt.ID == id {
 			r.Core.UnwatchWorktreeBeans(wt.Path)
@@ -536,7 +536,7 @@ func (r *mutationResolver) DiscardFileChange(ctx context.Context, filePath strin
 	dir := r.ProjectRoot
 	if path != nil && *path != "" {
 		if r.WorktreeMgr != nil {
-			wts, err := r.WorktreeMgr.List()
+			wts, err := r.WorktreeMgr.ListBasic()
 			if err != nil {
 				return false, err
 			}
@@ -569,7 +569,7 @@ func (r *mutationResolver) OpenInEditor(ctx context.Context, workspaceID string)
 		if r.WorktreeMgr == nil {
 			return false, fmt.Errorf("worktree support not available")
 		}
-		wts, err := r.WorktreeMgr.List()
+		wts, err := r.WorktreeMgr.ListBasic()
 		if err != nil {
 			return false, err
 		}
@@ -641,7 +641,7 @@ func (r *queryResolver) FileChanges(ctx context.Context, path *string) ([]*model
 	if path != nil && *path != "" {
 		// Validate the path is a known worktree to prevent arbitrary filesystem access
 		if r.WorktreeMgr != nil {
-			wts, err := r.WorktreeMgr.List()
+			wts, err := r.WorktreeMgr.ListBasic()
 			if err != nil {
 				return nil, err
 			}
@@ -682,7 +682,7 @@ func (r *queryResolver) AllFileChanges(ctx context.Context, path *string) ([]*mo
 	dir := r.ProjectRoot
 	if path != nil && *path != "" {
 		if r.WorktreeMgr != nil {
-			wts, err := r.WorktreeMgr.List()
+			wts, err := r.WorktreeMgr.ListBasic()
 			if err != nil {
 				return nil, err
 			}
@@ -734,7 +734,7 @@ func (r *queryResolver) FileDiff(ctx context.Context, filePath string, staged bo
 	if path != nil && *path != "" {
 		// Validate the path is a known worktree to prevent arbitrary filesystem access
 		if r.WorktreeMgr != nil {
-			wts, err := r.WorktreeMgr.List()
+			wts, err := r.WorktreeMgr.ListBasic()
 			if err != nil {
 				return "", err
 			}
@@ -765,7 +765,7 @@ func (r *queryResolver) AllFileDiff(ctx context.Context, filePath string, path *
 	dir := r.ProjectRoot
 	if path != nil && *path != "" {
 		if r.WorktreeMgr != nil {
-			wts, err := r.WorktreeMgr.List()
+			wts, err := r.WorktreeMgr.ListBasic()
 			if err != nil {
 				return "", err
 			}
@@ -795,7 +795,7 @@ func (r *queryResolver) BranchStatus(ctx context.Context, path *string) (*model.
 	dir := r.ProjectRoot
 	if path != nil && *path != "" {
 		if r.WorktreeMgr != nil {
-			wts, err := r.WorktreeMgr.List()
+			wts, err := r.WorktreeMgr.ListBasic()
 			if err != nil {
 				return nil, err
 			}
@@ -849,7 +849,7 @@ func (r *queryResolver) AgentActions(ctx context.Context, beanID string, skipFor
 	if r.WorktreeMgr != nil {
 		actCtx.MainRepoHasChanges = mainRepoHasNonBeanChanges(r.WorktreeMgr.RepoRoot(), r.Core.Root())
 
-		if wts, err := r.WorktreeMgr.List(); err == nil {
+		if wts, err := r.WorktreeMgr.ListBasic(); err == nil {
 			for _, wt := range wts {
 				if wt.ID == beanID {
 					actCtx.WorkDir = wt.Path
@@ -1396,7 +1396,7 @@ func (r *subscriptionResolver) WorkspaceStatuses(ctx context.Context) (<-chan []
 			// Worktree statuses, computed concurrently (bounded by gitStatusSlots)
 			if r.WorktreeMgr != nil {
 				baseRef := r.WorktreeMgr.BaseRef()
-				if wts, err := r.WorktreeMgr.List(); err == nil {
+				if wts, err := r.WorktreeMgr.ListBasic(); err == nil {
 					for _, wt := range wts {
 						ws := &model.WorkspaceStatus{ID: wt.ID}
 						result = append(result, ws)
