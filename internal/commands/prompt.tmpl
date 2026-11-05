@@ -67,6 +67,8 @@ beans update --json <id> --body-replace-old "old" --body-replace-new "new"  # Re
 beans update --json <id> --body-append "## Notes"              # Append to body
 beans update --json <id> -s completed --body-replace-old "- [ ] Task" --body-replace-new "- [x] Task"  # Combined
 
+beans audit --json  # Stale state: open beans already landed on main, containers ready to close, stale work/links
+
 # Archive completed/scrapped beans (only when user requests)
 beans archive
 ```
