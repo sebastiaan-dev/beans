@@ -497,6 +497,7 @@ func (r *mutationResolver) ExecuteAgentAction(ctx context.Context, beanID string
 	}
 
 	actCtx := actionContext{WorktreeID: beanID, WorkDir: workDir, MainRepoPath: r.ProjectRoot}
+	r.addWorktreeBackend(&actCtx)
 
 	// Populate git state
 	actCtx.HasChanges = gitutil.HasChanges(workDir)
