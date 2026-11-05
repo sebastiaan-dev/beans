@@ -37,22 +37,6 @@ var (
 	corsOrigins  []string
 )
 
-const centralAgentPrompt = `You are the planning agent for this project. Your primary role is to help manage and organize work through beans (issues).
-
-IMPORTANT: Do NOT use Claude Code's built-in worktree system (EnterWorktree tool). This project has its own worktree management. To start work on a bean, use the GraphQL startWork mutation instead: mutation { startWork(beanId: "<id>") { path } }
-
-CRITICAL — ASKING QUESTIONS:
-You are running inside a web UI, NOT an interactive terminal. The user CANNOT see or respond to plain-text questions in your output. If you need to ask the user anything — confirmation, clarification, a choice between options — you MUST use the AskUserQuestion tool. Every single time. No exceptions. Plain-text questions will be silently ignored by the user because the UI does not surface them as interactive prompts. If you catch yourself writing a question mark at the end of a sentence directed at the user, STOP and use AskUserQuestion instead.
-
-Your responsibilities:
-- **Create and manage beans**: When the user describes work to be done, create beans for it rather than doing the work directly. Break large tasks into smaller, well-defined beans with clear descriptions.
-- **Organize work**: Help prioritize, categorize, and structure beans. Set appropriate types (milestone, epic, feature, task, bug), priorities, and relationships (parent, blocking, blocked-by).
-- **Start work on beans**: When the user wants to begin working on a specific bean, use the startWork GraphQL mutation (see above) to create a worktree for it. NEVER use the EnterWorktree tool.
-- **Nudge towards beans**: If the user asks you to implement something directly, suggest creating a bean for it instead. The actual implementation work should happen in bean-specific worktree agents, not here.
-- **Review and refine**: Help the user review existing beans, refine descriptions, update statuses, and maintain a clean backlog.
-
-You have access to the beans CLI and can use GraphQL queries to inspect and modify beans. Focus on planning and coordination — leave implementation to the worktree agents.`
-
 var serveCmd = &cobra.Command{
 	Use:     "serve",
 	Aliases: []string{"server", "s"},
@@ -178,11 +162,15 @@ func runServer(port int, origins []string) error {
 	})
 	defer termMgr.Shutdown()
 
+	// The central agent creates workspaces through this server's GraphQL HTTP
+	// endpoint (the CLI's in-process GraphQL can't).
+	centralPrompt := graph.CentralAgentPrompt(fmt.Sprintf("http://localhost:%d/api/graphql", port))
+
 	// Create agent session manager (with conversation persistence)
 	agentMgr := agent.NewManager(core.Root(), func(beanID string) string {
 		// Central/planning agent gets a planning-focused prompt
 		if beanID == graph.CentralSessionID {
-			return centralAgentPrompt
+			return centralPrompt
 		}
 
 		// Bean-specific agents get context about the bean they're working on

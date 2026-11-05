@@ -15,12 +15,31 @@ import (
 	"time"
 )
 
+// Timeouts for stopping an agent process (see runningProcess.kill).
+var (
+	// gracefulStopTimeout is how long the agent gets to exit after SIGINT
+	// (Claude Code saves its session state for --resume on SIGINT).
+	gracefulStopTimeout = 3 * time.Second
+	// forceStopTimeout is how long to wait for the output reader to finish
+	// after the process group was killed, before closing stdout ourselves.
+	forceStopTimeout = 2 * time.Second
+)
+
 // runningProcess wraps an active claude CLI process.
 type runningProcess struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	cancel context.CancelFunc
-	done   chan struct{} // closed by spawnAndRun when the process exits
+	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	stdout  io.ReadCloser
+	cancel  context.CancelFunc
+	started chan struct{} // closed by spawnAndRun once cmd.Start has returned (nil in tests)
+	done    chan struct{} // closed by spawnAndRun when the process exits
+}
+
+// waitStarted blocks until the process has been started (or failed to start).
+func (p *runningProcess) waitStarted() {
+	if p.started != nil {
+		<-p.started
+	}
 }
 
 // signal sends SIGINT and closes stdin to request a graceful shutdown.
@@ -28,6 +47,7 @@ type runningProcess struct {
 // Used by handleBlockingTool (which runs inside the readOutput goroutine
 // and cannot wait for the process to exit without deadlocking).
 func (p *runningProcess) signal() {
+	p.waitStarted()
 	if p.cmd == nil || p.cmd.Process == nil {
 		return
 	}
@@ -39,23 +59,44 @@ func (p *runningProcess) signal() {
 
 // kill gracefully terminates the running process and waits for it to exit.
 // Sends SIGINT first to give Claude Code a chance to save its session state
-// (needed for --resume to work). Falls back to SIGKILL after a timeout.
+// (needed for --resume to work). Falls back to killing the whole process
+// group after a timeout. Once kill returns, the process and the tool
+// processes it started are gone and spawnAndRun has finished its cleanup.
+// Must not be called from the process's own spawnAndRun goroutine.
 func (p *runningProcess) kill() {
 	p.signal()
 
-	// Wait up to 3 seconds for the process to exit cleanly.
 	// The done channel is closed by spawnAndRun after cmd.Wait() returns.
 	select {
 	case <-p.done:
-		// Process exited cleanly — session state should be saved
-	case <-time.After(3 * time.Second):
-		// Force kill after timeout
-		if p.cancel != nil {
-			p.cancel()
-		}
-		_ = p.cmd.Process.Kill()
-		<-p.done // wait for spawnAndRun to finish cleanup
+		// Process exited cleanly — session state should be saved. Reap any
+		// tool processes it left behind in its process group.
+		killProcessGroup(p.cmd)
+		return
+	case <-time.After(gracefulStopTimeout):
 	}
+
+	if p.cancel != nil {
+		p.cancel()
+	}
+	killProcessGroup(p.cmd)
+	if p.cmd != nil && p.cmd.Process != nil {
+		_ = p.cmd.Process.Kill()
+	}
+
+	select {
+	case <-p.done:
+		return
+	case <-time.After(forceStopTimeout):
+	}
+	// Something outside the process group (e.g. a daemonized grandchild)
+	// still holds stdout open, so the output reader never sees EOF. Close
+	// our end so spawnAndRun can finish.
+	log.Printf("[agent] process output still open after kill; closing stdout")
+	if p.stdout != nil {
+		_ = p.stdout.Close()
+	}
+	<-p.done
 }
 
 // sendToProcess writes a user message to an existing process's stdin
@@ -109,15 +150,20 @@ func (m *Manager) sendToProcess(proc *runningProcess, beanID, message string, im
 	return err
 }
 
+// DefaultClaudeBinary is the Claude Code executable used when a Manager has no
+// explicit path configured (see Manager.SetClaudePath). It is resolved via PATH.
+const DefaultClaudeBinary = "claude"
+
 // spawnAndRun spawns a claude CLI process and reads its output.
 // This runs in a goroutine — it blocks until the process exits.
 func (m *Manager) spawnAndRun(beanID string, session *Session) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	args := buildClaudeArgs(session)
-	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd := exec.CommandContext(ctx, m.claudeBinary(), args...)
 	cmd.Dir = session.WorkDir
 	cmd.Env = buildClaudeEnv()
+	configureProcessGroup(cmd)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -140,16 +186,48 @@ func (m *Manager) spawnAndRun(beanID string, session *Session) {
 		return
 	}
 
-	if err := cmd.Start(); err != nil {
-		m.setError(beanID, fmt.Sprintf("start claude: %v", err))
+	proc := &runningProcess{
+		cmd:     cmd,
+		stdin:   stdin,
+		stdout:  stdout,
+		cancel:  cancel,
+		started: make(chan struct{}),
+		done:    make(chan struct{}),
+	}
+
+	// Register the process as live before starting it, so StopAndBlock either
+	// sees (and stops) it or this spawn sees the block and doesn't start.
+	m.mu.Lock()
+	if m.blocked[beanID] > 0 {
+		if s, ok := m.sessions[beanID]; ok && s.Status == StatusRunning {
+			s.Status = StatusIdle
+		}
+		m.mu.Unlock()
+		cancel()
+		m.notify(beanID)
+		return
+	}
+	m.addLive(beanID, proc)
+	m.mu.Unlock()
+
+	startErr := cmd.Start()
+	close(proc.started)
+	if startErr != nil {
+		m.mu.Lock()
+		m.removeLive(beanID, proc)
+		m.mu.Unlock()
+		close(proc.done)
+		m.setError(beanID, fmt.Sprintf("start claude: %v", startErr))
 		cancel()
 		return
 	}
 
-	proc := &runningProcess{cmd: cmd, stdin: stdin, cancel: cancel, done: make(chan struct{})}
-
 	m.mu.Lock()
-	m.processes[beanID] = proc
+	// If the session was blocked while starting, StopAndBlock is already
+	// stopping this process; don't make it the session's current process.
+	if m.blocked[beanID] == 0 {
+		m.processes[beanID] = proc
+	}
 	m.mu.Unlock()
 
 	// Drain stderr silently — Claude Code writes verbose progress info here
@@ -174,21 +252,23 @@ func (m *Manager) spawnAndRun(beanID string, session *Session) {
 	}
 	if err := m.sendToProcess(proc, beanID, initialMsg, lastMsg.Images); err != nil {
 		m.setError(beanID, fmt.Sprintf("send initial message: %v", err))
-		proc.kill()
-		return
+		// Can't use proc.kill() here: it waits for this goroutine to close
+		// proc.done. Kill the process and fall through to the normal cleanup.
+		cancel()
+		killProcessGroup(cmd)
+	} else {
+		// Read stdout line by line
+		m.readOutput(beanID, stdout, session.WorkDir, proc)
 	}
-
-	// Read stdout line by line
-	m.readOutput(beanID, stdout, session.WorkDir, proc)
 
 	// Process exited — clean up.
 	// Only modify state if this proc is still the current one for this beanID.
 	// A new process may have already been spawned (e.g. after handleBlockingTool
 	// signaled us and the user sent a new message), so we must not clobber it.
 	_ = cmd.Wait()
-	close(proc.done)
 
 	m.mu.Lock()
+	m.removeLive(beanID, proc)
 	shouldNotify := false
 	if m.processes[beanID] == proc {
 		delete(m.processes, beanID)
@@ -198,6 +278,7 @@ func (m *Manager) spawnAndRun(beanID string, session *Session) {
 		}
 	}
 	m.mu.Unlock()
+	close(proc.done)
 
 	if shouldNotify {
 		m.notify(beanID)
@@ -218,10 +299,10 @@ func (m *Manager) readOutput(beanID string, stdout io.Reader, workDir string, pr
 	var toolInputBuf strings.Builder
 	var toolMsgIdx int = -1
 	var toolName string
-	var toolInvIdx int = -1 // index into session.ToolInvocations
+	var toolInvIdx int = -1     // index into session.ToolInvocations
 	var pendingToolPersist bool // true when current tool msg hasn't been persisted yet
-	var deferredAskUser bool // true when AskUserQuestion detected, waiting for input to complete
-	var blocked bool         // true after handleBlockingTool — suppresses ensureRunning
+	var deferredAskUser bool    // true when AskUserQuestion detected, waiting for input to complete
+	var blocked bool            // true after handleBlockingTool — suppresses ensureRunning
 
 	// Write tool diff tracking: capture old file content before the write happens.
 	var writeOldContent string
@@ -314,7 +395,9 @@ func (m *Manager) readOutput(beanID string, stdout io.Reader, workDir string, pr
 		if ev.Type == eventUnknown {
 			// Log only the event type, not the full payload (which can be huge)
 			eventType := "?"
-			var peek struct{ Type string `json:"type"` }
+			var peek struct {
+				Type string `json:"type"`
+			}
 			if json.Unmarshal(line, &peek) == nil && peek.Type != "" {
 				eventType = peek.Type
 			}

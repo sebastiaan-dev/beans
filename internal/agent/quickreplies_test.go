@@ -1,6 +1,10 @@
 package agent
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/hmans/beans/internal/agent/agenttest"
+)
 
 func TestParseQuickReplies(t *testing.T) {
 	tests := []struct {
@@ -67,6 +71,7 @@ func TestParseQuickReplies(t *testing.T) {
 
 func TestSendMessageClearsQuickReplies(t *testing.T) {
 	m := &Manager{
+		claudePath:  agenttest.FakeClaude(t),
 		sessions:    make(map[string]*Session),
 		processes:   make(map[string]*runningProcess),
 		subscribers: make(map[string][]chan struct{}),

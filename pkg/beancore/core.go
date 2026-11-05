@@ -865,28 +865,21 @@ func (c *Core) saveToDisk(b *bean.Bean) error {
 	return nil
 }
 
-// saveToWorktree writes a bean to a worktree's .beans/ directory.
+// saveToWorktree writes a bean to a worktree's .beans/ directory, replacing
+// the worktree's copy of it. The file goes to the bean's path (relative to the
+// .beans/ directory; for beans merged from the worktree this is where the
+// worktree keeps it, e.g. under archive/). Copies under other filenames are
+// removed so the worktree never holds two files with the same ID.
 func (c *Core) saveToWorktree(b *bean.Bean, worktreePath string) error {
-	beansDir := filepath.Join(worktreePath, BeansDir)
-
-	// Ensure the .beans/ directory exists in the worktree
-	if err := os.MkdirAll(beansDir, 0755); err != nil {
-		return fmt.Errorf("creating worktree beans dir: %w", err)
+	if b.Path == "" {
+		b.Path = bean.BuildFilename(b.ID, b.Slug)
 	}
-
-	filename := bean.BuildFilename(b.ID, b.Slug)
-	path := filepath.Join(beansDir, filename)
-
 	content, err := b.Render()
 	if err != nil {
 		return err
 	}
-
-	if err := os.WriteFile(path, content, 0644); err != nil {
-		return fmt.Errorf("writing worktree bean: %w", err)
-	}
-
-	return nil
+	_, err = writeWorktreeBeanFile(filepath.Join(worktreePath, BeansDir), b.ID, b.Path, content)
+	return err
 }
 
 // Delete removes a bean by exact ID match.

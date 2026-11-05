@@ -2,9 +2,8 @@
   import type { Bean } from '$lib/beans.svelte';
   import { beansStore, sortBeans } from '$lib/beans.svelte';
   import { applyDrop } from '$lib/dragOrder';
-  import { matchesFilter } from '$lib/filter';
+  import { planningFilter } from '$lib/planningFilter.svelte';
   import { client } from '$lib/graphqlClient';
-  import { ui } from '$lib/uiState.svelte';
   import { typeBorders } from '$lib/styles';
   import { fade } from 'svelte/transition';
   import { ArchiveBeanDocument } from '$lib/graphql/generated';
@@ -49,7 +48,7 @@
     // sortBeans already handles order → priority → type → title sorting
     return sortBeans(
       beansStore.all.filter(
-        (b) => b.status === status && b.status !== 'scrapped' && matchesFilter(b, ui.filterText)
+        (b) => b.status === status && b.status !== 'scrapped' && planningFilter.predicate(b)
       )
     );
   }

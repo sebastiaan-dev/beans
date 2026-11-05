@@ -11,6 +11,8 @@
   import { ui } from '$lib/uiState.svelte';
   import { typeBorders } from '$lib/styles';
   import { decryptText } from '$lib/actions/decryptText';
+  import { sidebarState } from '$lib/sidebarState.svelte';
+  import { sidebarShortcutLabel, workspaceInitials } from '$lib/sidebar';
   import ConfirmModal from './ConfirmModal.svelte';
 
   interface PullRequestInfo {
@@ -151,13 +153,150 @@
       ui.forgetWorkspace(id);
     }
   }
+
+  const shortcut = sidebarShortcutLabel(
+    typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
+  );
+
+  /** Compact status indicator for a workspace in the collapsed rail. */
+  function railStatus(item: WorkspaceItem): { class: string; label: string } | null {
+    if (item.settingUp) return { class: 'bg-text-faint animate-pulse', label: 'Setting up' };
+    if (item.id === MAIN_WORKSPACE_ID) {
+      return mainHasChanges ? { class: 'bg-warning', label: 'Uncommitted changes' } : null;
+    }
+    const pr = item.pullRequest;
+    if (configStore.worktreeIntegrateMode === 'pr' && pr) {
+      if (pr.state === 'merged') return { class: 'bg-purple-400', label: `PR #${pr.number} merged` };
+      if (pr.checkStatus === 'fail') return { class: 'bg-danger', label: `PR #${pr.number}: checks failed` };
+      if (pr.checkStatus === 'pending') return { class: 'bg-warning', label: `PR #${pr.number}: checks running` };
+      return { class: 'bg-success', label: `PR #${pr.number}: checks passed` };
+    }
+    if (readyWorktreeIds.has(item.id)) return { class: 'bg-success', label: 'Ready to integrate' };
+    return null;
+  }
+
+  function railTooltip(item: WorkspaceItem): string {
+    const status = railStatus(item);
+    const running = agentStatusesStore.isRunning(item.id) ? 'Agent running' : null;
+    return [item.label, item.description, running, status?.label].filter(Boolean).join(' — ');
+  }
 </script>
 
-<nav class="flex h-full flex-col bg-surface-alt">
-  <div class="flex h-14 shrink-0 items-center border-b border-border p-3">
-    <span class="text-sm font-semibold text-text">{configStore.projectName || 'beans'}</span>
+{#snippet planningIcon()}
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 20 20"
+    fill="currentColor"
+    class="h-4 w-4 shrink-0"
+  >
+    <path
+      fill-rule="evenodd"
+      d="M6 4.75A.75.75 0 016.75 4h10.5a.75.75 0 010 1.5H6.75A.75.75 0 016 4.75zM6 10a.75.75 0 01.75-.75h10.5a.75.75 0 010 1.5H6.75A.75.75 0 016 10zm0 5.25a.75.75 0 01.75-.75h10.5a.75.75 0 010 1.5H6.75a.75.75 0 01-.75-.75zM1.99 4.75a1 1 0 011-1h.01a1 1 0 010 2h-.01a1 1 0 01-1-1zm0 5.25a1 1 0 011-1h.01a1 1 0 010 2h-.01a1 1 0 01-1-1zm0 5.25a1 1 0 011-1h.01a1 1 0 010 2h-.01a1 1 0 01-1-1z"
+      clip-rule="evenodd"
+    />
+  </svg>
+{/snippet}
+
+{#snippet plusIcon()}
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="h-3.5 w-3.5">
+    <path d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z" />
+  </svg>
+{/snippet}
+
+<nav
+  class="flex h-full flex-col bg-surface-alt"
+  aria-label="Sidebar"
+  data-collapsed={sidebarState.collapsed}
+>
+  <div
+    class={[
+      'flex h-14 shrink-0 items-center border-b border-border',
+      sidebarState.collapsed ? 'justify-center px-1' : 'gap-2 p-3'
+    ]}
+  >
+    {#if !sidebarState.collapsed}
+      <span class="min-w-0 flex-1 truncate text-sm font-semibold text-text"
+        >{configStore.projectName || 'beans'}</span
+      >
+    {/if}
+    <button
+      onclick={() => sidebarState.toggle()}
+      class="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded text-text-faint transition-colors hover:bg-surface hover:text-text"
+      aria-label={sidebarState.collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      aria-expanded={!sidebarState.collapsed}
+      title="{sidebarState.collapsed ? 'Expand' : 'Collapse'} sidebar ({shortcut})"
+      data-sidebar-toggle
+    >
+      <span
+        class={[
+          'block size-4',
+          sidebarState.collapsed ? 'icon-[uil--angle-double-right]' : 'icon-[uil--angle-double-left]'
+        ]}
+      ></span>
+    </button>
   </div>
 
+  {#if sidebarState.collapsed}
+    <!-- Collapsed icon rail: same navigation, labels in tooltips -->
+    <div class="flex flex-1 flex-col items-center gap-1 overflow-x-hidden overflow-y-auto py-2">
+      <button
+        onclick={() => ui.navigateTo('planning')}
+        class={[
+          'relative flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors',
+          ui.isPlanning
+            ? 'bg-surface text-text'
+            : 'text-text-muted hover:bg-surface hover:text-text'
+        ]}
+        aria-label="Planning"
+        aria-current={ui.isPlanning ? 'page' : undefined}
+        title="Planning"
+      >
+        {@render planningIcon()}
+        {#if configStore.agentEnabled && agentStatusesStore.isRunning(MAIN_WORKSPACE_ID)}
+          <span class="loader absolute -top-0.5 -right-0.5 !size-2.5" transition:fade={{ duration: 200 }}></span>
+        {/if}
+      </button>
+
+      {#if configStore.agentEnabled}
+        <div class="my-1 h-px w-7 shrink-0 bg-border" role="separator"></div>
+        <button
+          onclick={handleCreateWorktree}
+          class="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded text-text-faint transition-colors hover:bg-surface hover:text-text"
+          aria-label="Create worktree"
+          title="Create workspace"
+        >
+          {@render plusIcon()}
+        </button>
+
+        {#each workspaceItems as item (item.id)}
+          {@const status = railStatus(item)}
+          {@const active = ui.activeView === item.id}
+          <button
+            onclick={() => ui.navigateTo(item.id)}
+            transition:fade={{ duration: 150 }}
+            class={[
+              'relative flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-md border text-[11px] font-semibold transition-colors',
+              worktreeStore.isDestroying(item.id) && 'pointer-events-none opacity-30',
+              active
+                ? 'border-accent/40 bg-surface text-text'
+                : 'border-border/50 bg-surface/50 text-text-muted hover:border-border hover:bg-surface hover:text-text'
+            ]}
+            aria-label={item.label}
+            aria-current={active ? 'page' : undefined}
+            title={railTooltip(item)}
+            data-workspace-id={item.id}
+          >
+            {workspaceInitials(item.label)}
+            {#if agentStatusesStore.isRunning(item.id)}
+              <span class="loader absolute -top-0.5 -right-0.5 !size-2.5" transition:fade={{ duration: 200 }}></span>
+            {:else if status}
+              <span class={['absolute -top-0.5 -right-0.5 size-2 rounded-full', status.class]}></span>
+            {/if}
+          </button>
+        {/each}
+      {/if}
+    </div>
+  {:else}
   <div class="flex-1 overflow-y-auto p-2">
     <!-- Planning item -->
     <button
@@ -169,18 +308,7 @@
           : 'text-text-muted hover:bg-surface hover:text-text'
       ]}
     >
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        viewBox="0 0 20 20"
-        fill="currentColor"
-        class="h-4 w-4 shrink-0"
-      >
-        <path
-          fill-rule="evenodd"
-          d="M6 4.75A.75.75 0 016.75 4h10.5a.75.75 0 010 1.5H6.75A.75.75 0 016 4.75zM6 10a.75.75 0 01.75-.75h10.5a.75.75 0 010 1.5H6.75A.75.75 0 016 10zm0 5.25a.75.75 0 01.75-.75h10.5a.75.75 0 010 1.5H6.75a.75.75 0 01-.75-.75zM1.99 4.75a1 1 0 011-1h.01a1 1 0 010 2h-.01a1 1 0 01-1-1zm0 5.25a1 1 0 011-1h.01a1 1 0 010 2h-.01a1 1 0 01-1-1zm0 5.25a1 1 0 011-1h.01a1 1 0 010 2h-.01a1 1 0 01-1-1z"
-          clip-rule="evenodd"
-        />
-      </svg>
+      {@render planningIcon()}
       Planning
       {#if configStore.agentEnabled && agentStatusesStore.isRunning(MAIN_WORKSPACE_ID)}
         <div class="loader ml-auto shrink-0" transition:fade={{ duration: 200 }}></div>
@@ -310,6 +438,8 @@
       </div>
     {/if}
   </div>
+
+  {/if}
 
   {#if confirmingRemoveId}
     {@const label = workspaceItems.find((w) => w.id === confirmingRemoveId)?.label ?? 'this worktree'}

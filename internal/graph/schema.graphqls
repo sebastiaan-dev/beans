@@ -275,7 +275,10 @@ type Mutation {
   stopRun(workspaceId: ID!): Boolean!
 
   """
-  Create a new worktree. Returns the created worktree with a generated ID.
+  Create a new worktree. The name becomes the worktree's ID, directory name and
+  git branch (beans/<name>), so it must be a slug: letters, digits, '.', '_' and
+  '-', starting with a letter or digit (e.g. "fix-login-timeout"). Invalid names
+  are rejected with an error.
 
   If beanId is given (Start Work), the bean as beans-serve currently sees it is
   written into the new worktree's .beans/ directory before returning. The

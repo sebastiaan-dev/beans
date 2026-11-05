@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hmans/beans/internal/agent/agenttest"
 )
 
 // TestSendToProcessImageOnlyNoEmptyTextBlock verifies that sending an image
@@ -27,6 +29,7 @@ func TestSendToProcessImageOnlyNoEmptyTextBlock(t *testing.T) {
 	}
 
 	m := &Manager{
+		claudePath:  agenttest.FakeClaude(t),
 		sessions:    make(map[string]*Session),
 		processes:   make(map[string]*runningProcess),
 		subscribers: make(map[string][]chan struct{}),
@@ -99,6 +102,7 @@ func TestSendToProcessImageWithText(t *testing.T) {
 	}
 
 	m := &Manager{
+		claudePath:  agenttest.FakeClaude(t),
 		sessions:    make(map[string]*Session),
 		processes:   make(map[string]*runningProcess),
 		subscribers: make(map[string][]chan struct{}),
@@ -173,6 +177,7 @@ func TestReadOutputMessageOrder(t *testing.T) {
 	}, "\n")
 
 	m := &Manager{
+		claudePath:  agenttest.FakeClaude(t),
 		sessions:    make(map[string]*Session),
 		processes:   make(map[string]*runningProcess),
 		subscribers: make(map[string][]chan struct{}),
@@ -235,6 +240,7 @@ func TestReadOutputMultiTurnResetsStatus(t *testing.T) {
 	pr, pw := io.Pipe()
 
 	m := &Manager{
+		claudePath:  agenttest.FakeClaude(t),
 		sessions:    make(map[string]*Session),
 		processes:   make(map[string]*runningProcess),
 		subscribers: make(map[string][]chan struct{}),
@@ -327,6 +333,7 @@ func TestReadOutputMultipleTools(t *testing.T) {
 	}, "\n")
 
 	m := &Manager{
+		claudePath:  agenttest.FakeClaude(t),
 		sessions:    make(map[string]*Session),
 		processes:   make(map[string]*runningProcess),
 		subscribers: make(map[string][]chan struct{}),
@@ -379,6 +386,7 @@ func TestReadOutputAskUserQuestionStaysIdle(t *testing.T) {
 	pr, pw := io.Pipe()
 
 	m := &Manager{
+		claudePath:  agenttest.FakeClaude(t),
 		sessions:    make(map[string]*Session),
 		processes:   make(map[string]*runningProcess),
 		subscribers: make(map[string][]chan struct{}),
@@ -468,6 +476,7 @@ func TestReadOutputStaleProcessDoesNotResetStatus(t *testing.T) {
 	pr, pw := io.Pipe()
 
 	m := &Manager{
+		claudePath:  agenttest.FakeClaude(t),
 		sessions:    make(map[string]*Session),
 		processes:   make(map[string]*runningProcess),
 		subscribers: make(map[string][]chan struct{}),

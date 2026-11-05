@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hmans/beans/internal/agent"
+	"github.com/hmans/beans/internal/agent/agenttest"
 	"github.com/hmans/beans/internal/worktree"
 	"github.com/hmans/beans/pkg/beangraph"
 	"github.com/hmans/beans/pkg/beangraph/model"
@@ -19,6 +20,35 @@ import (
 	"github.com/hmans/beans/pkg/beancore"
 	"github.com/hmans/beans/pkg/config"
 )
+
+// TestMain guarantees no test in this package executes the real Claude Code CLI.
+func TestMain(m *testing.M) { agenttest.Main(m) }
+
+// newTestAgentManager returns an agent manager that spawns a no-op fake
+// instead of the real Claude Code CLI.
+func newTestAgentManager(t *testing.T) *agent.Manager {
+	t.Helper()
+	mgr := agent.NewManager("", nil)
+	mgr.SetClaudePath(agenttest.FakeClaude(t))
+	return mgr
+}
+
+// waitAgentTurnDone waits until the session's (fake) agent turn has ended, so
+// no spawn goroutine outlives the test.
+func waitAgentTurnDone(t *testing.T, mgr *agent.Manager, beanID string) *agent.Session {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		s := mgr.GetSession(beanID)
+		if s != nil && s.Status != agent.StatusRunning {
+			return s
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for agent turn of %q to end", beanID)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
 
 func setupTestResolver(t *testing.T) (*Resolver, *beancore.Core) {
 	t.Helper()
@@ -1182,7 +1212,7 @@ func TestSubscriptionBeanChanged(t *testing.T) {
 func TestAgentSessionSubscription_DeliversLatestState(t *testing.T) {
 	// Verify that when multiple rapid notifications occur, the subscriber
 	// eventually receives the latest state (not a stale intermediate).
-	mgr := agent.NewManager("", nil)
+	mgr := newTestAgentManager(t)
 
 	beanID := "test-latest-value"
 	resolver := &Resolver{AgentMgr: mgr}
@@ -3005,7 +3035,7 @@ func TestExecuteAgentAction(t *testing.T) {
 
 	t.Run("unknown action", func(t *testing.T) {
 		resolver, _ := setupTestResolver(t)
-		resolver.AgentMgr = agent.NewManager("", nil)
+		resolver.AgentMgr = newTestAgentManager(t)
 		resolver.ProjectRoot = t.TempDir()
 		mr := &mutationResolver{resolver}
 
@@ -3020,7 +3050,7 @@ func TestExecuteAgentAction(t *testing.T) {
 
 	t.Run("commit action", func(t *testing.T) {
 		resolver, _ := setupTestResolver(t)
-		resolver.AgentMgr = agent.NewManager("", nil)
+		resolver.AgentMgr = newTestAgentManager(t)
 		resolver.ProjectRoot = t.TempDir()
 		mr := &mutationResolver{resolver}
 
@@ -3032,7 +3062,7 @@ func TestExecuteAgentAction(t *testing.T) {
 			t.Fatal("expected true result")
 		}
 
-		session := resolver.AgentMgr.GetSession(CentralSessionID)
+		session := waitAgentTurnDone(t, resolver.AgentMgr, CentralSessionID)
 		if session == nil {
 			t.Fatal("expected session to exist")
 		}
@@ -3050,7 +3080,7 @@ func TestExecuteAgentAction(t *testing.T) {
 
 	t.Run("review action", func(t *testing.T) {
 		resolver, _ := setupTestResolver(t)
-		resolver.AgentMgr = agent.NewManager("", nil)
+		resolver.AgentMgr = newTestAgentManager(t)
 		resolver.ProjectRoot = t.TempDir()
 		mr := &mutationResolver{resolver}
 
@@ -3062,7 +3092,7 @@ func TestExecuteAgentAction(t *testing.T) {
 			t.Fatal("expected true result")
 		}
 
-		session := resolver.AgentMgr.GetSession(CentralSessionID)
+		session := waitAgentTurnDone(t, resolver.AgentMgr, CentralSessionID)
 		if session == nil {
 			t.Fatal("expected session to exist")
 		}
@@ -3074,7 +3104,7 @@ func TestExecuteAgentAction(t *testing.T) {
 
 	t.Run("non-central without worktree", func(t *testing.T) {
 		resolver, _ := setupTestResolver(t)
-		resolver.AgentMgr = agent.NewManager("", nil)
+		resolver.AgentMgr = newTestAgentManager(t)
 		mr := &mutationResolver{resolver}
 
 		_, err := mr.ExecuteAgentAction(context.Background(), "some-bean", "commit")
@@ -3425,12 +3455,8 @@ func TestQueryDefaultBeanStatusAndType(t *testing.T) {
 }
 
 func TestAnswerAgentQuestions(t *testing.T) {
-	// No claude binary on PATH: the resume spawn fails fast instead of
-	// launching a real agent.
-	t.Setenv("PATH", t.TempDir())
-
 	resolver, _ := setupTestResolver(t)
-	resolver.AgentMgr = agent.NewManager("", nil)
+	resolver.AgentMgr = newTestAgentManager(t)
 	resolver.ProjectRoot = t.TempDir()
 	mr := &mutationResolver{resolver}
 	ctx := context.Background()
@@ -3469,14 +3495,8 @@ func TestAnswerAgentQuestions(t *testing.T) {
 		t.Fatalf("AnswerAgentQuestions() = %v, %v", ok, err)
 	}
 
-	// Wait for the (failing) resume spawn so it can't outlive the PATH override.
-	deadline := time.Now().Add(2 * time.Second)
-	for resolver.AgentMgr.GetSession(CentralSessionID).Status != agent.StatusError {
-		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for resume attempt")
-		}
-		time.Sleep(time.Millisecond)
-	}
+	// Wait for the resumed (fake) agent turn to end.
+	waitAgentTurnDone(t, resolver.AgentMgr, CentralSessionID)
 
 	session = resolver.AgentMgr.GetSession(CentralSessionID)
 	if session.PendingInteraction != nil {
@@ -3488,5 +3508,38 @@ func TestAnswerAgentQuestions(t *testing.T) {
 		"\n- \"Which features?\"=\"Auth\", \"Billing\""
 	if last.Role != agent.RoleUser || last.Content != want {
 		t.Errorf("last message = %s %q, want user %q", last.Role, last.Content, want)
+	}
+}
+
+func TestMutationCreateWorktreeInvalidName(t *testing.T) {
+	ctx := context.Background()
+	resolver, _, _ := setupWorktreeResolver(t)
+	mr := resolver.Mutation()
+
+	for _, name := range []string{"Run Test", "", "../escape", "a/b", "feature..x", "x.lock", "-flag", "name~1", "trailing."} {
+		t.Run(name, func(t *testing.T) {
+			_, err := mr.CreateWorktree(ctx, name, nil)
+			if err == nil {
+				t.Fatalf("CreateWorktree(%q) should fail", name)
+			}
+			if !strings.Contains(err.Error(), "invalid worktree name") {
+				t.Errorf("error should explain the name is invalid, got: %v", err)
+			}
+			if strings.Contains(err.Error(), "git worktree add") {
+				t.Errorf("name should be rejected before running git, got: %v", err)
+			}
+		})
+	}
+	wts, err := resolver.WorktreeMgr.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wts) != 0 {
+		t.Errorf("no worktree should have been created, got %d", len(wts))
+	}
+
+	// Names as generated by the web UI remain valid.
+	if _, err := mr.CreateWorktree(ctx, "brave-otter-x7k2", nil); err != nil {
+		t.Errorf("CreateWorktree(generated name) error = %v", err)
 	}
 }

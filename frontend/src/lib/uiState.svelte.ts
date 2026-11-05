@@ -1,4 +1,6 @@
 import { goto } from '$app/navigation';
+import { untrack } from 'svelte';
+import { FILTER_URL_PARAM } from '$lib/filter';
 import type { Bean } from '$lib/beans.svelte';
 import { beansStore } from '$lib/beans.svelte';
 
@@ -30,6 +32,8 @@ class UIState {
     if (viewChanged) {
       this.syncSelectedBeanToUrl();
     }
+    // Navigation (e.g. backlog → board) drops the query string; restore the filter.
+    untrack(() => this.syncFilterToUrl());
   }
 
   /** Navigate to a view via URL routing. */
@@ -134,7 +138,9 @@ class UIState {
     delete this.selectedBeanByView[workspaceId];
   }
 
-  // Filter text (persisted to localStorage)
+  // Planning filter query (see $lib/filter for the syntax). Persisted to
+  // localStorage and mirrored into the `?q=` URL param on planning views so
+  // filtered views are shareable/bookmarkable.
   filterText = $state('');
 
   setFilterText(text: string) {
@@ -144,6 +150,20 @@ class UIState {
     } else {
       localStorage.removeItem('beans-filter-text');
     }
+    this.syncFilterToUrl();
+  }
+
+  /** Mirror the filter into the URL (planning views only), without navigation. */
+  private syncFilterToUrl() {
+    const url = new URL(window.location.href);
+    const query = this.isPlanning ? this.filterText.trim() : '';
+    if (query === (url.searchParams.get(FILTER_URL_PARAM) ?? '')) return;
+    if (query) {
+      url.searchParams.set(FILTER_URL_PARAM, query);
+    } else {
+      url.searchParams.delete(FILTER_URL_PARAM);
+    }
+    window.history.replaceState(window.history.state, '', url);
   }
 
   // Form modal

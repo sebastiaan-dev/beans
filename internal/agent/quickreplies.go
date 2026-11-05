@@ -1,11 +1,8 @@
 package agent
 
 import (
-	"context"
 	"log"
-	"os/exec"
 	"strings"
-	"time"
 )
 
 const quickRepliesPrompt = `You are given the last message from an AI coding assistant, along with the current workspace status. Suggest 3-4 short replies (under 10 words each) that the user might want to send next.
@@ -28,11 +25,16 @@ Show me the code first
 What about error handling?
 Let's skip this for now`
 
-// GenerateQuickReplies runs a lightweight Claude Haiku call to suggest
-// follow-up replies based on the last assistant message and workspace context.
+// GenerateQuickReplies runs a lightweight Claude Haiku call (using
+// DefaultClaudeBinary) to suggest follow-up replies based on the last
+// assistant message and workspace context.
 // workspaceContext is optional — pass "" to omit it.
 // Returns a slice of suggestion strings, or nil on error.
 func GenerateQuickReplies(message string, workspaceContext string) []string {
+	return generateQuickRepliesWith(DefaultClaudeBinary, message, workspaceContext)
+}
+
+func generateQuickRepliesWith(claudeBin, message, workspaceContext string) []string {
 	var sb strings.Builder
 	sb.WriteString(quickRepliesPrompt)
 	if workspaceContext != "" {
@@ -41,27 +43,14 @@ func GenerateQuickReplies(message string, workspaceContext string) []string {
 	}
 	sb.WriteString("\n\nAssistant message:\n\n")
 	sb.WriteString(truncate(message, 2000))
-	prompt := sb.String()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "claude",
-		"--print", "--model", "haiku",
-		"--no-session-persistence",
-		"--disable-slash-commands",
-		"--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`,
-	)
-	cmd.Env = buildClaudeEnv()
-	cmd.Stdin = strings.NewReader(prompt)
-
-	out, err := cmd.Output()
+	out, err := runHaiku(claudeBin, sb.String())
 	if err != nil {
 		log.Printf("[quickreplies] failed to generate quick replies: %v", err)
 		return nil
 	}
 
-	return parseQuickReplies(string(out))
+	return parseQuickReplies(out)
 }
 
 // generateQuickReplies extracts the last assistant message from the session
@@ -93,7 +82,7 @@ func (m *Manager) generateQuickReplies(beanID string) {
 		wsContext = m.quickReplyContext(beanID)
 	}
 
-	replies := GenerateQuickReplies(lastAssistant, wsContext)
+	replies := generateQuickRepliesWith(m.claudeBinary(), lastAssistant, wsContext)
 	if len(replies) == 0 {
 		return
 	}
