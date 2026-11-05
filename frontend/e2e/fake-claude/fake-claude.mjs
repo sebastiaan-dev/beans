@@ -10,6 +10,9 @@
 // - received.jsonl: every user message received on stdin is appended here,
 //   so tests can assert exactly what the agent was sent.
 // - turn: index of the next turn to play (managed by this script).
+// - pids: the PID of every streaming-mode process, one per line, so tests can
+//   check that the server stopped the agent. An empty turn ([]) emits nothing,
+//   which keeps the agent busy until it is stopped.
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -23,6 +26,7 @@ if (!streaming || !dir) {
   process.stdin.resume();
   process.stdin.on('end', () => process.exit(0));
 } else {
+  appendFileSync(join(dir, 'pids'), `${process.pid}\n`);
   const turnFile = join(dir, 'turn');
   const scriptFile = join(dir, 'script.json');
   const emit = (event) => process.stdout.write(JSON.stringify(event) + '\n');

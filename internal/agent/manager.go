@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -28,6 +29,10 @@ type OnTurnCompleteFunc func(beanID string)
 // generation prompt for the given beanID. Return "" to skip context injection.
 type QuickReplyContextFunc func(beanID string) string
 
+// ErrSessionBlocked is returned when a message is sent to an agent session
+// whose workspace is being removed (see StopAndBlock).
+var ErrSessionBlocked = errors.New("agent session is unavailable while its workspace is being removed")
+
 // DefaultMode controls the initial mode for new agent sessions.
 type DefaultMode string
 
@@ -49,17 +54,24 @@ const (
 // Manager manages agent sessions — one per worktree (keyed by beanID).
 // It holds sessions in memory and provides pub/sub for session updates.
 type Manager struct {
-	mu                    sync.RWMutex
-	sessions              map[string]*Session
-	processes             map[string]*runningProcess
-	store                 *store // JSONL persistence (nil if no beansDir)
-	contextProvider       ContextProvider
-	systemPromptProvider  SystemPromptProvider
-	onFirstUserMessage    OnFirstUserMessageFunc
-	onTurnComplete        OnTurnCompleteFunc
-	quickReplyContext     QuickReplyContextFunc
-	defaultMode   DefaultMode
-	defaultEffort EffortLevel
+	mu        sync.RWMutex
+	sessions  map[string]*Session
+	processes map[string]*runningProcess
+	// live tracks every started process per beanID until it has exited,
+	// including processes that were signaled and are winding down and so are
+	// no longer the session's current process in processes.
+	live map[string]map[*runningProcess]struct{}
+	// blocked counts active blocks per beanID; while > 0, no agent process
+	// may be started for that ID (see StopAndBlock).
+	blocked              map[string]int
+	store                *store // JSONL persistence (nil if no beansDir)
+	contextProvider      ContextProvider
+	systemPromptProvider SystemPromptProvider
+	onFirstUserMessage   OnFirstUserMessageFunc
+	onTurnComplete       OnTurnCompleteFunc
+	quickReplyContext    QuickReplyContextFunc
+	defaultMode          DefaultMode
+	defaultEffort        EffortLevel
 
 	subMu       sync.Mutex
 	subscribers map[string][]chan struct{}
@@ -78,11 +90,13 @@ func NewManager(beansDir string, contextProvider ContextProvider, defaultMode ..
 		mode = defaultMode[0]
 	}
 	m := &Manager{
-		sessions:              make(map[string]*Session),
-		processes:             make(map[string]*runningProcess),
-		subscribers:           make(map[string][]chan struct{}),
-		contextProvider:       contextProvider,
-		defaultMode: mode,
+		sessions:        make(map[string]*Session),
+		processes:       make(map[string]*runningProcess),
+		live:            make(map[string]map[*runningProcess]struct{}),
+		blocked:         make(map[string]int),
+		subscribers:     make(map[string][]chan struct{}),
+		contextProvider: contextProvider,
+		defaultMode:     mode,
 	}
 
 	if beansDir != "" {
@@ -172,6 +186,10 @@ func (m *Manager) SendMessage(beanID, workDir, message string, images []ImageUpl
 // send; returning an error aborts without touching the session. This lets
 // callers derive the message from session state atomically (see AnswerQuestions).
 func (m *Manager) sendMessage(beanID, workDir string, images []ImageUpload, attachmentPaths []string, buildMessage func(*Session) (string, error)) error {
+	if m.isBlocked(beanID) {
+		return ErrSessionBlocked
+	}
+
 	// Save images to disk before acquiring the lock
 	var imageRefs []ImageRef
 	if m.store != nil && len(images) > 0 {
@@ -185,6 +203,11 @@ func (m *Manager) sendMessage(beanID, workDir string, images []ImageUpload, atta
 	}
 
 	m.mu.Lock()
+
+	if m.blocked[beanID] > 0 {
+		m.mu.Unlock()
+		return ErrSessionBlocked
+	}
 
 	// Get or create session
 	session, ok := m.sessions[beanID]
@@ -274,6 +297,92 @@ func (m *Manager) StopSession(beanID string) error {
 
 	m.notify(beanID)
 	return nil
+}
+
+// StopAndBlock stops the agent processes of the given sessions — including
+// processes that are still winding down — and waits for them (and the tool
+// processes they started) to exit; see runningProcess.kill for the timeouts.
+// Until the returned release function is called, no agent process can be
+// started for these sessions and SendMessage fails with ErrSessionBlocked.
+// Use it when the resources a session depends on (such as its worktree
+// directory) are about to disappear. Conversations are kept.
+func (m *Manager) StopAndBlock(beanIDs ...string) (release func()) {
+	var procs []*runningProcess
+	m.mu.Lock()
+	if m.blocked == nil {
+		m.blocked = make(map[string]int)
+	}
+	for _, id := range beanIDs {
+		m.blocked[id]++
+		seen := make(map[*runningProcess]bool)
+		if proc, ok := m.processes[id]; ok && proc != nil {
+			procs = append(procs, proc)
+			seen[proc] = true
+		}
+		delete(m.processes, id)
+		for proc := range m.live[id] {
+			if !seen[proc] {
+				procs = append(procs, proc)
+			}
+		}
+		if s, ok := m.sessions[id]; ok && s.Status == StatusRunning {
+			s.Status = StatusIdle
+		}
+	}
+	m.mu.Unlock()
+
+	for _, id := range beanIDs {
+		m.notify(id)
+	}
+
+	var wg sync.WaitGroup
+	for _, proc := range procs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			proc.kill()
+		}()
+	}
+	wg.Wait()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			for _, id := range beanIDs {
+				if m.blocked[id]--; m.blocked[id] <= 0 {
+					delete(m.blocked, id)
+				}
+			}
+		})
+	}
+}
+
+// isBlocked reports whether new agent processes are blocked for beanID.
+func (m *Manager) isBlocked(beanID string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.blocked[beanID] > 0
+}
+
+// addLive records a started process. Must be called with m.mu held.
+func (m *Manager) addLive(beanID string, proc *runningProcess) {
+	if m.live == nil {
+		m.live = make(map[string]map[*runningProcess]struct{})
+	}
+	if m.live[beanID] == nil {
+		m.live[beanID] = make(map[*runningProcess]struct{})
+	}
+	m.live[beanID][proc] = struct{}{}
+}
+
+// removeLive forgets an exited process. Must be called with m.mu held.
+func (m *Manager) removeLive(beanID string, proc *runningProcess) {
+	delete(m.live[beanID], proc)
+	if len(m.live[beanID]) == 0 {
+		delete(m.live, beanID)
+	}
 }
 
 // Subscribe returns a channel that receives a signal whenever the session
@@ -586,15 +695,22 @@ func (m *Manager) pruneOrphanedAttachments(beanID string) {
 // timeouts (each kill waits up to 3s for graceful exit).
 func (m *Manager) Shutdown() {
 	m.mu.Lock()
-	procs := make(map[string]*runningProcess, len(m.processes))
-	for k, v := range m.processes {
-		procs[k] = v
+	procs := make(map[*runningProcess]struct{}, len(m.processes))
+	for _, v := range m.processes {
+		if v != nil {
+			procs[v] = struct{}{}
+		}
+	}
+	for _, set := range m.live {
+		for v := range set {
+			procs[v] = struct{}{}
+		}
 	}
 	m.processes = make(map[string]*runningProcess)
 	m.mu.Unlock()
 
 	var wg sync.WaitGroup
-	for _, proc := range procs {
+	for proc := range procs {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

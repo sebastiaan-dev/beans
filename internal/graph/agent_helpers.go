@@ -2,6 +2,10 @@ package graph
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
+
+	"github.com/hmans/beans/internal/gitutil"
 
 	"github.com/hmans/beans/internal/agent"
 	"github.com/hmans/beans/pkg/beangraph/model"
@@ -167,7 +171,7 @@ type actionContext struct {
 	HasNewCommits      bool   // commits ahead of the base branch
 	HasUnpushedCommits bool   // commits ahead of the remote tracking branch
 	HasConflicts       bool   // rebasing onto base branch would produce conflicts
-	MainRepoHasChanges bool   // main repo has uncommitted changes
+	MainRepoHasChanges bool   // main repo has uncommitted changes outside its beans directory (see mainRepoHasNonBeanChanges)
 	MainRepoPath       string // absolute path to the main repo working directory
 	PullRequest        *forge.PullRequest
 	ForgeCLI           string // "gh", "glab", or "" if no forge detected
@@ -251,12 +255,17 @@ CRITICAL SAFETY RULES — READ BEFORE DOING ANYTHING:
    b. Squash all commits into one: git reset --soft main && git commit -m "<your message>"
       - Write a single, well-crafted conventional commit message that summarizes all the work done in this branch. Include relevant bean IDs.
    c. Record the squashed commit SHA: SQUASH_SHA=$(git rev-parse HEAD)
-   d. Fast-forward main to the squashed commit (this updates main's ref, index, AND working tree):
+   d. Prepare the main repo. Beans UI saves bean edits to the main repo without committing them, and the branch usually carries the same edits (the bean was copied into this worktree). Uncommitted changes in main at paths the squashed commit changes would make the fast-forward abort. Run this script verbatim with bash, from this worktree, with SQUASH_SHA set. It drops main's uncommitted changes ONLY where they are identical to this branch's version, and changes nothing otherwise:
+`+"```bash"+`
+%s
+`+"```"+`
+      If it prints CONFLICT, STOP. Do NOT merge, and do NOT stash, reset, checkout, or otherwise modify anything in the main repo. Tell the user which files have uncommitted changes in the main repo that differ from this branch, and that they need to commit or discard those changes (or tell you to update this branch's version), then run Integrate again.
+   e. Fast-forward main to the squashed commit (this updates main's ref, index, AND working tree):
       git -C %s merge --ff-only $SQUASH_SHA
-   e. If the merge fails (e.g. main moved), go back to step (a) and retry.
+   f. If the merge fails because main moved (not possible to fast-forward), go back to step (a) and retry. If it fails because of local changes in the main repo (e.g. a bean was edited in the UI meanwhile), run step (d) again and retry the merge once; if it still fails, STOP and report the error.
 4. Reset this branch to main so it doesn't appear to diverge: git reset --hard main
 
-REMINDER: Do NOT push anything to any remote. The integrate action is purely local.`, ctx.MainRepoPath)
+REMINDER: Do NOT push anything to any remote. The integrate action is purely local.`, integratePrepareMainScript(ctx.MainRepoPath), shellQuote(ctx.MainRepoPath))
 		},
 		Visible: func(ctx actionContext) bool {
 			if ctx.IntegrateMode == "pr" {
@@ -272,7 +281,7 @@ REMINDER: Do NOT push anything to any remote. The integrate action is purely loc
 				return "Branch has merge conflicts with base branch"
 			}
 			if ctx.MainRepoHasChanges {
-				return "Main workspace has uncommitted changes"
+				return "Main workspace has uncommitted changes (outside of beans)"
 			}
 			return ""
 		},
@@ -438,4 +447,34 @@ func (r *Resolver) agentWorkDir(beanID string) (string, error) {
 		return r.ProjectRoot, nil
 	}
 	return r.findWorktreePath(beanID)
+}
+
+// mainRepoHasNonBeanChanges reports whether the main repo has uncommitted
+// changes outside its beans directory. Uncommitted bean changes are normal
+// (Beans UI writes edits without committing) and don't block the Integrate
+// action: its prepare script (integratePrepareMainScript) drops them where
+// the branch has identical content and stops on real differences.
+func mainRepoHasNonBeanChanges(repoRoot, beansDir string) bool {
+	changes, err := gitutil.FileChanges(repoRoot)
+	if err != nil {
+		return false
+	}
+	prefix := ""
+	if rel, err := filepath.Rel(resolvePath(repoRoot), resolvePath(beansDir)); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+		prefix = filepath.ToSlash(rel) + "/"
+	}
+	for _, c := range changes {
+		if prefix == "" || !strings.HasPrefix(c.Path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// resolvePath returns path with symlinks resolved (falling back to path).
+func resolvePath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return path
 }
