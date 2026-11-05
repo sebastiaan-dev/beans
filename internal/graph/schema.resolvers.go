@@ -250,7 +250,7 @@ func (r *mutationResolver) CreateWorktree(ctx context.Context, name string, bean
 		fmt.Printf("[beans] warning: failed to watch worktree beans: %v\n", err)
 	}
 
-	return worktreeToModel(wt, r.Core, r.WorktreeMgr.BaseRef(), false), nil
+	return worktreeToModel(wt, r.Core, r.WorktreeMgr.BaseRef()), nil
 }
 
 // RemoveWorktree is the resolver for the removeWorktree field.
@@ -607,7 +607,7 @@ func (r *queryResolver) Worktrees(ctx context.Context) ([]*model.Worktree, error
 
 	result := make([]*model.Worktree, len(wts))
 	for i, wt := range wts {
-		result[i] = worktreeToModel(&wt, r.Core, r.WorktreeMgr.BaseRef(), true)
+		result[i] = worktreeToModel(&wt, r.Core, r.WorktreeMgr.BaseRef())
 	}
 	populatePRsBatch(ctx, result, r.Forge, r.ProjectRoot)
 	return result, nil
@@ -808,10 +808,13 @@ func (r *queryResolver) BranchStatus(ctx context.Context, path *string) (*model.
 		baseRef = r.WorktreeMgr.BaseRef()
 	}
 
-	return &model.BranchStatus{
-		CommitsBehind: gitutil.CommitsBehind(dir, baseRef),
-		HasConflicts:  gitutil.HasConflicts(dir, baseRef),
-	}, nil
+	status := newWorktreeGitStatus(dir, baseRef)
+	result := &model.BranchStatus{}
+	runConcurrently(
+		func() { result.CommitsBehind = status.CommitsBehind(ctx) },
+		func() { result.HasConflicts = status.HasConflicts(ctx) },
+	)
+	return result, nil
 }
 
 // HasDirtyBeans is the resolver for the hasDirtyBeans field.
@@ -840,10 +843,15 @@ func (r *queryResolver) AgentActions(ctx context.Context, beanID string, skipFor
 			for _, wt := range wts {
 				if wt.ID == beanID {
 					actCtx.WorkDir = wt.Path
-					actCtx.HasChanges = gitutil.HasChanges(wt.Path)
-					actCtx.HasNewCommits = gitutil.HasUnmergedCommits(wt.Path, r.WorktreeMgr.BaseRef())
-					actCtx.HasUnpushedCommits = gitutil.HasUnpushedCommits(wt.Path)
-					actCtx.HasConflicts = gitutil.HasConflicts(wt.Path, r.WorktreeMgr.BaseRef())
+					status := newWorktreeGitStatus(wt.Path, r.WorktreeMgr.BaseRef())
+					runConcurrently(
+						func() { actCtx.HasChanges = status.HasChanges(ctx) },
+						func() { actCtx.HasNewCommits = status.HasUnmergedCommits(ctx) },
+						func() {
+							withGitSlot(func() { actCtx.HasUnpushedCommits = gitutil.HasUnpushedCommits(wt.Path) })
+						},
+						func() { actCtx.HasConflicts = status.HasConflicts(ctx) },
+					)
 					branch = wt.Branch
 					break
 				}
@@ -1130,7 +1138,7 @@ func (r *subscriptionResolver) WorktreesChanged(ctx context.Context) (<-chan []*
 	buildWorktreeList := func(wts []worktree.Worktree) []*model.Worktree {
 		result := make([]*model.Worktree, len(wts))
 		for i, wt := range wts {
-			result[i] = worktreeToModel(&wt, r.Core, r.WorktreeMgr.BaseRef(), false)
+			result[i] = worktreeToModel(&wt, r.Core, r.WorktreeMgr.BaseRef())
 		}
 		return result
 	}
@@ -1368,28 +1376,30 @@ func (r *subscriptionResolver) WorkspaceStatuses(ctx context.Context) (<-chan []
 		var lastStatuses map[string]statusKey
 
 		compute := func() []*model.WorkspaceStatus {
-			var result []*model.WorkspaceStatus
-
 			// Main workspace status
-			result = append(result, &model.WorkspaceStatus{
-				ID:         CentralSessionID,
-				HasChanges: gitutil.HasChanges(r.ProjectRoot),
-			})
+			central := &model.WorkspaceStatus{ID: CentralSessionID}
+			result := []*model.WorkspaceStatus{central}
+			fns := []func(){func() {
+				withGitSlot(func() { central.HasChanges = gitutil.HasChanges(r.ProjectRoot) })
+			}}
 
-			// Worktree statuses
+			// Worktree statuses, computed concurrently (bounded by gitStatusSlots)
 			if r.WorktreeMgr != nil {
 				baseRef := r.WorktreeMgr.BaseRef()
 				if wts, err := r.WorktreeMgr.List(); err == nil {
 					for _, wt := range wts {
-						result = append(result, &model.WorkspaceStatus{
-							ID:                 wt.ID,
-							HasChanges:         gitutil.HasChanges(wt.Path),
-							HasUnmergedCommits: gitutil.HasUnmergedCommits(wt.Path, baseRef),
-						})
+						ws := &model.WorkspaceStatus{ID: wt.ID}
+						result = append(result, ws)
+						status := newWorktreeGitStatus(wt.Path, baseRef)
+						fns = append(fns,
+							func() { ws.HasChanges = status.HasChanges(ctx) },
+							func() { ws.HasUnmergedCommits = status.HasUnmergedCommits(ctx) },
+						)
 					}
 				}
 			}
 
+			runConcurrently(fns...)
 			return result
 		}
 
@@ -1441,6 +1451,38 @@ func (r *subscriptionResolver) WorkspaceStatuses(ctx context.Context) (<-chan []
 	return out, nil
 }
 
+// HasChanges is the resolver for the hasChanges field.
+func (r *worktreeResolver) HasChanges(ctx context.Context, obj *model.Worktree) (bool, error) {
+	if obj.GitStatus == nil {
+		return false, nil
+	}
+	return obj.GitStatus.HasChanges(ctx), nil
+}
+
+// HasUnmergedCommits is the resolver for the hasUnmergedCommits field.
+func (r *worktreeResolver) HasUnmergedCommits(ctx context.Context, obj *model.Worktree) (bool, error) {
+	if obj.GitStatus == nil {
+		return false, nil
+	}
+	return obj.GitStatus.HasUnmergedCommits(ctx), nil
+}
+
+// CommitsBehind is the resolver for the commitsBehind field.
+func (r *worktreeResolver) CommitsBehind(ctx context.Context, obj *model.Worktree) (int, error) {
+	if obj.GitStatus == nil {
+		return 0, nil
+	}
+	return obj.GitStatus.CommitsBehind(ctx), nil
+}
+
+// HasConflicts is the resolver for the hasConflicts field.
+func (r *worktreeResolver) HasConflicts(ctx context.Context, obj *model.Worktree) (bool, error) {
+	if obj.GitStatus == nil {
+		return false, nil
+	}
+	return obj.GitStatus.HasConflicts(ctx), nil
+}
+
 // Bean returns BeanResolver implementation.
 func (r *Resolver) Bean() BeanResolver { return &beanResolver{r} }
 
@@ -1453,7 +1495,11 @@ func (r *Resolver) Query() QueryResolver { return &queryResolver{r} }
 // Subscription returns SubscriptionResolver implementation.
 func (r *Resolver) Subscription() SubscriptionResolver { return &subscriptionResolver{r} }
 
+// Worktree returns WorktreeResolver implementation.
+func (r *Resolver) Worktree() WorktreeResolver { return &worktreeResolver{r} }
+
 type beanResolver struct{ *Resolver }
 type mutationResolver struct{ *Resolver }
 type queryResolver struct{ *Resolver }
 type subscriptionResolver struct{ *Resolver }
+type worktreeResolver struct{ *Resolver }

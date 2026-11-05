@@ -382,36 +382,6 @@ type WorkspaceStatus struct {
 	HasUnmergedCommits bool `json:"hasUnmergedCommits"`
 }
 
-// A git worktree, either associated with a bean or standalone
-type Worktree struct {
-	// Unique worktree identifier
-	ID string `json:"id"`
-	// Human-readable name
-	Name *string `json:"name,omitempty"`
-	// Auto-generated summary of what this workspace is doing
-	Description *string `json:"description,omitempty"`
-	// Git branch name
-	Branch string `json:"branch"`
-	// Filesystem path to the worktree
-	Path string `json:"path"`
-	// Beans detected from changes in this worktree vs the base branch
-	Beans []*bean.Bean `json:"beans"`
-	// Whether the worktree has uncommitted changes or untracked files
-	HasChanges bool `json:"hasChanges"`
-	// Whether the worktree has commits not yet merged into the base branch
-	HasUnmergedCommits bool `json:"hasUnmergedCommits"`
-	// Number of commits on the base branch that are not in this worktree branch
-	CommitsBehind int `json:"commitsBehind"`
-	// Whether rebasing onto the base branch would produce merge conflicts
-	HasConflicts bool `json:"hasConflicts"`
-	// Post-creation setup status (null if no setup configured)
-	SetupStatus *WorktreeSetupStatus `json:"setupStatus,omitempty"`
-	// Error message if setup failed
-	SetupError *string `json:"setupError,omitempty"`
-	// Open pull/merge request for this worktree's branch (null if none)
-	PullRequest *PullRequest `json:"pullRequest,omitempty"`
-}
-
 // Role of an agent message sender
 type AgentMessageRole string
 

@@ -685,3 +685,221 @@ func TestDiscardFileChange_StagedNewFile(t *testing.T) {
 		t.Error("expected file to be removed after discard")
 	}
 }
+
+func TestHasChanges(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, dir string)
+		want  bool
+	}{
+		{"clean", func(t *testing.T, dir string) {}, false},
+		{"unstaged", func(t *testing.T, dir string) {
+			writeTestFile(t, filepath.Join(dir, "README.md"), "changed\n")
+		}, true},
+		{"staged", func(t *testing.T, dir string) {
+			writeTestFile(t, filepath.Join(dir, "staged.txt"), "staged\n")
+			gitRun(t, dir, "add", "staged.txt")
+		}, true},
+		{"untracked", func(t *testing.T, dir string) {
+			writeTestFile(t, filepath.Join(dir, "new.txt"), "new\n")
+		}, true},
+		{"untracked with showUntrackedFiles=no", func(t *testing.T, dir string) {
+			gitRun(t, dir, "config", "status.showUntrackedFiles", "no")
+			writeTestFile(t, filepath.Join(dir, "new.txt"), "new\n")
+		}, true},
+		{"ignored only", func(t *testing.T, dir string) {
+			writeTestFile(t, filepath.Join(dir, ".git", "info", "exclude"), "ignored.txt\n")
+			writeTestFile(t, filepath.Join(dir, "ignored.txt"), "ignored\n")
+		}, false},
+		{"deleted", func(t *testing.T, dir string) {
+			if err := os.Remove(filepath.Join(dir, "README.md")); err != nil {
+				t.Fatal(err)
+			}
+		}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := initStatusTestRepo(t)
+			tt.setup(t, dir)
+			if got := HasChanges(dir); got != tt.want {
+				t.Errorf("HasChanges() = %v, want %v", got, tt.want)
+			}
+			// Must agree with the full FileChanges listing.
+			changes, err := FileChanges(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.name != "untracked with showUntrackedFiles=no" && (len(changes) > 0) != tt.want {
+				t.Errorf("FileChanges() = %v, disagrees with want %v", changes, tt.want)
+			}
+		})
+	}
+
+	if HasChanges(t.TempDir()) {
+		t.Error("HasChanges() outside a repo should be false")
+	}
+}
+
+func writeTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAheadBehindAndResolveCommits(t *testing.T) {
+	dir := initStatusTestRepo(t)
+	gitRun(t, dir, "checkout", "-b", "feature")
+	for _, f := range []string{"a.txt", "b.txt", "c.txt"} {
+		writeTestFile(t, filepath.Join(dir, f), f)
+		gitRun(t, dir, "add", f)
+		gitRun(t, dir, "commit", "-m", f)
+	}
+	gitRun(t, dir, "checkout", "main")
+	writeTestFile(t, filepath.Join(dir, "main.txt"), "main")
+	gitRun(t, dir, "add", "main.txt")
+	gitRun(t, dir, "commit", "-m", "main")
+	gitRun(t, dir, "checkout", "feature")
+
+	ahead, behind, err := AheadBehind(dir, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ahead != 3 || behind != 1 {
+		t.Errorf("AheadBehind() = %d, %d; want 3, 1", ahead, behind)
+	}
+	if ahead > 0 != HasUnmergedCommits(dir, "main") || behind != CommitsBehind(dir, "main") {
+		t.Error("AheadBehind() disagrees with HasUnmergedCommits/CommitsBehind")
+	}
+	if _, _, err := AheadBehind(dir, "nope"); err == nil {
+		t.Error("AheadBehind() with unknown base should fail")
+	}
+
+	shas, err := ResolveCommits(dir, "HEAD", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := strings.TrimSpace(gitOutput(t, dir, "rev-parse", "HEAD"))
+	main := strings.TrimSpace(gitOutput(t, dir, "rev-parse", "main"))
+	if len(shas) != 2 || shas[0] != head || shas[1] != main {
+		t.Errorf("ResolveCommits() = %v, want [%s %s]", shas, head, main)
+	}
+	// SHAs work in place of the ref names.
+	if a, b, err := AheadBehind(dir, shas[1]); err != nil || a != 3 || b != 1 {
+		t.Errorf("AheadBehind(sha) = %d, %d, %v", a, b, err)
+	}
+	for _, revs := range [][]string{{"HEAD", "nope"}, {"--all"}, {""}} {
+		if _, err := ResolveCommits(dir, revs...); err == nil {
+			t.Errorf("ResolveCommits(%q) should fail", revs)
+		}
+	}
+}
+
+func TestMergeConflicts(t *testing.T) {
+	dir := initStatusTestRepo(t)
+	gitRun(t, dir, "checkout", "-b", "feature")
+	writeTestFile(t, filepath.Join(dir, "README.md"), "feature\n")
+	gitRun(t, dir, "commit", "-am", "feature")
+	gitRun(t, dir, "checkout", "-b", "clean", "main")
+	writeTestFile(t, filepath.Join(dir, "other.txt"), "other\n")
+	gitRun(t, dir, "add", "other.txt")
+	gitRun(t, dir, "commit", "-m", "other")
+	gitRun(t, dir, "checkout", "main")
+	writeTestFile(t, filepath.Join(dir, "README.md"), "main\n")
+	gitRun(t, dir, "commit", "-am", "main")
+
+	if got, err := MergeConflicts(dir, "main", "feature"); err != nil || !got {
+		t.Errorf("MergeConflicts(main, feature) = %v, %v; want true", got, err)
+	}
+	if got, err := MergeConflicts(dir, "main", "clean"); err != nil || got {
+		t.Errorf("MergeConflicts(main, clean) = %v, %v; want false", got, err)
+	}
+	if _, err := MergeConflicts(dir, "main", "nope"); err == nil {
+		t.Error("MergeConflicts() with unknown rev should fail")
+	}
+}
+
+func gitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).Output()
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+	return string(out)
+}
+
+func TestParseRawNumstat(t *testing.T) {
+	output := ":000000 100644 0000000 badc806 A\tbin\n" +
+		":100644 100644 96cc558 0000000 M\tf2\n" +
+		":100644 000000 96cc558 0000000 D\tf3\n" +
+		":100644 100644 96cc558 96cc558 R100\tf1\tg1\n" +
+		":000000 100644 0000000 3e75765 A\tsp ace\n" +
+		"-\t-\tbin\n" +
+		"1\t0\tf2\n" +
+		"0\t50\tf3\n" +
+		"0\t0\tf1 => g1\n" +
+		"1\t0\tsp ace\n"
+	got, err := parseRawNumstat(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []FileChange{
+		{Path: "bin", Status: "added"},
+		{Path: "f2", Status: "modified", Additions: 1},
+		{Path: "f3", Status: "modified", Deletions: 50},
+		{Path: "f1 => g1", Status: "renamed"},
+		{Path: "sp ace", Status: "added", Additions: 1},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("change %d: got %+v, want %+v", i, got[i], want[i])
+		}
+	}
+
+	if got, err := parseRawNumstat(""); err != nil || len(got) != 0 {
+		t.Errorf("empty output: got %+v, %v", got, err)
+	}
+}
+
+func TestAllChangesVsUpstream_AddedDeletedRenamed(t *testing.T) {
+	dir := initBranchedTestRepo(t)
+	writeTestFile(t, filepath.Join(dir, "old.txt"), strings.Repeat("rename me\n", 20))
+	writeTestFile(t, filepath.Join(dir, "gone.txt"), "gone\n")
+	gitRun(t, dir, "add", "old.txt", "gone.txt")
+	gitRun(t, dir, "commit", "-m", "more files")
+	gitRun(t, dir, "push", "origin", "feature:main")
+
+	gitRun(t, dir, "mv", "old.txt", "new.txt")
+	gitRun(t, dir, "rm", "-q", "gone.txt")
+	writeTestFile(t, filepath.Join(dir, "added.txt"), "added\n")
+	gitRun(t, dir, "add", "added.txt")
+	writeTestFile(t, filepath.Join(dir, "README.md"), "# Test\nmodified\n")
+	writeTestFile(t, filepath.Join(dir, "untracked.txt"), "untracked\n")
+
+	changes, err := AllChangesVsUpstream(dir, "origin/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, c := range changes {
+		got[c.Path] = c.Status
+	}
+	want := map[string]string{
+		"old.txt => new.txt": "renamed",
+		"gone.txt":           "modified",
+		"added.txt":          "added",
+		"README.md":          "modified",
+		"untracked.txt":      "untracked",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for path, status := range want {
+		if got[path] != status {
+			t.Errorf("%s: got status %q, want %q (all: %v)", path, got[path], status, got)
+		}
+	}
+}
