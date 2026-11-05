@@ -69,6 +69,26 @@ export class BacklogPage {
     return this.beanItems.filter({ hasText: title }).first();
   }
 
+  /** The fold (collapse/expand) toggle of a bean with children, by title. */
+  foldToggle(title: string): Locator {
+    return this.page.getByRole('button', {
+      name: new RegExp(`^(Expand|Collapse) ${escapeRegExp(title)} \\(\\d+ child(ren)?\\)$`)
+    });
+  }
+
+  /** Collapse or expand a bean's children by clicking its fold toggle. */
+  async toggleFold(title: string) {
+    await this.foldToggle(title).click();
+  }
+
+  async collapseAll() {
+    await this.page.getByRole('button', { name: 'Collapse all', exact: true }).click();
+  }
+
+  async expandAll() {
+    await this.page.getByRole('button', { name: 'Expand all', exact: true }).click();
+  }
+
   /**
    * Get the draggable card element for a bean, identified by title.
    * Each [draggable] div contains only its own card's content (not descendants),
@@ -105,4 +125,8 @@ export class BacklogPage {
       targetPosition: { x: targetBox.width / 2, y: targetY }
     });
   }
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

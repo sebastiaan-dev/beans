@@ -9,6 +9,9 @@
   import { agentStatusesStore } from '$lib/agentStatuses.svelte';
   import { configStore } from '$lib/config.svelte';
   import { ui } from '$lib/uiState.svelte';
+  import { foldState } from '$lib/foldState.svelte';
+  import { sidebarState } from '$lib/sidebarState.svelte';
+  import { SIDEBAR_RAIL_WIDTH, isSidebarToggleShortcut } from '$lib/sidebar';
   import BeanForm from '$lib/components/BeanForm.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import SplitPane from '$lib/components/SplitPane.svelte';
@@ -51,6 +54,18 @@
     }
   });
 
+  // Fold state of bean trees is stored per project.
+  $effect(() => {
+    if (configStore.projectName) foldState.setProject(configStore.projectName);
+  });
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (isSidebarToggleShortcut(e)) {
+      e.preventDefault();
+      sidebarState.toggle();
+    }
+  }
+
   onMount(() => {
     configStore.load();
     beansStore.subscribe();
@@ -69,6 +84,8 @@
   <title>{configStore.projectName ? `${configStore.projectName} — Beans UI` : 'Beans UI'}</title>
   <link rel="icon" href={favicon} />
 </svelte:head>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <div class="flex h-screen flex-col bg-surface-alt">
   {#if beansStore.error}
@@ -89,7 +106,14 @@
     <SplitPane
       direction="horizontal"
       panels={[
-        { content: sidebarPanel, size: 224, minSize: 150, maxSize: 400, persistKey: 'sidebar' },
+        {
+          content: sidebarPanel,
+          size: 224,
+          minSize: 150,
+          maxSize: 400,
+          persistKey: 'sidebar',
+          fixedSize: sidebarState.collapsed ? SIDEBAR_RAIL_WIDTH : undefined
+        },
         { content: mainContent }
       ]}
     />

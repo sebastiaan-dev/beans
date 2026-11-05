@@ -6,6 +6,8 @@
   let { planningView }: { planningView: 'backlog' | 'board' } = $props();
   import { backlogDrag } from '$lib/backlogDrag.svelte';
   import { planningFilter } from '$lib/planningFilter.svelte';
+  import { foldState } from '$lib/foldState.svelte';
+  import { parentIds } from '$lib/fold';
   import BeanItem from '$lib/components/BeanItem.svelte';
   import BoardView from '$lib/components/BoardView.svelte';
   import BeanPane from '$lib/components/BeanPane.svelte';
@@ -29,6 +31,9 @@
 
   const filteredTodoBeans = $derived(filterBeans(todoRoots));
   const filteredDraftBeans = $derived(filterBeans(draftRoots));
+
+  // Every bean with children can be folded; "collapse all" folds all of them.
+  const foldableIds = $derived(parentIds(beansStore.all));
 
   function handleKeydown(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && (e.key === 'f' || e.key === '/')) {
@@ -76,6 +81,28 @@
       <FilterInput bind:this={filterInput} />
     </div>
     {#snippet right()}
+      {#if planningView === 'backlog'}
+        <div class="mr-2 flex gap-1">
+          <button
+            class="btn-icon size-8 hover:bg-surface-dim disabled:cursor-not-allowed disabled:opacity-40"
+            title="Collapse all"
+            aria-label="Collapse all"
+            disabled={foldableIds.length === 0}
+            onclick={() => foldState.collapseAll(foldableIds)}
+          >
+            <span class="icon-[uil--angle-double-up] size-4"></span>
+          </button>
+          <button
+            class="btn-icon size-8 hover:bg-surface-dim disabled:cursor-not-allowed disabled:opacity-40"
+            title="Expand all"
+            aria-label="Expand all"
+            disabled={foldState.collapsedCount === 0}
+            onclick={() => foldState.expandAll()}
+          >
+            <span class="icon-[uil--angle-double-down] size-4"></span>
+          </button>
+        </div>
+      {/if}
       <button class="btn-primary" onclick={() => ui.openCreateForm()}>+ New Bean</button>
     {/snippet}
   </ViewToolbar>
