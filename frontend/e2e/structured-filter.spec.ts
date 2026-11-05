@@ -106,6 +106,36 @@ test.describe('Structured filter', () => {
     await expect(suggestions).toHaveCount(0);
   });
 
+  test('keeps the caret after text typed right after accepting a suggestion', async ({
+    beans,
+    backlogPage,
+    page
+  }) => {
+    beans.create('Draft One', { status: 'draft', type: 'task' });
+    await backlogPage.goto(1);
+
+    const input = filterInput(page);
+    await input.click();
+    await input.pressSequentially('sta');
+    await expect(page.getByTestId('filter-suggestion').first()).toHaveText(/status:/);
+
+    // Accept with Enter and type "d" before the next frame, like a fast typist.
+    const state = await input.evaluate(async (el: HTMLInputElement) => {
+      el.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      );
+      // Let pending microtasks (Svelte's DOM updates) run, but no task.
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      el.setRangeText('d', el.selectionStart ?? 0, el.selectionEnd ?? 0, 'end');
+      el.dispatchEvent(
+        new InputEvent('input', { bubbles: true, data: 'd', inputType: 'insertText' })
+      );
+      await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve)));
+      return { value: el.value, caret: el.selectionStart };
+    });
+    expect(state).toEqual({ value: 'status:d', caret: 'status:d'.length });
+  });
+
   test('popover checkboxes and chips edit the same query', async ({ beans, backlogPage, page }) => {
     beans.create('Some Bug', { status: 'todo', type: 'bug' });
     beans.create('Some Feature', { status: 'todo', type: 'feature' });

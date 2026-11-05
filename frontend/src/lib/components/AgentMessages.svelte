@@ -71,12 +71,19 @@
     }
   });
 
-  // Render markdown for assistant and user messages (including the one being streamed).
+  // Messages rendered as markdown. INFO messages are server-generated notices
+  // (e.g. a failed workspace setup with its output in a code fence).
+  function isMarkdownRole(role: string): boolean {
+    return role === 'ASSISTANT' || role === 'USER' || role === 'INFO';
+  }
+
+  // Render markdown for assistant, user and info messages (including the one being streamed).
   // The key includes content length, so each new delta triggers a re-render.
+  // renderMarkdown sanitizes its output (DOMPurify).
   $effect(() => {
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
-      if (msg.role !== 'ASSISTANT' && msg.role !== 'USER') continue;
+      if (!isMarkdownRole(msg.role)) continue;
 
       const key = `${i}:${msg.content.length}`;
       if (!renderedMessages.has(key)) {
@@ -99,7 +106,7 @@
 
   function getRenderedContent(index: number): string | null {
     const msg = messages[index];
-    if (!msg || (msg.role !== 'ASSISTANT' && msg.role !== 'USER')) return null;
+    if (!msg || !isMarkdownRole(msg.role)) return null;
     const key = `${index}:${msg.content.length}`;
     return renderedMessages.get(key) ?? null;
   }
@@ -172,8 +179,14 @@
             </div>
           </div>
         {:else if msg.role === 'INFO'}
-          <div class="rounded-lg border border-border bg-surface px-3 py-2 text-text-muted">
-            <p class="whitespace-pre-wrap" use:decryptText={{ text: msg.content, immediate: settledMessageCount === -1 || i < settledMessageCount, html: linkifyBeanIds(msg.content) }}></p>
+          <div class="rounded-lg border border-border bg-surface px-3 py-2 text-text-muted" data-testid="agent-info-message">
+            {#if getRenderedContent(i)}
+              <div class="agent-prose prose max-w-none min-w-0 text-text-muted">
+                {@html getRenderedContent(i)}
+              </div>
+            {:else}
+              <p class="whitespace-pre-wrap" use:decryptText={{ text: msg.content, immediate: settledMessageCount === -1 || i < settledMessageCount, html: linkifyBeanIds(msg.content) }}></p>
+            {/if}
           </div>
         {:else if msg.role === 'TOOL'}
           <div class="flex gap-2 text-text-faint">

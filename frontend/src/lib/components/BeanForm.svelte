@@ -94,7 +94,14 @@
       if (result.error) { error = result.error.message; return; }
       saved = result.data?.updateBean ?? null;
     } else {
-      const input: CreateBeanInput = fields;
+      // Leave untouched type/status to the server, which applies the
+      // configured defaults: the form may be submitted before the config
+      // (and thus configStore's defaults) has loaded.
+      const input: CreateBeanInput = {
+        ...fields,
+        type: typeChoice ?? undefined,
+        status: statusChoice ?? undefined
+      };
       const result = await client.mutation(CreateBeanDocument, { input }).toPromise();
       submitting = false;
       if (result.error) { error = result.error.message; return; }

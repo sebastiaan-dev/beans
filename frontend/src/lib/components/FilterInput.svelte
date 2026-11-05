@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { flushSync } from 'svelte';
   import { ui } from '$lib/uiState.svelte';
   import { activeClauses, suggest, type Suggestion } from '$lib/filter';
   import { planningFilter } from '$lib/planningFilter.svelte';
@@ -38,11 +38,15 @@
     updateCaret();
   }
 
-  async function accept(s: Suggestion) {
+  function accept(s: Suggestion) {
     const text = ui.filterText;
-    ui.setFilterText(text.slice(0, s.start) + s.insert + text.slice(s.end));
-    activeIndex = 0;
-    await tick();
+    // Update the input and place the caret synchronously: deferring this (e.g.
+    // `await tick()`, which waits for a frame in async mode) would move the
+    // caret back over characters typed in the meantime.
+    flushSync(() => {
+      ui.setFilterText(text.slice(0, s.start) + s.insert + text.slice(s.end));
+      activeIndex = 0;
+    });
     const pos = s.start + s.insert.length;
     inputEl?.focus();
     inputEl?.setSelectionRange(pos, pos);

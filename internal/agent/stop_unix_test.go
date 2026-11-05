@@ -5,6 +5,7 @@ package agent
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -48,6 +49,36 @@ func waitPIDFile(t *testing.T, path string) int {
 func processAlive(pid int) bool {
 	err := syscall.Kill(pid, 0)
 	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+// processTerminated reports whether pid has exited: it no longer exists or is
+// a zombie waiting to be reaped.
+func processTerminated(pid int) bool {
+	if !processAlive(pid) {
+		return true
+	}
+	out, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return true // ps exits non-zero when the process doesn't exist
+	}
+	return strings.HasPrefix(strings.TrimSpace(string(out)), "Z")
+}
+
+// waitTerminated waits for a process that has been SIGKILLed to finish
+// exiting. A killed process closes its files (which is what StopAndBlock waits
+// for) before the kernel finishes tearing it down, and an orphan is only
+// removed once init reaps it, so it can briefly remain visible after
+// StopAndBlock returns. A process that was never killed (here: a `sleep 300`)
+// would not terminate within the timeout.
+func waitTerminated(pid int) bool {
+	deadline := time.Now().Add(5 * time.Second)
+	for !processTerminated(pid) {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return true
 }
 
 func setStopTimeouts(t *testing.T, graceful, force time.Duration) {
@@ -117,8 +148,8 @@ func TestStopAndBlock(t *testing.T) {
 			if processAlive(agentPID) {
 				t.Errorf("agent (pid %d) still alive after StopAndBlock", agentPID)
 			}
-			if !tt.childEscapes && processAlive(childPID) {
-				t.Errorf("agent child (pid %d) still alive after StopAndBlock", childPID)
+			if !tt.childEscapes && !waitTerminated(childPID) {
+				t.Errorf("agent child (pid %d) not terminated by StopAndBlock", childPID)
 			}
 			if s := m.GetSession("ws"); s == nil || s.Status != StatusIdle {
 				t.Errorf("session should be idle after StopAndBlock, got %+v", s)
