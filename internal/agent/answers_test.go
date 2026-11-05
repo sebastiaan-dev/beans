@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hmans/beans/internal/agent/agenttest"
 )
 
 var testQuestions = []AskUserQuestion{
@@ -140,12 +142,9 @@ func awaitSession(t *testing.T, m *Manager, beanID string, cond func(*Session) b
 // interaction containing all questions, and that answering sends all answers
 // back in one user message.
 func TestAskUserQuestionMultipleQuestionsRoundTrip(t *testing.T) {
-	// No claude binary on PATH: the resume spawn fails fast instead of
-	// launching a real agent.
-	t.Setenv("PATH", t.TempDir())
-
 	pr, pw := io.Pipe()
 	m := &Manager{
+		claudePath:  agenttest.FakeClaude(t),
 		sessions:    make(map[string]*Session),
 		processes:   make(map[string]*runningProcess),
 		subscribers: make(map[string][]chan struct{}),
@@ -196,8 +195,8 @@ func TestAskUserQuestionMultipleQuestionsRoundTrip(t *testing.T) {
 		t.Fatalf("AnswerQuestions() error = %v", err)
 	}
 
-	// Wait for the (failing) resume spawn so it can't outlive the PATH override.
-	awaitSession(t, m, "bean-ask", func(s *Session) bool { return s.Status == StatusError })
+	// Wait for the resume spawn (of the fake claude) to finish its turn.
+	awaitSession(t, m, "bean-ask", func(s *Session) bool { return s.Status != StatusRunning })
 
 	m.mu.RLock()
 	s := m.sessions["bean-ask"]
@@ -231,6 +230,7 @@ func TestAskUserQuestionMultipleQuestionsRoundTrip(t *testing.T) {
 
 func TestAnswerQuestionsRejectsInvalidAnswersWithoutSending(t *testing.T) {
 	m := NewManager("", nil)
+	m.SetClaudePath(agenttest.FakeClaude(t))
 	m.sessions["test"] = &Session{
 		ID:                 "test",
 		Status:             StatusIdle,

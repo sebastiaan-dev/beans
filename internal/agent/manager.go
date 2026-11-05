@@ -73,6 +73,11 @@ type Manager struct {
 	defaultMode          DefaultMode
 	defaultEffort        EffortLevel
 
+	// claudePath is the Claude Code executable used for agent sessions and
+	// auxiliary Haiku calls (quick replies). Empty means DefaultClaudeBinary,
+	// resolved via PATH. Tests inject a fake with SetClaudePath.
+	claudePath string
+
 	subMu       sync.Mutex
 	subscribers map[string][]chan struct{}
 
@@ -109,6 +114,21 @@ func NewManager(beansDir string, contextProvider ContextProvider, defaultMode ..
 	}
 
 	return m
+}
+
+// SetClaudePath overrides the Claude Code executable spawned by this manager.
+// An empty path restores the default (DefaultClaudeBinary looked up on PATH).
+// Must be called during initialization, before any messages are sent.
+func (m *Manager) SetClaudePath(path string) {
+	m.claudePath = path
+}
+
+// claudeBinary returns the Claude Code executable this manager spawns.
+func (m *Manager) claudeBinary() string {
+	if m.claudePath != "" {
+		return m.claudePath
+	}
+	return DefaultClaudeBinary
 }
 
 // SetSystemPromptProvider registers a callback that returns a system prompt to

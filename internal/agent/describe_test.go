@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hmans/beans/internal/agent/agenttest"
 )
 
 func TestBuildDescribePrompt(t *testing.T) {
@@ -59,6 +61,7 @@ func TestSendMessageFirstUserMessageCallback(t *testing.T) {
 	callbackCalled := make(chan string, 1)
 
 	m := &Manager{
+		claudePath:  agenttest.FakeClaude(t),
 		sessions:    make(map[string]*Session),
 		processes:   make(map[string]*runningProcess),
 		subscribers: make(map[string][]chan struct{}),
@@ -67,8 +70,8 @@ func TestSendMessageFirstUserMessageCallback(t *testing.T) {
 		},
 	}
 
-	// SendMessage will try to spawn a process, which will fail since there's no
-	// claude binary in test. But the callback should fire before spawning.
+	// SendMessage spawns the fake claude in the background; the callback
+	// should fire regardless.
 	_ = m.SendMessage("wt-test", "/tmp", "Fix the auth bug", nil)
 
 	select {
@@ -86,6 +89,7 @@ func TestSendMessageNoCallbackOnExistingSession(t *testing.T) {
 	callbackCalled := false
 
 	m := &Manager{
+		claudePath:  agenttest.FakeClaude(t),
 		sessions:    make(map[string]*Session),
 		processes:   make(map[string]*runningProcess),
 		subscribers: make(map[string][]chan struct{}),
@@ -121,6 +125,7 @@ func TestSendMessageCallbackFiresWithInfoOnlySession(t *testing.T) {
 	callbackCalled := make(chan string, 1)
 
 	m := &Manager{
+		claudePath:  agenttest.FakeClaude(t),
 		sessions:    make(map[string]*Session),
 		processes:   make(map[string]*runningProcess),
 		subscribers: make(map[string][]chan struct{}),

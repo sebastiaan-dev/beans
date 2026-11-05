@@ -2,6 +2,8 @@ package agent
 
 import (
 	"testing"
+
+	"github.com/hmans/beans/internal/agent/agenttest"
 )
 
 func TestNewManager(t *testing.T) {
@@ -451,6 +453,7 @@ func TestHandleBlockingTool_EnterPlan(t *testing.T) {
 
 func TestSendMessage_ClearsPendingInteraction(t *testing.T) {
 	m := NewManager("", nil)
+	m.SetClaudePath(agenttest.FakeClaude(t))
 	m.sessions["test"] = &Session{
 		ID:        "test",
 		Status:    StatusIdle,
@@ -461,9 +464,8 @@ func TestSendMessage_ClearsPendingInteraction(t *testing.T) {
 		},
 	}
 
-	// SendMessage will try to spawn a process — that will fail because
-	// there's no claude binary in test. But we can check the session state
-	// was updated before the spawn.
+	// SendMessage spawns the fake claude in the background; check the
+	// session state was updated before the spawn.
 	_ = m.SendMessage("test", "/tmp/test", "proceed", nil)
 
 	s := m.sessions["test"]

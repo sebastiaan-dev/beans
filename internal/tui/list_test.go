@@ -565,3 +565,70 @@ func TestListRowsDoNotWrapOnNarrowTerminal(t *testing.T) {
 		}
 	}
 }
+
+// pressKeyQuits sends a key to the app and reports whether it (transitively)
+// produced a tea.QuitMsg.
+func pressKeyQuits(t *testing.T, app *App, msg tea.KeyMsg) bool {
+	t.Helper()
+	_, cmd := app.Update(msg)
+	for _, m := range runCmd(t, app, cmd) {
+		if _, ok := m.(tea.QuitMsg); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func TestListEscDoesNotQuit(t *testing.T) {
+	esc := tea.KeyMsg{Type: tea.KeyEsc}
+
+	t.Run("unfiltered list", func(t *testing.T) {
+		app, _ := setupListTestModel(t)
+		runCmd(t, app, app.Init())
+		if pressKeyQuits(t, app, esc) {
+			t.Fatal("esc on the unfiltered list must not quit")
+		}
+		if app.state != viewList {
+			t.Errorf("state = %v, want list", app.state)
+		}
+	})
+
+	t.Run("clears selection then filters, never quits", func(t *testing.T) {
+		app, _ := setupListTestModel(t)
+		runCmd(t, app, app.Init())
+		app.list.setFilters(listFilters{types: []string{"bug"}})
+		runCmd(t, app, app.list.loadBeans)
+		app.list.selectedBeans["t-open"] = true
+
+		if pressKeyQuits(t, app, esc) {
+			t.Fatal("esc must not quit while beans are selected")
+		}
+		if len(app.list.selectedBeans) != 0 {
+			t.Error("first esc should clear the selection")
+		}
+		if !app.list.hasActiveFilter() {
+			t.Error("first esc should keep the filters")
+		}
+
+		if pressKeyQuits(t, app, esc) {
+			t.Fatal("esc must not quit while filters are active")
+		}
+		if app.list.hasActiveFilter() {
+			t.Error("second esc should clear the filters")
+		}
+
+		if pressKeyQuits(t, app, esc) {
+			t.Fatal("esc on the cleared list must not quit")
+		}
+	})
+
+	t.Run("q and ctrl+c still quit", func(t *testing.T) {
+		for _, k := range []tea.KeyMsg{keyRunes("q"), {Type: tea.KeyCtrlC}} {
+			app, _ := setupListTestModel(t)
+			runCmd(t, app, app.Init())
+			if !pressKeyQuits(t, app, k) {
+				t.Errorf("%s should quit", k)
+			}
+		}
+	})
+}

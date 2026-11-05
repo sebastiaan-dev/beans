@@ -41,16 +41,35 @@ func truncate(s string, maxLen int) string {
 }
 
 // GenerateDescription runs a lightweight Claude call to summarize what a workspace
-// is doing based on the first user message. Returns the description or empty string on error.
+// is doing based on the first user message, using DefaultClaudeBinary.
+// Returns the description or empty string on error.
 func GenerateDescription(message string) string {
-	prompt := buildDescribePrompt(message)
+	return generateDescription(DefaultClaudeBinary, message)
+}
 
+// GenerateDescription is like the package-level GenerateDescription but uses
+// the manager's configured Claude Code executable.
+func (m *Manager) GenerateDescription(message string) string {
+	return generateDescription(m.claudeBinary(), message)
+}
+
+func generateDescription(claudeBin, message string) string {
+	out, err := runHaiku(claudeBin, buildDescribePrompt(message))
+	if err != nil {
+		log.Printf("[describe] failed to generate workspace description: %v", err)
+		return ""
+	}
+	return cleanDescription(out)
+}
+
+// runHaiku runs a one-shot, tool-less Claude Haiku call and returns its output.
+// The prompt is passed via stdin (not as CLI arg) to avoid leaking
+// conversation content into `ps` output and to avoid OS argument length limits.
+func runHaiku(claudeBin, prompt string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Pass prompt via stdin (not as CLI arg) to avoid leaking conversation
-	// content into `ps` output and to avoid OS argument length limits.
-	cmd := exec.CommandContext(ctx, "claude",
+	cmd := exec.CommandContext(ctx, claudeBin,
 		"--print", "--model", "haiku",
 		"--no-session-persistence",
 		"--disable-slash-commands",
@@ -60,10 +79,5 @@ func GenerateDescription(message string) string {
 	cmd.Stdin = strings.NewReader(prompt)
 
 	out, err := cmd.Output()
-	if err != nil {
-		log.Printf("[describe] failed to generate workspace description: %v", err)
-		return ""
-	}
-
-	return cleanDescription(string(out))
+	return string(out), err
 }
