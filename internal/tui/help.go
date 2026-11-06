@@ -54,18 +54,29 @@ type helpSection struct {
 	keys  [][2]string // key, description
 }
 
-// helpSections lists the shortcuts of the browse view.
+// helpSections lists the shortcuts of the browse view. The first two
+// sections form the left column, the others the right one.
 //
-// Descriptions are kept short so that two columns fit on 70-column terminals.
+// Descriptions are kept short so that two columns fit on 70-column
+// terminals, and the columns short enough to fit 24-line terminals.
 var helpSections = []helpSection{
 	{"Navigate", [][2]string{
 		{"↑↓ j k", "Move"},
-		{"←/h", "Collapse / parent"},
-		{"→/l", "Expand / child"},
+		{"←→ h l", "Collapse / expand"},
 		{"zo zc za", "Open/close/toggle"},
 		{"zR zM", "Open/close all"},
 		{"gg G", "First / last bean"},
+		{"n", "Next bean to do"},
 		{"enter tab", "Focus details"},
+	}},
+	{"Details", [][2]string{
+		{"tab ⇧tab", "Sections / panes"},
+		{"↑↓ j k", "Move / scroll"},
+		{"pgup pgdn", "Scroll body"},
+		{"[ ] x", "Checkbox / toggle"},
+		{"enter", "Open related bean"},
+		{"backspace", "Previous bean"},
+		{"esc", "Back to the tree"},
 	}},
 	{"Filter", [][2]string{
 		{"F ⇧tab", "Focus filter bar"},
@@ -76,21 +87,16 @@ var helpSections = []helpSection{
 		{"esc", "Clear filters"},
 	}},
 	{"Edit", [][2]string{
-		{"c", "Create new bean"},
+		{"c C", "New bean / child"},
+		{"r", "Rename"},
 		{"e", "Edit in $EDITOR"},
 		{"s t P", "Status/type/prio"},
 		{"p", "Set parent"},
 		{"b", "Manage blocking"},
+		{"K J", "Move up / down"},
+		{"u", "Undo last change"},
 		{"space", "Select for batch"},
 		{"y", "Copy bean ID"},
-	}},
-	{"Details", [][2]string{
-		{"tab ⇧tab", "Sections / panes"},
-		{"↑↓ j k", "Move / scroll"},
-		{"pgup pgdn", "Scroll body"},
-		{"enter", "Open related bean"},
-		{"backspace", "Previous bean"},
-		{"esc", "Back to the tree"},
 	}},
 }
 
@@ -137,7 +143,7 @@ func (m helpOverlayModel) View() string {
 
 	title := lipgloss.NewStyle().Bold(true).Foreground(colAccent()).Render("Keyboard Shortcuts")
 	footer := renderHints([]keyHint{{"?/esc", "close"}, {"q", "quit"}}, nil, inner)
-	content := title + "\n\n" + strings.Join(body, "\n") + "\n\n" + footer
+	content := title + "\n" + strings.Join(body, "\n") + "\n" + footer
 
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

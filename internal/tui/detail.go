@@ -250,6 +250,13 @@ type detailModel struct {
 	body    []string
 	bodyKey string
 
+	// Checkboxes of the body, the checkbox cursor, the rendered line of the
+	// current checkbox (-1 = not shown) and whether to scroll to it.
+	checks      []checkboxItem
+	checkCursor int
+	checkLine   int
+	checkScroll bool
+
 	// IDs of previously shown beans, for backspace.
 	history []string
 }
@@ -267,7 +274,7 @@ func (m *detailModel) setBean(b *bean.Bean, force bool) {
 		return
 	}
 	if b == nil || m.bean == nil || b.ID != m.bean.ID {
-		m.relCursor, m.bodyOffset = 0, 0
+		m.relCursor, m.bodyOffset, m.checkCursor = 0, 0, 0
 	}
 	m.bean = b
 	m.links = nil
@@ -310,20 +317,22 @@ func (m detailModel) bodyWidth() int {
 // clamps the positions.
 func (m *detailModel) prepare() {
 	if m.bean == nil {
-		m.body, m.bodyKey = nil, ""
+		m.body, m.bodyKey, m.checks = nil, "", nil
 		return
 	}
-	key := fmt.Sprintf("%d\x00%d\x00%s", m.bodyWidth(), lipgloss.ColorProfile(), m.bean.Body)
+	m.checks = findCheckboxes(m.bean.Body)
+	m.checkCursor = max(0, min(m.checkCursor, len(m.checks)-1))
+	key := fmt.Sprintf("%d\x00%d\x00%s\x00%s", m.bodyWidth(), lipgloss.ColorProfile(), m.checkboxKey(), m.bean.Body)
 	if key != m.bodyKey {
 		m.bodyKey = key
-		if strings.TrimSpace(m.bean.Body) == "" {
-			m.body = []string{mutedStyle().Render("(no body)")}
-		} else {
-			m.body = renderMarkdown(m.bean.Body, m.bodyWidth())
-		}
+		m.renderBody()
 	}
 	m.relCursor = max(0, min(m.relCursor, len(m.links)-1))
 	l := m.layout()
+	if m.checkScroll {
+		m.checkScroll = false
+		m.scrollToCheckbox(l.bodyRows)
+	}
 	m.bodyOffset = max(0, min(m.bodyOffset, len(m.body)-l.bodyRows))
 }
 
@@ -438,6 +447,9 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 	scroll := func(delta int) {
 		m.bodyOffset = max(0, min(m.bodyOffset+delta, len(m.body)-l.bodyRows))
 	}
+	if handled, cmd := m.handleCheckboxKey(key.String()); handled {
+		return m, cmd
+	}
 	switch key.String() {
 	case "up", "k":
 		if m.section == sectionRelations {
@@ -495,6 +507,9 @@ func (m detailModel) hints() []keyHint {
 		hints = append(hints, keyHint{"enter", "open"}, keyHint{"↑↓", "move"})
 	} else {
 		hints = append(hints, keyHint{"↑↓", "scroll"})
+		if len(m.checks) > 0 {
+			hints = append(hints, keyHint{"[ ]", "checkbox"}, keyHint{"x", "toggle"})
+		}
 	}
 	if m.section == sectionRelations {
 		hints = append(hints, keyHint{"tab", "body"})

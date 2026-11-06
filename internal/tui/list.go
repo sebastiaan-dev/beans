@@ -72,6 +72,9 @@ type listModel struct {
 	searching    bool
 	searchBefore string
 
+	// Inline title input for creating or renaming a bean (inline_input.go).
+	inline *inlineEdit
+
 	// Folding. folds holds the collapsed bean IDs for the session. While a
 	// filter is active, matches inside folded parents must stay
 	// visible, so folding then uses filterFolds instead, a temporary set that
@@ -534,8 +537,14 @@ func (m *listModel) rowHeight(i int) int {
 		m.heights = make([]int, len(m.rows))
 		m.heightsWidth = m.width
 	}
+	if m.renaming(i) {
+		return 1
+	}
 	if m.heights[i] == 0 {
 		m.heights[i] = len(m.renderRow(i, m.width))
+	}
+	if m.creating() && i == m.inlineInsertRow() {
+		return m.heights[i] + 1 // the inline create input
 	}
 	return m.heights[i]
 }
@@ -543,23 +552,28 @@ func (m *listModel) rowHeight(i int) int {
 // ensureVisible scrolls so that the cursor row is entirely visible, without
 // leaving blank lines at the bottom while rows are scrolled away at the top.
 func (m *listModel) ensureVisible() {
+	// While creating, the inline input row must be visible.
+	target := m.cursor
+	if i := m.inlineInsertRow(); i >= 0 {
+		target = i
+	}
 	m.offset = max(0, min(m.offset, len(m.rows)-1))
-	if m.cursor < m.offset {
-		m.offset = m.cursor
+	if target < m.offset {
+		m.offset = target
 	}
 	if m.height <= 0 || len(m.rows) == 0 {
 		return
 	}
 	used := 0
-	for i := m.offset; i <= m.cursor; i++ {
+	for i := m.offset; i <= target; i++ {
 		used += m.rowHeight(i)
 	}
-	for m.offset < m.cursor && used > m.height {
+	for m.offset < target && used > m.height {
 		used -= m.rowHeight(m.offset)
 		m.offset++
 	}
 	below := used
-	for i := m.cursor + 1; i < len(m.rows) && below <= m.height; i++ {
+	for i := target + 1; i < len(m.rows) && below <= m.height; i++ {
 		below += m.rowHeight(i)
 	}
 	for m.offset > 0 && below+m.rowHeight(m.offset-1) <= m.height {
@@ -622,6 +636,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 		m.loaded = true
 		m.err = nil
 		m.rebuild()
+		m.syncInline()
 		return m, nil
 
 	case errMsg:
@@ -629,6 +644,9 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.inline != nil {
+			return m.updateInline(msg)
+		}
 		if m.searching {
 			return m.updateSearch(msg)
 		}
@@ -777,8 +795,15 @@ func (m listModel) updateKey(msg tea.KeyMsg) (listModel, tea.Cmd) {
 	case "H":
 		// Toggle hiding of completed/scrapped beans
 		m.toggleHideDone()
-	case "c":
-		return m, func() tea.Msg { return openCreateModalMsg{} }
+	case "c", "C":
+		m.startCreate(msg.String() == "C")
+	case "r":
+		m.startRename()
+	case "K", "J":
+		if b := m.currentBean(); b != nil {
+			msg := moveBeanMsg{id: b.ID, down: msg.String() == "J"}
+			return m, func() tea.Msg { return msg }
+		}
 	case "e":
 		if b := m.currentBean(); b != nil {
 			return m, func() tea.Msg { return openEditorMsg{beanID: b.ID, beanPath: b.Path} }
@@ -832,7 +857,7 @@ func glyph(name string, short func(string) string) string {
 func (m listModel) renderRow(i, width int) []string {
 	r := m.rows[i]
 	b := r.bean
-	selected := i == m.cursor
+	selected := i == m.cursor && !m.creating()
 	marked := m.selectedBeans[b.ID]
 	dim := !r.matched
 
@@ -880,6 +905,9 @@ func (m listModel) renderRow(i, width int) []string {
 		typeStyle.Render(glyph(b.Type, ui.ShortType)) + plain.Render(" ") +
 		idStyle.Render(id) + plain.Render(" ")
 	prefixW := 1 + lipgloss.Width(prefix)
+	if m.renaming(i) {
+		return []string{fitWidth(bar+prefix+m.inlineInput(width-prefixW), width, plain)}
+	}
 
 	var toks []token
 	if sym := ui.GetPrioritySymbol(b.Priority); sym != "" && !dim {
@@ -930,6 +958,8 @@ func (m listModel) viewLines() []string {
 		lines = append(lines, fg(colDanger()).Render(clampWidth(fmt.Sprintf("Error: %v", m.err), w)))
 	case !m.loaded:
 		lines = append(lines, mutedStyle().Render(" Loading…"))
+	case len(m.rows) == 0 && m.creating():
+		lines = append(lines, m.inlineCreateLine(w))
 	case len(m.rows) == 0:
 		msg := " No beans yet. Press c to create one."
 		if m.hasActiveFilter() {
@@ -937,8 +967,15 @@ func (m listModel) viewLines() []string {
 		}
 		lines = append(lines, mutedStyle().Render(truncateText(msg, w)))
 	default:
+		insert := m.inlineInsertRow()
+		if m.creating() && insert < 0 {
+			lines = append(lines, m.inlineCreateLine(w))
+		}
 		for i := m.offset; i < len(m.rows) && len(lines) < h; i++ {
 			lines = append(lines, m.renderRow(i, w)...)
+			if m.creating() && i == insert {
+				lines = append(lines, m.inlineCreateLine(w))
+			}
 		}
 	}
 	if len(lines) > h {
@@ -987,6 +1024,9 @@ func (m listModel) position() string {
 
 // treeHints returns the footer hints for the tree in order of importance.
 func (m listModel) treeHints(wide bool) []keyHint {
+	if m.inline != nil {
+		return m.inlineHints()
+	}
 	if m.searching {
 		return []keyHint{{"enter", "apply"}, {"esc", "cancel"}, {"↑↓", "move"}}
 	}
@@ -1017,11 +1057,16 @@ func (m listModel) treeHints(wide bool) []keyHint {
 		keyHint{"enter", detail},
 		keyHint{"e", "edit"},
 		keyHint{"c", "create"},
+		keyHint{"C", "child"},
+		keyHint{"r", "rename"},
 		keyHint{"s", "status"},
 		keyHint{"t", "type"},
 		keyHint{"P", "priority"},
 		keyHint{"p", "parent"},
 		keyHint{"b", "blocking"},
+		keyHint{"n", "next"},
+		keyHint{"u", "undo"},
+		keyHint{"K J", "move"},
 		keyHint{"←→", "fold"},
 		keyHint{"space", "select"},
 		keyHint{"H", hideLabel},

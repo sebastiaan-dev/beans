@@ -130,20 +130,20 @@ func TestBatchedRunesAreTextInListFilter(t *testing.T) {
 	}
 }
 
-func TestBatchedRunesAreTextInCreateModal(t *testing.T) {
+func TestBatchedRunesAreTextInInlineCreate(t *testing.T) {
 	app, _ := setupListTestModel(t)
 	runCmd(t, app, app.Init())
 
-	// "c" opens the create modal asynchronously; the rest is the title.
+	// "c" opens the inline title input; the rest is the title.
 	sendBatched(t, app, "cgt q")
-	if app.state != viewCreateModal {
-		t.Fatalf("state = %v, want create modal", app.state)
+	if app.list.inline == nil {
+		t.Fatal("c should open the inline create input")
 	}
-	if got := app.createModal.textInput.Value(); got != "gt q" {
+	if got := app.list.inline.input.Value(); got != "gt q" {
 		t.Errorf("title = %q, want %q", got, "gt q")
 	}
 	sendBatched(t, app, "Fix")
-	if got := app.createModal.textInput.Value(); got != "gt qFix" {
+	if got := app.list.inline.input.Value(); got != "gt qFix" {
 		t.Errorf("title = %q, want %q", got, "gt qFix")
 	}
 }
@@ -152,18 +152,19 @@ func TestKeysArrivingWhileBatchIsPendingKeepOrder(t *testing.T) {
 	app, _ := setupListTestModel(t)
 	runCmd(t, app, app.Init())
 
-	// The terminal delivers "cFi" and then "x" before the create modal has
-	// opened; the later key must not overtake the held ones.
-	_, cmd := app.Update(keyRunes("cFi"))
+	// "H" reloads the beans asynchronously; the terminal delivers "HcFi" and
+	// then "x" before that has happened. The later key must not overtake the
+	// held ones, which open the inline create input and type into it.
+	_, cmd := app.Update(keyRunes("HcFi"))
 	if _, later := app.Update(keyRunes("x")); later != nil {
 		t.Error("keys arriving while a batch is pending should be held")
 	}
 	drainCmd(t, app, cmd)
 
-	if app.state != viewCreateModal {
-		t.Fatalf("state = %v, want create modal", app.state)
+	if app.list.inline == nil {
+		t.Fatal("c should open the inline create input")
 	}
-	if got := app.createModal.textInput.Value(); got != "Fix" {
+	if got := app.list.inline.input.Value(); got != "Fix" {
 		t.Errorf("title = %q, want %q", got, "Fix")
 	}
 	if app.holdingKeys || len(app.heldKeys) > 0 {

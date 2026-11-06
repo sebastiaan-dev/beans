@@ -25,6 +25,6 @@
 │ │            parent                  │ │ ╰───────────────────────────────────────────── (b) ─╯ │ │
 │ ╰───────────────────────────── 3/12 ─╯ ╰───────────────────────────────────────────────────────╯ │
 │ ──────────────────────────────────────────────────────────────────────────────────────────────── │
-│ enter details · e edit · c create · s status · t type · P priority · p parent · b blocking       │
-│ ←→ fold · space select · H hide done · y copy id · F filters · / query · zR zM open/close all    │
+│ enter details · e edit · c create · C child · r rename · s status · t type · P priority          │
+│ p parent · b blocking · n next · u undo · K J move · ←→ fold · space select · H hide done        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
