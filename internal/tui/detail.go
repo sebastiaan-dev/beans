@@ -268,6 +268,9 @@ type detailModel struct {
 
 	// IDs of previously shown beans, for backspace.
 	history []string
+
+	// Records the clickable regions while rendering (layout.go).
+	hits hitRecorder
 }
 
 func newDetailModel(resolver *beangraph.CoreResolver, cfg *config.Config) detailModel {
@@ -605,18 +608,20 @@ func fieldBox(label, hotkey, value string, width int) []string {
 
 // boxGrid lays out field boxes in rows that fit width.
 func boxGrid(width int, boxes []func(w int) []string) []string {
-	per := boxesPerRow(width, len(boxes))
-	var out []string
-	for start := 0; start < len(boxes); start += per {
-		row := boxes[start:min(start+per, len(boxes))]
-		ws := splitWidths(width, len(row), 1)
-		blocks := make([][]string, len(row))
-		for i, f := range row {
-			blocks[i] = f(ws[i])
+	lines, _ := boxGridCells(width, boxes)
+	return lines
+}
+
+// recordGrid renders field boxes like boxGrid at line top of the pane and
+// records each box as a field invoking its key (none for "").
+func (m detailModel) recordGrid(top, width int, keys []string, boxes []func(w int) []string) []string {
+	lines, cells := boxGridCells(width, boxes)
+	for i, c := range cells {
+		if keys[i] != "" {
+			m.hits.add(c.x, top+c.y, c.w, c.h, hitTarget{kind: hitDetailField, key: keys[i]})
 		}
-		out = append(out, joinColumns(1, blocks...)...)
 	}
-	return out
+	return lines
 }
 
 // View renders the pane at its size.
@@ -631,6 +636,12 @@ func (m detailModel) viewLines() []string {
 	if m.bean == nil {
 		lines = append(lines, mutedStyle().Render(" No bean selected"))
 	} else {
+		m.hits = m.hits.within(w, h)
+		if m.layout().scroll {
+			// The pane scrolls as a whole: boxes are recorded at their
+			// position in the scrolled pane (clipped to it above).
+			m.hits = m.hits.at(0, -m.paneOffset)
+		}
 		lines = m.renderBoxes(w)
 	}
 	if m.bean != nil && m.layout().scroll {
@@ -656,6 +667,7 @@ func (m detailModel) renderBoxes(w int) []string {
 
 	var out []string
 	out = append(out, box{label: "Title" + glyphs().sep() + b.ID, topRight: workspaceBadge(m.resolver.Core, m.ws, b.ID, ""), hotkey: "e", lines: l.titleLines, width: w, padding: 1}.render()...)
+	m.hits.add(0, 0, w, len(out), hitTarget{kind: hitDetailField, key: "e"})
 
 	status := fg(colNamed(colors.StatusColor)).Bold(!colors.IsArchive).Render(b.Status)
 	if implicit, _ := m.resolver.Core.ImplicitStatus(b.ID); implicit != "" {
@@ -671,9 +683,10 @@ func (m detailModel) renderBoxes(w int) []string {
 	}
 	if l.compactMeta {
 		sep := mutedStyle().Render(glyphs().sep())
+		m.hits.add(0, len(out), w, 3, hitTarget{kind: hitDetailField, key: "s"})
 		out = append(out, fieldBox(strings.Join([]string{"Status", "Type", "Priority"}, glyphs().sep()), "s t P", status+sep+typ+sep+prio, w)...)
 	} else {
-		out = append(out, boxGrid(w, []func(int) []string{
+		out = append(out, m.recordGrid(len(out), w, []string{"s", "t", "P"}, []func(int) []string{
 			func(bw int) []string { return fieldBox("Status", "s", status, bw) },
 			func(bw int) []string { return fieldBox("Type", "t", typ, bw) },
 			func(bw int) []string { return fieldBox("Priority", "P", prio, bw) },
@@ -697,7 +710,7 @@ func (m detailModel) renderBoxes(w int) []string {
 			}
 			tags = strings.Join(parts, " ")
 		}
-		out = append(out, boxGrid(w, []func(int) []string{
+		out = append(out, m.recordGrid(len(out), w, []string{"p", ""}, []func(int) []string{
 			func(bw int) []string { return fieldBox("Parent", "p", parent, bw) },
 			func(bw int) []string { return fieldBox("Tags", "", tags, bw) },
 		})...)
@@ -710,6 +723,7 @@ func (m detailModel) renderBoxes(w int) []string {
 		bodyLabel = fmt.Sprintf("Body%s%d%s%d/%d", glyphs().sep(), m.bodyOffset+1, glyphs().Range, end, len(m.body))
 	}
 	bodyLines := m.body[min(m.bodyOffset, len(m.body)):]
+	m.recordScrollBox(len(out), w, l.bodyRows, "e", hitBody, hitBodyLine, m.bodyOffset, min(l.bodyRows, len(bodyLines)))
 	out = append(out, box{
 		label:   bodyLabel,
 		hotkey:  "e",
@@ -726,6 +740,11 @@ func (m detailModel) renderBoxes(w int) []string {
 	if m.relCursor >= l.relRows {
 		relOffset = m.relCursor - l.relRows + 1
 	}
+	shownRels := 0
+	if len(m.links) > 0 {
+		shownRels = min(l.relRows, len(rel)-relOffset)
+	}
+	m.recordScrollBox(len(out), w, l.relRows, "b", 0, hitRelation, relOffset, shownRels)
 	relLabel := "Relations"
 	if len(rel) > l.relRows {
 		relLabel = fmt.Sprintf("Relations%s%d/%d", glyphs().sep(), m.relCursor+1, len(m.links))

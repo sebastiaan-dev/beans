@@ -199,9 +199,9 @@ If a theme can't be loaded (e.g. nvim is not installed or the colorscheme doesn'
 | `[ ]`, `x` | move between the body's checkboxes, toggle one |
 | `space`, `y` | select beans for batch edits, copy the ID(s) |
 | `w`, `W`, `g w` | start the bean in its workspace (git worktree), the same plus `tui.agent_command`, list the workspaces |
-| `1`–`4` | switch views |
-| `:` / `ctrl+p` | command palette |
-| mouse | click to select and focus, scroll wheel to scroll |
+| `1`–`4`, `R` | switch views: tree, ready (ranked like `beans next`), blocked (with their blockers), audit (`beans audit` findings, refreshed in the background); `R` re-runs the audit |
+| `:` / `ctrl+p` | command palette: fuzzy search over all actions and beans |
+| mouse | click rows, fold chevrons, filter fields, dropdown items, relations, field boxes (runs their key) and checkboxes; double-click opens; wheel scrolls; hold `⇧`/`⌥` to select text; `BEANS_TUI_MOUSE=0` turns it off |
 | `q` | quit |
 
 **Configuration** (`.beans.yml`; the environment variables override it for you alone):

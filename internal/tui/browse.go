@@ -305,16 +305,22 @@ func (a *App) browseView() string {
 		return a.tooSmallView()
 	}
 	l := a.layout()
+	// Content lines start inside the frame at column 2, line 1.
+	rec := a.hits.recorder().at(2, 1)
+	defer func() { a.rec = hitRecorder{} }()
 	var content []string
 	content = append(content, a.headerLine(l.inner))
 	content = append(content, borderStyle().Render(strings.Repeat(glyphs().Horizontal, l.inner)))
 	if l.showBar {
+		a.rec = rec.at(0, len(content))
 		content = append(content, a.filterBar(l.inner)...)
 	} else {
-		line, _ := a.filterSummaryLine(l.inner)
+		line, xs := a.filterSummaryLine(l.inner)
+		a.recordSummaryLine(rec.at(0, len(content)), l.inner, xs)
 		content = append(content, line)
 	}
-	content = append(content, a.paneLines(l)...)
+	content = append(content, a.paneLines(l, rec.at(0, len(content)))...)
+	a.rec = rec
 	content = a.overlayDropdown(content, len(content)-l.paneH, l.inner, !l.showBar)
 	content = append(content, borderStyle().Render(strings.Repeat(glyphs().Horizontal, l.inner)))
 	content = append(content, l.footer...)
@@ -391,18 +397,23 @@ func (a *App) headerLine(width int) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
-// paneLines renders the tree and detail panes.
-func (a *App) paneLines(l browseLayout) []string {
+// paneLines renders the tree and detail panes, recording their regions at
+// rec.
+func (a *App) paneLines(l browseLayout, rec hitRecorder) []string {
 	if !l.wide && a.focus == focusDetail {
+		rec.add(0, 0, l.inner, l.paneH, hitTarget{kind: hitDetailPane})
+		a.detail.hits = rec
 		return a.detail.viewLines()
 	}
 	if a.activeList() != nil {
-		return a.joinDetail(l, a.viewPaneLines(l))
+		return a.joinDetail(l, a.viewPaneLines(l, rec), rec)
 	}
+	rec.add(0, 0, l.treeW, l.paneH, hitTarget{kind: hitTreePane})
 	var rows []string
 	if a.list.showSearchLine() {
 		rows = append(rows, a.list.searchLine(l.treeW-2))
 	}
+	a.list.hits = rec.at(1, 1+len(rows)).within(l.treeW-2, l.paneH-2-len(rows))
 	rows = append(rows, a.list.viewLines()...)
 	tree := box{
 		label:    a.list.title(),
@@ -412,14 +423,16 @@ func (a *App) paneLines(l browseLayout) []string {
 		height:   l.paneH,
 		focused:  a.focus == focusTree,
 	}.render()
-	return a.joinDetail(l, tree)
+	return a.joinDetail(l, tree, rec)
 }
 
 // joinDetail places the detail pane beside the list pane on wide terminals.
-func (a *App) joinDetail(l browseLayout, tree []string) []string {
+func (a *App) joinDetail(l browseLayout, tree []string, rec hitRecorder) []string {
 	if !l.wide {
 		return tree
 	}
+	rec.add(l.treeW+1, 0, l.detailW, l.paneH, hitTarget{kind: hitDetailPane})
+	a.detail.hits = rec.at(l.treeW+1+2, 1) // border and padding
 	detail := box{
 		lines:   a.detail.viewLines(),
 		width:   l.detailW,

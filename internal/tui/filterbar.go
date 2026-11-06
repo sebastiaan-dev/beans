@@ -693,7 +693,10 @@ func (a *App) filterBar(width int) []string {
 	ws := filterBarWidths(width, values)
 	hotkeys := map[barField]string{barStatus: "F", barTags: "g t", barDone: "H"}
 	blocks := make([][]string, barFieldCount)
+	x := 0
 	for f := barField(0); f < barFieldCount; f++ {
+		a.rec.add(x, 0, ws[f], 3, hitTarget{kind: hitBarField, index: int(f)})
+		x += ws[f] + 1
 		label := f.label()
 		if f == barClear {
 			label = ""
@@ -911,6 +914,7 @@ func (a *App) dropdownLines(maxWidth int) []string {
 		if o.count > 0 {
 			label += " " + mutedStyle().Render(fmt.Sprint(o.count))
 		}
+		a.rec.add(1, 1+len(lines), width-2, 1, hitTarget{kind: hitDropdownItem, index: i})
 		lines = append(lines, cursor+mark+" "+label)
 	}
 	pos := ""
@@ -939,9 +943,15 @@ func (a *App) overlayDropdown(content []string, top, inner int, collapsed bool) 
 	} else {
 		x = a.barFieldX(inner, a.bar.field)
 	}
+	// Record the dropdown's items relative to it, then place them.
+	rec, local := a.rec, &hitMap{}
+	a.rec = local.recorder()
 	dd := a.dropdownLines(inner)
+	a.rec = rec
 	w := lipgloss.Width(dd[0])
 	x = max(0, min(x, inner-w))
+	rec.add(x, top, w, len(dd), hitTarget{kind: hitDropdown})
+	rec.place(local, x, top)
 	out := slices.Clone(content)
 	for i, l := range dd {
 		row := top + i

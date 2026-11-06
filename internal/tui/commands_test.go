@@ -540,3 +540,19 @@ func TestPaletteDirectCommands(t *testing.T) {
 		t.Errorf("Clear filters: query = %q state = %v", app.list.search.Value(), app.state)
 	}
 }
+
+func TestASCIICommandPalette(t *testing.T) {
+	withStableRendering(t)
+	withASCII(t)
+	for _, size := range [][2]int{{160, 40}, {70, 24}} {
+		app := newDemoApp(t, size[0], size[1])
+		pressKey(t, app, ":")
+		for _, q := range []string{"", "s", "undo", "t00"} {
+			app.palette.input.SetValue(q)
+			app.refreshPalette()
+			if bad, found := nonASCII(stripAnsi(app.View())); found {
+				t.Errorf("palette %q at %dx%d renders non-ASCII %q", q, size[0], size[1], bad)
+			}
+		}
+	}
+}
