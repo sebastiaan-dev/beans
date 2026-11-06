@@ -117,14 +117,14 @@ func TestBatchedRunesAreTextInListFilter(t *testing.T) {
 	app, _ := setupListTestModel(t)
 	runCmd(t, app, app.Init())
 
-	// "/" starts filtering; the remaining runes of the same batch are text,
+	// "/" starts searching; the remaining runes of the same batch are text,
 	// and so are later batches.
 	sendBatched(t, app, "/op")
 	sendBatched(t, app, "en q")
 	if app.state != viewList {
 		t.Fatalf("state = %v, want list", app.state)
 	}
-	if got := app.list.list.FilterValue(); got != "open q" {
+	if got := app.list.search.Value(); got != "open q" {
 		t.Errorf("filter value = %q, want %q", got, "open q")
 	}
 }
@@ -181,51 +181,92 @@ func TestBracketedPasteIsNotSplit(t *testing.T) {
 	}
 }
 
-func TestListFooterFitsWidth(t *testing.T) {
+func TestFooterFitsWidth(t *testing.T) {
 	app, _ := setupListTestModel(t)
 	runCmd(t, app, app.Init())
 
-	modes := map[string]func(m *listModel){
-		"default": func(m *listModel) {},
-		"filtered": func(m *listModel) {
-			m.filters = listFilters{tags: []string{"frontend"}, hideResolved: true}
+	modes := map[string]func(a *App){
+		"default": func(a *App) {},
+		"filtered": func(a *App) {
+			a.list.filters = listFilters{tags: []string{"frontend"}, hideResolved: true}
 		},
-		"selected": func(m *listModel) {
-			m.selectedBeans = map[string]bool{"t-open": true, "t-wip": true}
+		"selected": func(a *App) {
+			a.list.selectedBeans = map[string]bool{"t-open": true, "t-wip": true}
 		},
-		"status": func(m *listModel) {
-			m.statusMessage = "Copied " + strings.Repeat("t-open, ", 30)
+		"status": func(a *App) {
+			a.list.statusMessage = "Copied " + strings.Repeat("t-open, ", 30)
+		},
+		"detail": func(a *App) {
+			_, cmd := a.Update(keyType(tea.KeyEnter))
+			runCmd(t, a, cmd)
 		},
 	}
 
 	for name, setup := range modes {
 		for _, width := range []int{200, 160, 120, 80, 40, 10} {
-			m := app.list
-			m.selectedBeans = map[string]bool{}
-			m.width = width
-			setup(&m)
+			app, _ := setupListTestModel(t)
+			runCmd(t, app, app.Init())
+			app.height = 40
+			setup(app)
 
-			footer := m.Footer()
-			plain := stripAnsi(footer)
-			if strings.Contains(footer, "\n") {
-				t.Errorf("%s/%d: footer wraps: %q", name, width, plain)
+			lines := app.footerLines(width, width >= wideMinWidth)
+			if len(lines) == 0 || len(lines) > 2 {
+				t.Fatalf("%s/%d: footer has %d lines", name, width, len(lines))
 			}
-			if w := lipgloss.Width(footer); w > width {
-				t.Errorf("%s/%d: footer is %d columns wide: %q", name, width, w, plain)
-			}
-			if name != "status" && width >= 40 && !strings.HasSuffix(plain, "? help  q quit") {
-				t.Errorf("%s/%d: footer should end with help and quit hints: %q", name, width, plain)
+			for _, line := range lines {
+				if strings.Contains(line, "\n") {
+					t.Errorf("%s/%d: footer line wraps: %q", name, width, stripAnsi(line))
+				}
+				if w := lipgloss.Width(line); w > width {
+					t.Errorf("%s/%d: footer line is %d columns wide: %q", name, width, w, stripAnsi(line))
+				}
 			}
 		}
 	}
 
-	m := app.list
-	m.width = 80
-	if plain := stripAnsi(m.Footer()); !strings.HasPrefix(plain, "enter view  / search  F filters") {
+	app.height = 40
+	lines := app.footerLines(80, false)
+	if plain := stripAnsi(lines[0]); !strings.HasPrefix(plain, "enter open · e edit · c create") {
 		t.Errorf("most important hints should come first: %q", plain)
 	}
-	m.width = 300
-	if plain := stripAnsi(m.Footer()); !strings.Contains(plain, "H hide done") || !strings.Contains(plain, "space select") {
-		t.Errorf("wide footer should show all hints: %q", plain)
+	plain := stripAnsi(strings.Join(app.footerLines(300, true), "\n"))
+	if strings.Contains(plain, "\n") || !strings.Contains(plain, "H hide done") || !strings.Contains(plain, "space select") {
+		t.Errorf("wide footer should show all hints on one line: %q", plain)
+	}
+
+	// Short terminals get a single footer line.
+	app.height = 15
+	if n := len(app.footerLines(40, false)); n != 1 {
+		t.Errorf("short terminal footer has %d lines, want 1", n)
+	}
+}
+
+func TestFitHintLines(t *testing.T) {
+	hints := []keyHint{{"a", "aaaa"}, {"b", "bbbb"}, {"c", "cccccccccccccccc"}, {"d", "dd"}}
+	render := func(widths ...int) []string {
+		var out []string
+		for _, l := range fitHintLines(hints, nil, widths) {
+			out = append(out, stripAnsi(l))
+		}
+		return out
+	}
+
+	// Everything fits on one line.
+	if got := render(100); !reflect.DeepEqual(got, []string{"a aaaa · b bbbb · c cccccccccccccccc · d dd"}) {
+		t.Errorf("one line: %q", got)
+	}
+	// Hints continue on the second line in order.
+	if got := render(16, 30); !reflect.DeepEqual(got, []string{"a aaaa · b bbbb", "c cccccccccccccccc · d dd"}) {
+		t.Errorf("two lines: %q", got)
+	}
+	// On the last line, hints that do not fit are dropped, smaller later
+	// ones are still shown.
+	if got := render(16, 10); !reflect.DeepEqual(got, []string{"a aaaa · b bbbb", "d dd"}) {
+		t.Errorf("dropped: %q", got)
+	}
+	// Pinned hints are kept at the end.
+	got := fitHintLines(hints, []keyHint{{"q", "quit"}}, []int{20})
+	if len(got) != 1 || stripAnsi(got[0]) != "a aaaa · q quit" {
+		t.Errorf("pinned: %q", got)
 	}
 }

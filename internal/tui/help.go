@@ -5,7 +5,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/hmans/beans/internal/ui"
 )
 
 // openHelpMsg requests opening the help overlay
@@ -49,63 +48,112 @@ func (m helpOverlayModel) Update(msg tea.Msg) (helpOverlayModel, tea.Cmd) {
 	return m, nil
 }
 
+// helpSection is a titled group of shortcuts in the help overlay.
+type helpSection struct {
+	title string
+	keys  [][2]string // key, description
+}
+
+// helpSections lists the shortcuts of the browse view.
+//
+// Descriptions are kept short so that two columns fit on 70-column terminals.
+var helpSections = []helpSection{
+	{"Navigate", [][2]string{
+		{"↑↓ j k", "Move"},
+		{"←/h", "Collapse / parent"},
+		{"→/l", "Expand / child"},
+		{"zo zc za", "Open/close/toggle"},
+		{"zR zM", "Open/close all"},
+		{"gg G", "First / last bean"},
+		{"enter tab", "Focus details"},
+		{"/", "Search title or ID"},
+	}},
+	{"Filter", [][2]string{
+		{"F", "Status/type/tags"},
+		{"H", "Hide/show done"},
+		{"g t", "Filter by tag"},
+		{"esc", "Clear filters"},
+	}},
+	{"Edit", [][2]string{
+		{"c", "Create new bean"},
+		{"e", "Edit in $EDITOR"},
+		{"s t P", "Status/type/prio"},
+		{"p", "Set parent"},
+		{"b", "Manage blocking"},
+		{"space", "Select for batch"},
+		{"y", "Copy bean ID"},
+	}},
+	{"Details", [][2]string{
+		{"tab", "Relations / body"},
+		{"↑↓ j k", "Move / scroll"},
+		{"pgup pgdn", "Scroll body"},
+		{"enter", "Open related bean"},
+		{"backspace", "Previous bean"},
+		{"esc", "Back to the tree"},
+	}},
+}
+
+// renderHelpSections renders sections as one column of the given width.
+func renderHelpSections(sections []helpSection, width int) []string {
+	const keyW = 10
+	var lines []string
+	for i, sec := range sections {
+		if i > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, listTitleStyle().Render(sec.title))
+		for _, k := range sec.keys {
+			key := keyStyle().Width(keyW).Render(k[0])
+			// Descriptions use the terminal's default foreground so they stay
+			// readable on both dark and light themes.
+			lines = append(lines, clampWidth(key+k[1], width))
+		}
+	}
+	return lines
+}
+
 func (m helpOverlayModel) View() string {
 	if m.width == 0 {
 		return "Loading..."
 	}
 
-	// Calculate modal dimensions
-	modalWidth := max(50, min(60, m.width*60/100))
+	twoColumns := m.width >= 68
+	modalWidth := min(max(m.width-4, 20), 48)
+	if twoColumns {
+		modalWidth = min(m.width-2, 80)
+	}
+	inner := modalWidth - 4 // border and padding
 
-	// Title
-	title := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(ui.ColorPrimary).
-		Render("Keyboard Shortcuts")
-
-	// Helper to create a shortcut line
-	shortcut := func(key, desc string) string {
-		keyStyle := lipgloss.NewStyle().
-			Foreground(ui.ColorPrimary).
-			Bold(true).
-			Width(12).
-			Render(key)
-		// Descriptions use the terminal's default foreground so they stay
-		// readable on both dark and light themes.
-		return keyStyle + desc
+	var body []string
+	if twoColumns {
+		colW := (inner - 3) / 2
+		left := renderHelpSections(helpSections[:2], colW)
+		right := renderHelpSections(helpSections[2:], colW)
+		body = joinColumns(3, padLines(left, colW), padLines(right, colW))
+	} else {
+		body = renderHelpSections(helpSections, inner)
 	}
 
-	var content strings.Builder
-	content.WriteString(title + "\n\n")
+	title := lipgloss.NewStyle().Bold(true).Foreground(colAccent()).Render("Keyboard Shortcuts")
+	footer := renderHints([]keyHint{{"?/esc", "close"}, {"q", "quit"}}, nil, inner)
+	content := title + "\n\n" + strings.Join(body, "\n") + "\n\n" + footer
 
-	content.WriteString(shortcut("enter", "View bean details") + "\n")
-	content.WriteString(shortcut("b", "Manage blocking") + "\n")
-	content.WriteString(shortcut("c", "Create new bean") + "\n")
-	content.WriteString(shortcut("e", "Edit in $EDITOR") + "\n")
-	content.WriteString(shortcut("p", "Set parent") + "\n")
-	content.WriteString(shortcut("P", "Change priority") + "\n")
-	content.WriteString(shortcut("s", "Change status") + "\n")
-	content.WriteString(shortcut("t", "Change type") + "\n")
-	content.WriteString(shortcut("y", "Copy bean ID") + "\n")
-	content.WriteString(shortcut("/", "Search (fuzzy)") + "\n")
-	content.WriteString(shortcut("F", "Filter by status, type and tags") + "\n")
-	content.WriteString(shortcut("H", "Hide/show completed & scrapped") + "\n")
-	content.WriteString(shortcut("g t", "Filter by tag") + "\n")
-	content.WriteString(shortcut("esc", "Clear all filters") + "\n")
-	content.WriteString(shortcut("q", "Quit") + "\n")
-	content.WriteString("\n")
-
-	// Footer
-	footer := helpKeyStyle.Render("?/esc") + " " + helpStyle.Render("close")
-
-	// Border style
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ui.ColorPrimary).
-		Padding(1, 2).
-		Width(modalWidth)
+		BorderForeground(colAccent()).
+		Padding(0, 1).
+		Width(modalWidth - 2)
 
-	return border.Render(content.String() + footer)
+	return border.Render(content)
+}
+
+// padLines pads lines to width cells.
+func padLines(lines []string, width int) []string {
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = fitWidth(l, width, lipgloss.NewStyle())
+	}
+	return out
 }
 
 // ModalView returns the help overlay as a centered modal on top of the background

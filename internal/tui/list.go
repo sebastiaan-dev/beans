@@ -3,11 +3,10 @@ package tui
 import (
 	"context"
 	"fmt"
-	"io"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/cursor"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/hmans/beans/internal/ui"
@@ -16,126 +15,69 @@ import (
 	"github.com/hmans/beans/pkg/config"
 )
 
-// beanItem wraps a Bean to implement list.Item, with tree context
-type beanItem struct {
-	bean           *bean.Bean
-	cfg            *config.Config
-	treePrefix     string // tree prefix for rendering (e.g., "├─" or "  └─")
-	matched        bool   // true if bean matched filter (vs. ancestor shown for context)
-	implicitStatus string // implicit terminal status from an ancestor, if any
-	archived       bool   // true if the bean file lives in the archive directory
-}
-
-func (i beanItem) Title() string       { return i.bean.Title }
-func (i beanItem) Description() string { return i.bean.ID + " · " + i.bean.Status }
-func (i beanItem) FilterValue() string { return i.bean.Title + " " + i.bean.ID }
-
-// itemDelegate handles rendering of list items
-type itemDelegate struct {
-	cfg           *config.Config
-	hasTags       bool
-	width         int
-	cols          ui.ResponsiveColumns // cached responsive columns
-	idColWidth    int                  // ID column width (accounts for tree prefix)
-	selectedBeans *map[string]bool     // pointer to marked beans for multi-select
-}
-
-func newItemDelegate(cfg *config.Config) itemDelegate {
-	return itemDelegate{cfg: cfg, hasTags: false, width: 0}
-}
-
-func (d itemDelegate) Height() int                             { return 1 }
-func (d itemDelegate) Spacing() int                            { return 0 }
-func (d itemDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
-
-func (d itemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
-	item, ok := listItem.(beanItem)
-	if !ok {
-		return
-	}
-
-	// Get colors from config
-	colors := d.cfg.GetBeanColors(item.bean.Status, item.bean.Type, item.bean.Priority)
-
-	// Calculate max title width using responsive columns
-	idWidth := d.cols.ID
-	if d.idColWidth > 0 {
-		idWidth = d.idColWidth
-	}
-	baseWidth := idWidth + d.cols.Status + d.cols.Type + 4 // 4 for cursor + padding
-	if d.cols.ShowTags {
-		baseWidth += d.cols.Tags
-	}
-	// Archived beans get a muted marker at the end of the row
-	var archivedMarker string
-	if item.archived {
-		archivedMarker = ui.Muted.Render(archivedMarkerText)
-		baseWidth += lipgloss.Width(archivedMarker)
-	}
-	// The row renderer appends " ↑<status>" for matched beans that inherit a
-	// terminal status; reserve room for it so the row does not wrap.
-	if item.implicitStatus != "" && item.matched {
-		baseWidth += lipgloss.Width(" ↑" + item.implicitStatus)
-	}
-	maxTitleWidth := max(0, m.Width()-baseWidth)
-
-	// Check if bean is marked for multi-select
-	var isMarked bool
-	if d.selectedBeans != nil {
-		isMarked = (*d.selectedBeans)[item.bean.ID]
-	}
-
-	str := ui.RenderBeanRow(
-		item.bean.ID,
-		item.bean.Status,
-		item.bean.Type,
-		item.bean.Title,
-		ui.BeanRowConfig{
-			StatusColor:    colors.StatusColor,
-			TypeColor:      colors.TypeColor,
-			PriorityColor:  colors.PriorityColor,
-			Priority:       item.bean.Priority,
-			IsArchive:      colors.IsArchive,
-			MaxTitleWidth:  maxTitleWidth,
-			ShowCursor:     true,
-			IsSelected:     index == m.Index(),
-			IsMarked:       isMarked,
-			Tags:           item.bean.Tags,
-			ShowTags:       d.cols.ShowTags,
-			TagsColWidth:   d.cols.Tags,
-			MaxTags:        d.cols.MaxTags,
-			TreePrefix:     item.treePrefix,
-			Dimmed:         !item.matched,
-			IDColWidth:     d.idColWidth,
-			UseFullNames:   d.cols.UseFullTypeStatus,
-			ImplicitStatus: item.implicitStatus,
-		},
-	)
-
-	fmt.Fprint(w, str+archivedMarker)
-}
-
 // archivedMarkerText is appended to rows of beans stored in the archive directory.
-const archivedMarkerText = " [archived]"
+const archivedMarkerText = "[archived]"
 
-// listModel is the model for the bean list view
+// treeRowMaxLines is the maximum number of lines a tree row's title wraps onto.
+const treeRowMaxLines = 3
+
+// treeRow is a visible row of the bean tree.
+type treeRow struct {
+	bean           *bean.Bean
+	depth          int
+	hasChildren    bool   // has children in the (filtered) tree
+	collapsed      bool   // children are folded away
+	hidden         int    // number of descendants hidden by folding
+	matched        bool   // matched the filters (vs. ancestor shown for context)
+	implicitStatus string // implicit terminal status from an ancestor, if any
+	archived       bool   // the bean file lives in the archive directory
+}
+
+// listModel is the bean tree of the browse view: it owns the loaded beans,
+// the filters and search, folding, the cursor and multi-selection.
 type listModel struct {
-	list     list.Model
 	resolver *beangraph.CoreResolver
 	config   *config.Config
-	width    int
-	height   int
-	err      error
 
-	// Responsive column state
-	hasTags    bool                 // whether any beans have tags
-	cols       ui.ResponsiveColumns // calculated responsive columns
-	idColWidth int                  // ID column width (accounts for tree depth)
+	// Size of the area the rows are rendered into (set by the layout).
+	width  int
+	height int
+
+	err    error
+	loaded bool
+
+	// Data from the last load.
+	beans    []*bean.Bean
+	byID     map[string]*bean.Bean
+	implicit map[string]string // implicit terminal statuses by bean ID
+	archived map[string]bool   // IDs of beans stored in the archive directory
+
+	// Visible rows and the IDs of all beans with children in the tree.
+	rows    []treeRow
+	parents []string
+	cursor  int
+	offset  int // first row shown
+
+	// Cached line counts of the rows (0 = not computed) at heightsWidth.
+	heights      []int
+	heightsWidth int
 
 	// Active filters (status/type/tag selections and the hide-resolved toggle)
 	filters listFilters
 
-	// Counts from the last load, for the title indicator
+	// Search ("/"): typed into search while searching, kept afterwards.
+	search    textinput.Model
+	searching bool
+
+	// Folding. folds holds the collapsed bean IDs for the session. While a
+	// filter or search is active, matches inside folded parents must stay
+	// visible, so folding then uses filterFolds instead, a temporary set that
+	// starts out expanded and is reset whenever the filters change.
+	folds          map[string]bool
+	filterFolds    map[string]bool
+	filterFoldsKey string
+
+	// Counts from the last build, for the title indicator
 	shownCount int // beans matching the filters
 	totalCount int // all beans
 
@@ -147,38 +89,26 @@ type listModel struct {
 }
 
 func newListModel(resolver *beangraph.CoreResolver, cfg *config.Config) listModel {
-	selectedBeans := make(map[string]bool)
-	delegate := itemDelegate{cfg: cfg, selectedBeans: &selectedBeans}
-
-	l := list.New([]list.Item{}, delegate, 0, 0)
-	l.Title = "Beans"
-	l.SetShowStatusBar(false)
-	l.SetFilteringEnabled(true)
-	l.SetShowHelp(false)
-	// bubbles/list binds Quit to "q" and "esc". In this app esc means "back"
-	// (clear selection/filters), so it must never quit; only q and ctrl+c do.
-	l.KeyMap.Quit = key.NewBinding(
-		key.WithKeys("q"),
-		key.WithHelp("q", "quit"),
-	)
-	applyListTheme(&l)
-	l.Styles.TitleBar = lipgloss.NewStyle().Padding(0, 0, 1, 1)
-
+	ti := textinput.New()
+	ti.Prompt = ""
+	ti.Placeholder = "search title or id"
+	// A static cursor avoids redrawing the whole view for blink ticks.
+	ti.Cursor.SetMode(cursor.CursorStatic)
 	return listModel{
-		list:          l,
 		resolver:      resolver,
 		config:        cfg,
-		selectedBeans: selectedBeans,
+		search:        ti,
+		folds:         make(map[string]bool),
+		selectedBeans: make(map[string]bool),
+		byID:          map[string]*bean.Bean{},
 	}
 }
 
 // beansLoadedMsg is sent when beans are loaded
 type beansLoadedMsg struct {
-	items      []ui.FlatItem   // flattened tree items
-	idColWidth int             // calculated ID column width for tree
-	archived   map[string]bool // IDs of beans stored in the archive directory
-	shownCount int             // number of beans matching the filters
-	totalCount int             // number of beans in total
+	beans    []*bean.Bean
+	implicit map[string]string // implicit terminal statuses by bean ID
+	archived map[string]bool   // IDs of beans stored in the archive directory
 }
 
 // errMsg is sent when an error occurs
@@ -186,68 +116,30 @@ type errMsg struct {
 	err error
 }
 
-// selectBeanMsg is sent when a bean is selected
-type selectBeanMsg struct {
-	bean *bean.Bean
-}
-
 func (m listModel) Init() tea.Cmd {
 	return m.loadBeans
 }
 
 func (m listModel) loadBeans() tea.Msg {
-	// Query all beans; filtering happens below because it depends on
-	// implicit (inherited) statuses, and unmatched ancestors are still
-	// needed for tree context.
+	// Query all beans; filtering happens when building the tree because it
+	// depends on implicit (inherited) statuses, and unmatched ancestors are
+	// still needed for tree context.
 	allBeans, err := m.resolver.Beans(context.Background(), nil)
 	if err != nil {
 		return errMsg{err}
 	}
 
-	// Sort function for tree building
-	sortFn := func(beans []*bean.Bean) {
-		bean.SortByStatusPriorityAndType(beans, m.config.StatusNames(), m.config.PriorityNames(), m.config.TypeNames())
-	}
-
-	// Pre-compute implicit statuses and archive state for all beans
-	implicitStatuses := make(map[string]string, len(allBeans))
+	implicit := make(map[string]string, len(allBeans))
 	archived := make(map[string]bool)
 	for _, b := range allBeans {
 		if status, _ := m.resolver.Core.ImplicitStatus(b.ID); status != "" {
-			implicitStatuses[b.ID] = status
+			implicit[b.ID] = status
 		}
 		if m.resolver.Core.IsArchived(b.ID) {
 			archived[b.ID] = true
 		}
 	}
-
-	filteredBeans := m.filters.apply(allBeans, implicitStatuses)
-
-	// Build tree and flatten it
-	tree := ui.BuildTree(filteredBeans, allBeans, sortFn, implicitStatuses)
-	items := ui.FlattenTree(tree)
-
-	// Calculate ID column width based on max ID length and tree depth
-	maxIDLen := 0
-	for _, b := range allBeans {
-		if len(b.ID) > maxIDLen {
-			maxIDLen = len(b.ID)
-		}
-	}
-	maxDepth := ui.MaxTreeDepth(items)
-	// ID column = base ID width + tree indent (3 chars per depth level)
-	idColWidth := maxIDLen + 2 // base padding
-	if maxDepth > 0 {
-		idColWidth += maxDepth * 3 // 3 chars per depth level (├─ + space)
-	}
-
-	return beansLoadedMsg{
-		items:      items,
-		idColWidth: idColWidth,
-		archived:   archived,
-		shownCount: len(filteredBeans),
-		totalCount: len(allBeans),
-	}
+	return beansLoadedMsg{beans: allBeans, implicit: implicit, archived: archived}
 }
 
 // setTagFilter restricts the list to beans with the given tag, replacing any
@@ -276,56 +168,421 @@ func (m *listModel) hasActiveFilter() bool {
 	return !m.filters.isEmpty()
 }
 
-// title returns the list title including active filter indicators.
-func (m listModel) title() string {
-	if m.filters.isEmpty() {
-		return "Beans"
+// query returns the current search query.
+func (m listModel) query() string {
+	return strings.TrimSpace(m.search.Value())
+}
+
+// searchMatches reports whether a bean matches all search terms (case
+// insensitive, in its title or ID).
+func searchMatches(b *bean.Bean, terms []string) bool {
+	hay := strings.ToLower(b.Title + " " + b.ID)
+	for _, t := range terms {
+		if !strings.Contains(hay, t) {
+			return false
+		}
 	}
-	parts := append([]string{fmt.Sprintf("Beans %d/%d", m.shownCount, m.totalCount)}, m.filters.summary()...)
+	return true
+}
+
+// title returns the tree title including active filter indicators.
+func (m listModel) title() string {
+	var parts []string
+	if !m.filters.isEmpty() || m.query() != "" {
+		parts = append(parts, fmt.Sprintf("Beans %d/%d", m.shownCount, m.totalCount))
+	} else {
+		parts = append(parts, "Beans")
+	}
+	parts = append(parts, m.filters.summary()...)
+	if q := m.query(); q != "" {
+		parts = append(parts, fmt.Sprintf("%q", q))
+	}
 	return strings.Join(parts, " · ")
 }
 
-func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
-	var cmd tea.Cmd
-	var cmds []tea.Cmd
+// foldsSuspended reports whether a filter or search is active, in which case
+// matches inside folded parents are shown (see listModel.folds). Hiding
+// completed beans does not count: it narrows the tree rather than looking
+// for something.
+func (m listModel) foldsSuspended() bool {
+	f := m.filters
+	return len(f.statuses) > 0 || len(f.types) > 0 || len(f.tags) > 0 || m.query() != ""
+}
 
-	// Track cursor position before update
-	prevIndex := m.list.Index()
+// activeFolds returns the collapsed-ID set currently in effect.
+func (m *listModel) activeFolds() map[string]bool {
+	if !m.foldsSuspended() {
+		return m.folds
+	}
+	f := m.filters
+	key := fmt.Sprintf("%q|%q|%q|%v|%q", f.statuses, f.types, f.tags, f.hideResolved, strings.ToLower(m.query()))
+	if m.filterFolds == nil || key != m.filterFoldsKey {
+		m.filterFolds = make(map[string]bool)
+		m.filterFoldsKey = key
+	}
+	return m.filterFolds
+}
 
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		// Reserve space for border and footer
-		m.list.SetSize(msg.Width-2, msg.Height-4)
-		// Recalculate responsive columns
-		m.cols = ui.CalculateResponsiveColumns(msg.Width, m.hasTags)
-		m.updateDelegate()
+// currentRow returns the row under the cursor.
+func (m listModel) currentRow() (treeRow, bool) {
+	if m.cursor < 0 || m.cursor >= len(m.rows) {
+		return treeRow{}, false
+	}
+	return m.rows[m.cursor], true
+}
 
-	case beansLoadedMsg:
-		items := make([]list.Item, len(msg.items))
-		// Check if any beans have tags
-		m.hasTags = false
-		for i, flatItem := range msg.items {
-			items[i] = beanItem{
-				bean:           flatItem.Bean,
-				cfg:            m.config,
-				treePrefix:     flatItem.TreePrefix,
-				matched:        flatItem.Matched,
-				implicitStatus: flatItem.ImplicitStatus,
-				archived:       msg.archived[flatItem.Bean.ID],
-			}
-			if len(flatItem.Bean.Tags) > 0 {
-				m.hasTags = true
+// currentBean returns the bean under the cursor, or nil.
+func (m listModel) currentBean() *bean.Bean {
+	if r, ok := m.currentRow(); ok {
+		return r.bean
+	}
+	return nil
+}
+
+// rowIndex returns the index of the row showing the bean, or -1.
+func (m listModel) rowIndex(id string) int {
+	for i, r := range m.rows {
+		if r.bean.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// rebuild recomputes the visible rows from the loaded beans, filters, search
+// and folds, keeping the cursor on the same bean where possible. If that bean
+// got folded away, the cursor moves to its closest visible ancestor.
+func (m *listModel) rebuild() {
+	prevID := ""
+	if b := m.currentBean(); b != nil {
+		prevID = b.ID
+	}
+	prevCursor := m.cursor
+
+	matched := m.filters.apply(m.beans, m.implicit)
+	if q := strings.ToLower(m.query()); q != "" {
+		terms := strings.Fields(q)
+		var found []*bean.Bean
+		for _, b := range matched {
+			if searchMatches(b, terms) {
+				found = append(found, b)
 			}
 		}
-		m.list.SetItems(items)
-		m.idColWidth = msg.idColWidth
-		m.shownCount = msg.shownCount
-		m.totalCount = msg.totalCount
-		// Calculate responsive columns based on hasTags and width
-		m.cols = ui.CalculateResponsiveColumns(m.width, m.hasTags)
-		m.updateDelegate()
+		matched = found
+	}
+	m.shownCount = len(matched)
+	m.totalCount = len(m.beans)
+
+	sortFn := func(beans []*bean.Bean) {
+		bean.SortByStatusPriorityAndType(beans, m.config.StatusNames(), m.config.PriorityNames(), m.config.TypeNames())
+	}
+	tree := ui.BuildTree(matched, m.beans, sortFn, m.implicit)
+	folds := m.activeFolds()
+
+	rows := make([]treeRow, 0, len(m.beans))
+	var parents []string
+	var countAll func(nodes []*ui.TreeNode) int
+	countAll = func(nodes []*ui.TreeNode) int {
+		n := 0
+		for _, c := range nodes {
+			if len(c.Children) > 0 {
+				parents = append(parents, c.Bean.ID)
+			}
+			n += 1 + countAll(c.Children)
+		}
+		return n
+	}
+	var walk func(nodes []*ui.TreeNode, depth int)
+	walk = func(nodes []*ui.TreeNode, depth int) {
+		for _, n := range nodes {
+			r := treeRow{
+				bean:           n.Bean,
+				depth:          depth,
+				hasChildren:    len(n.Children) > 0,
+				matched:        n.Matched,
+				implicitStatus: n.ImplicitStatus,
+				archived:       m.archived[n.Bean.ID],
+			}
+			if r.hasChildren {
+				parents = append(parents, n.Bean.ID)
+				r.collapsed = folds[n.Bean.ID]
+			}
+			if r.collapsed {
+				r.hidden = countAll(n.Children)
+				rows = append(rows, r)
+				continue
+			}
+			rows = append(rows, r)
+			walk(n.Children, depth+1)
+		}
+	}
+	walk(tree, 0)
+	m.rows = rows
+	m.parents = parents
+	m.heights = nil
+
+	// Restore the cursor.
+	idx := m.rowIndex(prevID)
+	if idx < 0 && prevID != "" {
+		seen := map[string]bool{}
+		for b := m.byID[prevID]; b != nil && b.Parent != "" && !seen[b.Parent]; b = m.byID[b.Parent] {
+			seen[b.Parent] = true
+			if i := m.rowIndex(b.Parent); i >= 0 {
+				idx = i
+				break
+			}
+		}
+	}
+	if idx < 0 {
+		idx = min(prevCursor, len(m.rows)-1)
+	}
+	m.cursor = max(idx, 0)
+	m.ensureVisible()
+}
+
+// reveal moves the cursor to the bean, expanding folded ancestors. It
+// reports false if the bean is not part of the (filtered) tree.
+func (m *listModel) reveal(id string) bool {
+	folds := m.activeFolds()
+	seen := map[string]bool{}
+	for b := m.byID[id]; b != nil && b.Parent != "" && !seen[b.Parent]; b = m.byID[b.Parent] {
+		seen[b.Parent] = true
+		delete(folds, b.Parent)
+	}
+	m.rebuild()
+	i := m.rowIndex(id)
+	if i < 0 {
+		return false
+	}
+	m.cursor = i
+	m.ensureVisible()
+	return true
+}
+
+// Folding --------------------------------------------------------------------
+
+// parentRow returns the index of the row of the cursor row's parent, or -1.
+func (m listModel) parentRow() int {
+	r, ok := m.currentRow()
+	if !ok || r.bean.Parent == "" {
+		return -1
+	}
+	for i := m.cursor - 1; i >= 0; i-- {
+		if m.rows[i].bean.ID == r.bean.Parent {
+			return i
+		}
+	}
+	return -1
+}
+
+func (m *listModel) setFolded(id string, folded bool) {
+	folds := m.activeFolds()
+	if folded {
+		folds[id] = true
+	} else {
+		delete(folds, id)
+	}
+	m.rebuild()
+}
+
+// collapseOrParent collapses the cursor row, or moves to its parent if it is
+// a leaf or already collapsed (←/h).
+func (m *listModel) collapseOrParent() {
+	r, ok := m.currentRow()
+	if !ok {
+		return
+	}
+	if r.hasChildren && !r.collapsed {
+		m.setFolded(r.bean.ID, true)
+		return
+	}
+	if p := m.parentRow(); p >= 0 {
+		m.cursor = p
+		m.ensureVisible()
+	}
+}
+
+// expandOrChild expands the cursor row, or moves to its first child if it is
+// already expanded (→/l).
+func (m *listModel) expandOrChild() {
+	r, ok := m.currentRow()
+	if !ok || !r.hasChildren {
+		return
+	}
+	if r.collapsed {
+		m.setFolded(r.bean.ID, false)
+		return
+	}
+	m.moveCursor(1)
+}
+
+// foldOpen expands the cursor row (zo).
+func (m *listModel) foldOpen() {
+	if r, ok := m.currentRow(); ok && r.collapsed {
+		m.setFolded(r.bean.ID, false)
+	}
+}
+
+// foldClose collapses the cursor row, or the fold containing it if it has
+// no children of its own, moving the cursor there (zc, like vim).
+func (m *listModel) foldClose() {
+	r, ok := m.currentRow()
+	if !ok {
+		return
+	}
+	if r.hasChildren && !r.collapsed {
+		m.setFolded(r.bean.ID, true)
+		return
+	}
+	if p := m.parentRow(); p >= 0 {
+		m.cursor = p
+		m.setFolded(m.rows[p].bean.ID, true)
+	}
+}
+
+// foldToggle toggles the cursor row's fold (za).
+func (m *listModel) foldToggle() {
+	if r, ok := m.currentRow(); ok && r.hasChildren {
+		m.setFolded(r.bean.ID, !r.collapsed)
+	}
+}
+
+// openAll expands every fold (zR).
+func (m *listModel) openAll() {
+	clear(m.activeFolds())
+	m.rebuild()
+}
+
+// closeAll collapses every bean with children (zM).
+func (m *listModel) closeAll() {
+	folds := m.activeFolds()
+	for _, id := range m.parents {
+		folds[id] = true
+	}
+	m.rebuild()
+}
+
+// Cursor and scrolling ---------------------------------------------------------
+
+func (m *listModel) moveCursor(delta int) {
+	if len(m.rows) == 0 {
+		m.cursor = 0
+		return
+	}
+	m.cursor = max(0, min(len(m.rows)-1, m.cursor+delta))
+	m.ensureVisible()
+}
+
+// pageRows returns how many rows fit on a page starting at the cursor.
+func (m *listModel) pageRows() int {
+	n, used := 0, 0
+	for i := m.cursor; i < len(m.rows); i++ {
+		used += m.rowHeight(i)
+		if used > m.height {
+			break
+		}
+		n++
+	}
+	return max(n, 1)
+}
+
+// rowHeight returns the number of lines row i renders onto. Heights only
+// depend on the row and the width, so they are cached until either changes.
+func (m *listModel) rowHeight(i int) int {
+	if m.width <= 0 {
+		return 1
+	}
+	if m.heightsWidth != m.width || len(m.heights) != len(m.rows) {
+		m.heights = make([]int, len(m.rows))
+		m.heightsWidth = m.width
+	}
+	if m.heights[i] == 0 {
+		m.heights[i] = len(m.renderRow(i, m.width))
+	}
+	return m.heights[i]
+}
+
+// ensureVisible scrolls so that the cursor row is entirely visible, without
+// leaving blank lines at the bottom while rows are scrolled away at the top.
+func (m *listModel) ensureVisible() {
+	m.offset = max(0, min(m.offset, len(m.rows)-1))
+	if m.cursor < m.offset {
+		m.offset = m.cursor
+	}
+	if m.height <= 0 || len(m.rows) == 0 {
+		return
+	}
+	used := 0
+	for i := m.offset; i <= m.cursor; i++ {
+		used += m.rowHeight(i)
+	}
+	for m.offset < m.cursor && used > m.height {
+		used -= m.rowHeight(m.offset)
+		m.offset++
+	}
+	below := used
+	for i := m.cursor + 1; i < len(m.rows) && below <= m.height; i++ {
+		below += m.rowHeight(i)
+	}
+	for m.offset > 0 && below+m.rowHeight(m.offset-1) <= m.height {
+		m.offset--
+		below += m.rowHeight(m.offset)
+	}
+}
+
+// setSize sets the size of the rows area.
+func (m *listModel) setSize(width, height int) {
+	if m.width == width && m.height == height {
+		return
+	}
+	m.width, m.height = width, height
+	m.search.Width = max(width-4, 1)
+	m.ensureVisible()
+}
+
+// Update -----------------------------------------------------------------------
+
+// selectionOrCurrent returns the IDs to act on: the multi-selection if any,
+// otherwise the bean under the cursor.
+func (m listModel) selectionOrCurrent() ([]string, *bean.Bean) {
+	if len(m.selectedBeans) > 0 {
+		ids := make([]string, 0, len(m.selectedBeans))
+		for _, r := range m.beans {
+			if m.selectedBeans[r.ID] {
+				ids = append(ids, r.ID)
+			}
+		}
+		return ids, nil
+	}
+	if b := m.currentBean(); b != nil {
+		return []string{b.ID}, b
+	}
+	return nil, nil
+}
+
+func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		// The layout sets the real size; this keeps a standalone list usable.
+		m.setSize(msg.Width, msg.Height)
+
+	case beansLoadedMsg:
+		m.beans = msg.beans
+		m.implicit = msg.implicit
+		m.archived = msg.archived
+		m.byID = make(map[string]*bean.Bean, len(msg.beans))
+		for _, b := range msg.beans {
+			m.byID[b.ID] = b
+		}
+		// Forget selected beans that no longer exist.
+		for id := range m.selectedBeans {
+			if m.byID[id] == nil {
+				delete(m.selectedBeans, id)
+			}
+		}
+		m.loaded = true
+		m.err = nil
+		m.rebuild()
 		return m, nil
 
 	case errMsg:
@@ -333,404 +590,391 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		if m.list.FilterState() != list.Filtering {
-			switch msg.String() {
-			case " ":
-				// Toggle selection for multi-select, then move to next item
-				if item, ok := m.list.SelectedItem().(beanItem); ok {
-					if m.selectedBeans[item.bean.ID] {
-						delete(m.selectedBeans, item.bean.ID)
-					} else {
-						m.selectedBeans[item.bean.ID] = true
-					}
-					m.list.CursorDown()
-				}
-				return m, nil
-			case "enter":
-				if item, ok := m.list.SelectedItem().(beanItem); ok {
-					return m, func() tea.Msg {
-						return selectBeanMsg{bean: item.bean}
-					}
-				}
-			case "p":
-				// Open parent picker for selected bean(s)
-				if len(m.selectedBeans) > 0 {
-					// Multi-select mode
-					ids := make([]string, 0, len(m.selectedBeans))
-					types := make([]string, 0, len(m.selectedBeans))
-					for id := range m.selectedBeans {
-						ids = append(ids, id)
-						// Find the bean to get its type
-						for _, item := range m.list.Items() {
-							if bi, ok := item.(beanItem); ok && bi.bean.ID == id {
-								types = append(types, bi.bean.Type)
-								break
-							}
-						}
-					}
-					return m, func() tea.Msg {
-						return openParentPickerMsg{
-							beanIDs:   ids,
-							beanTitle: fmt.Sprintf("%d selected beans", len(ids)),
-							beanTypes: types,
-						}
-					}
-				} else if item, ok := m.list.SelectedItem().(beanItem); ok {
-					return m, func() tea.Msg {
-						return openParentPickerMsg{
-							beanIDs:       []string{item.bean.ID},
-							beanTitle:     item.bean.Title,
-							beanTypes:     []string{item.bean.Type},
-							currentParent: item.bean.Parent,
-						}
-					}
-				}
-			case "s":
-				// Open status picker for selected bean(s)
-				if len(m.selectedBeans) > 0 {
-					// Multi-select mode
-					ids := make([]string, 0, len(m.selectedBeans))
-					for id := range m.selectedBeans {
-						ids = append(ids, id)
-					}
-					return m, func() tea.Msg {
-						return openStatusPickerMsg{
-							beanIDs:   ids,
-							beanTitle: fmt.Sprintf("%d selected beans", len(ids)),
-						}
-					}
-				} else if item, ok := m.list.SelectedItem().(beanItem); ok {
-					return m, func() tea.Msg {
-						return openStatusPickerMsg{
-							beanIDs:       []string{item.bean.ID},
-							beanTitle:     item.bean.Title,
-							currentStatus: item.bean.Status,
-						}
-					}
-				}
-			case "t":
-				// Open type picker for selected bean(s)
-				if len(m.selectedBeans) > 0 {
-					// Multi-select mode
-					ids := make([]string, 0, len(m.selectedBeans))
-					for id := range m.selectedBeans {
-						ids = append(ids, id)
-					}
-					return m, func() tea.Msg {
-						return openTypePickerMsg{
-							beanIDs:   ids,
-							beanTitle: fmt.Sprintf("%d selected beans", len(ids)),
-						}
-					}
-				} else if item, ok := m.list.SelectedItem().(beanItem); ok {
-					return m, func() tea.Msg {
-						return openTypePickerMsg{
-							beanIDs:     []string{item.bean.ID},
-							beanTitle:   item.bean.Title,
-							currentType: item.bean.Type,
-						}
-					}
-				}
-			case "P":
-				// Open priority picker for selected bean(s)
-				if len(m.selectedBeans) > 0 {
-					// Multi-select mode
-					ids := make([]string, 0, len(m.selectedBeans))
-					for id := range m.selectedBeans {
-						ids = append(ids, id)
-					}
-					return m, func() tea.Msg {
-						return openPriorityPickerMsg{
-							beanIDs:   ids,
-							beanTitle: fmt.Sprintf("%d selected beans", len(ids)),
-						}
-					}
-				} else if item, ok := m.list.SelectedItem().(beanItem); ok {
-					return m, func() tea.Msg {
-						return openPriorityPickerMsg{
-							beanIDs:         []string{item.bean.ID},
-							beanTitle:       item.bean.Title,
-							currentPriority: item.bean.Priority,
-						}
-					}
-				}
-			case "b":
-				// Open blocking picker for selected bean
-				if item, ok := m.list.SelectedItem().(beanItem); ok {
-					return m, func() tea.Msg {
-						return openBlockingPickerMsg{
-							beanID:          item.bean.ID,
-							beanTitle:       item.bean.Title,
-							currentBlocking: item.bean.Blocking,
-						}
-					}
-				}
-			case "H":
-				// Toggle hiding of completed/scrapped beans
-				m.toggleHideResolved()
-				return m, m.loadBeans
-			case "F":
-				// Open the filter modal (status, type, tags)
-				return m, func() tea.Msg {
-					return openFilterPickerMsg{}
-				}
-			case "c":
-				// Open create modal
-				return m, func() tea.Msg {
-					return openCreateModalMsg{}
-				}
-			case "e":
-				// Open editor for selected bean
-				if item, ok := m.list.SelectedItem().(beanItem); ok {
-					return m, func() tea.Msg {
-						return openEditorMsg{
-							beanID:   item.bean.ID,
-							beanPath: item.bean.Path,
-						}
-					}
-				}
-			case "y":
-				// Copy bean ID(s) to clipboard
-				if len(m.selectedBeans) > 0 {
-					// Multi-select mode: copy all selected IDs
-					ids := make([]string, 0, len(m.selectedBeans))
-					for id := range m.selectedBeans {
-						ids = append(ids, id)
-					}
-					return m, func() tea.Msg {
-						return copyBeanIDMsg{ids: ids}
-					}
-				} else if item, ok := m.list.SelectedItem().(beanItem); ok {
-					// Single bean mode
-					return m, func() tea.Msg {
-						return copyBeanIDMsg{ids: []string{item.bean.ID}}
-					}
-				}
-			case "esc", "backspace":
-				// First clear selection if any beans are selected
-				if len(m.selectedBeans) > 0 {
-					clear(m.selectedBeans)
-					return m, nil
-				}
-				// Then clear active filter if any
-				if m.hasActiveFilter() {
-					return m, func() tea.Msg {
-						return clearFilterMsg{}
-					}
-				}
+		if m.searching {
+			return m.updateSearch(msg)
+		}
+		return m.updateKey(msg)
+	}
+	return m, nil
+}
+
+// updateSearch handles keys while the search input has focus.
+func (m listModel) updateSearch(msg tea.KeyMsg) (listModel, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.searching = false
+		m.search.Blur()
+		m.search.SetValue("")
+		m.rebuild()
+		return m, nil
+	case "enter":
+		m.searching = false
+		m.search.Blur()
+		return m, nil
+	case "up", "ctrl+p":
+		m.moveCursor(-1)
+		return m, nil
+	case "down", "ctrl+n":
+		m.moveCursor(1)
+		return m, nil
+	}
+	prev := m.search.Value()
+	var cmd tea.Cmd
+	m.search, cmd = m.search.Update(msg)
+	if m.search.Value() != prev {
+		m.rebuild()
+		// Put the cursor on the first match rather than on context ancestors.
+		for i, r := range m.rows {
+			if r.matched {
+				m.cursor, m.offset = i, 0
+				break
 			}
 		}
+		m.ensureVisible()
 	}
+	return m, cmd
+}
 
-	// Always forward to the list component
-	m.list, cmd = m.list.Update(msg)
-	if cmd != nil {
-		cmds = append(cmds, cmd)
-	}
-
-	// Check if cursor moved and emit message
-	if m.list.Index() != prevIndex {
-		if item, ok := m.list.SelectedItem().(beanItem); ok {
-			cmds = append(cmds, func() tea.Msg {
-				return cursorChangedMsg{beanID: item.bean.ID}
-			})
+// updateKey handles keys while the tree has focus.
+func (m listModel) updateKey(msg tea.KeyMsg) (listModel, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		m.moveCursor(-1)
+	case "down", "j":
+		m.moveCursor(1)
+	case "pgup", "ctrl+b":
+		m.moveCursor(-m.pageRows())
+	case "pgdown", "ctrl+f":
+		m.moveCursor(m.pageRows())
+	case "ctrl+u":
+		m.moveCursor(-max(m.pageRows()/2, 1))
+	case "ctrl+d":
+		m.moveCursor(max(m.pageRows()/2, 1))
+	case "home":
+		m.moveCursor(-len(m.rows))
+	case "end", "G":
+		m.moveCursor(len(m.rows))
+	case "left", "h":
+		m.collapseOrParent()
+	case "right", "l":
+		m.expandOrChild()
+	case "/":
+		m.searching = true
+		return m, m.search.Focus()
+	case " ":
+		// Toggle selection for multi-select, then move to next item
+		if b := m.currentBean(); b != nil {
+			if m.selectedBeans[b.ID] {
+				delete(m.selectedBeans, b.ID)
+			} else {
+				m.selectedBeans[b.ID] = true
+			}
+			m.moveCursor(1)
+		}
+	case "p":
+		ids, b := m.selectionOrCurrent()
+		if len(ids) == 0 {
+			break
+		}
+		msg := openParentPickerMsg{beanIDs: ids}
+		if b != nil {
+			msg.beanTitle, msg.beanTypes, msg.currentParent = b.Title, []string{b.Type}, b.Parent
+		} else {
+			msg.beanTitle = fmt.Sprintf("%d selected beans", len(ids))
+			for _, id := range ids {
+				msg.beanTypes = append(msg.beanTypes, m.byID[id].Type)
+			}
+		}
+		return m, func() tea.Msg { return msg }
+	case "s":
+		ids, b := m.selectionOrCurrent()
+		if len(ids) == 0 {
+			break
+		}
+		msg := openStatusPickerMsg{beanIDs: ids, beanTitle: fmt.Sprintf("%d selected beans", len(ids))}
+		if b != nil {
+			msg.beanTitle, msg.currentStatus = b.Title, b.Status
+		}
+		return m, func() tea.Msg { return msg }
+	case "t":
+		ids, b := m.selectionOrCurrent()
+		if len(ids) == 0 {
+			break
+		}
+		msg := openTypePickerMsg{beanIDs: ids, beanTitle: fmt.Sprintf("%d selected beans", len(ids))}
+		if b != nil {
+			msg.beanTitle, msg.currentType = b.Title, b.Type
+		}
+		return m, func() tea.Msg { return msg }
+	case "P":
+		ids, b := m.selectionOrCurrent()
+		if len(ids) == 0 {
+			break
+		}
+		msg := openPriorityPickerMsg{beanIDs: ids, beanTitle: fmt.Sprintf("%d selected beans", len(ids))}
+		if b != nil {
+			msg.beanTitle, msg.currentPriority = b.Title, b.Priority
+		}
+		return m, func() tea.Msg { return msg }
+	case "b":
+		if b := m.currentBean(); b != nil {
+			return m, func() tea.Msg {
+				return openBlockingPickerMsg{beanID: b.ID, beanTitle: b.Title, currentBlocking: b.Blocking}
+			}
+		}
+	case "H":
+		// Toggle hiding of completed/scrapped beans
+		m.toggleHideResolved()
+		return m, m.loadBeans
+	case "F":
+		return m, func() tea.Msg { return openFilterPickerMsg{} }
+	case "c":
+		return m, func() tea.Msg { return openCreateModalMsg{} }
+	case "e":
+		if b := m.currentBean(); b != nil {
+			return m, func() tea.Msg { return openEditorMsg{beanID: b.ID, beanPath: b.Path} }
+		}
+	case "y":
+		// Copy the full bean ID(s) to the clipboard
+		if ids, _ := m.selectionOrCurrent(); len(ids) > 0 {
+			return m, func() tea.Msg { return copyBeanIDMsg{ids: ids} }
+		}
+	case "esc", "backspace":
+		// Clear the selection, then the search, then the filters.
+		if len(m.selectedBeans) > 0 {
+			clear(m.selectedBeans)
+			return m, nil
+		}
+		if m.search.Value() != "" {
+			m.search.SetValue("")
+			m.rebuild()
+			return m, nil
+		}
+		if m.hasActiveFilter() {
+			return m, func() tea.Msg { return clearFilterMsg{} }
 		}
 	}
-
-	return m, tea.Batch(cmds...)
+	return m, nil
 }
 
-// updateDelegate updates the list delegate with current responsive columns
-func (m *listModel) updateDelegate() {
-	delegate := itemDelegate{
-		cfg:           m.config,
-		hasTags:       m.hasTags,
-		width:         m.width,
-		cols:          m.cols,
-		idColWidth:    m.idColWidth,
-		selectedBeans: &m.selectedBeans,
+// Rendering --------------------------------------------------------------------
+
+// shortID returns the bean ID without the configured ID prefix, so tree rows
+// spend their width on titles. IDs that do not carry the prefix (e.g. created
+// with a custom prefix) are kept in full.
+func shortID(id, prefix string) string {
+	rest, ok := strings.CutPrefix(id, prefix)
+	if !ok || prefix == "" {
+		return id
 	}
-	m.list.SetDelegate(delegate)
+	if rest = strings.TrimLeft(rest, "-"); rest == "" {
+		return id
+	}
+	return rest
 }
 
+// glyph returns the single-letter code of a status or type.
+func glyph(name string, short func(string) string) string {
+	if g := short(name); g != "?" {
+		return g
+	}
+	if name == "" {
+		return "?"
+	}
+	return strings.ToUpper(name[:1])
+}
+
+// renderRow renders row i as one or more lines of exactly width cells.
+func (m listModel) renderRow(i, width int) []string {
+	r := m.rows[i]
+	b := r.bean
+	selected := i == m.cursor
+	marked := m.selectedBeans[b.ID]
+	dim := !r.matched
+
+	bg := lipgloss.Color("")
+	if selected {
+		bg = colSelection()
+	}
+	st := func(s lipgloss.Style) lipgloss.Style { return withBackground(s, bg) }
+	plain := st(lipgloss.NewStyle())
+	muted := st(mutedStyle())
+
+	colors := m.config.GetBeanColors(b.Status, b.Type, b.Priority)
+	statusStyle := st(fg(colNamed(colors.StatusColor)))
+	typeStyle := st(fg(colNamed(colors.TypeColor)))
+	idStyle := muted
+	titleStyle := plain
+	if dim {
+		statusStyle, typeStyle, titleStyle = muted, muted, muted
+	}
+	if selected {
+		titleStyle = st(accentStyle().Bold(true))
+	}
+	if marked {
+		idStyle = st(fg(colWarning()).Bold(true))
+	}
+
+	bar := plain.Render(" ")
+	switch {
+	case selected:
+		bar = st(accentStyle()).Render("▌")
+	case marked:
+		bar = st(fg(colWarning())).Render("•")
+	}
+	chevron := "  "
+	if r.hasChildren {
+		chevron = "▾ "
+		if r.collapsed {
+			chevron = "▸ "
+		}
+	}
+	id := shortID(b.ID, m.config.Beans.Prefix)
+	prefix := plain.Render(strings.Repeat("  ", r.depth)) +
+		muted.Render(chevron) +
+		statusStyle.Render(glyph(b.Status, ui.ShortStatus)) + plain.Render(" ") +
+		typeStyle.Render(glyph(b.Type, ui.ShortType)) + plain.Render(" ") +
+		idStyle.Render(id) + plain.Render(" ")
+	prefixW := 1 + lipgloss.Width(prefix)
+
+	var toks []token
+	if sym := ui.GetPrioritySymbol(b.Priority); sym != "" && !dim {
+		ps := st(fg(colNamed(colors.PriorityColor)))
+		if b.Priority == "critical" || b.Priority == "high" {
+			ps = ps.Bold(true)
+		}
+		toks = append(toks, token{text: sym, style: ps})
+	}
+	toks = append(toks, wordTokens(b.Title, titleStyle)...)
+	if len(toks) == 0 {
+		toks = append(toks, token{text: "(untitled)", style: muted})
+	}
+	if r.implicitStatus != "" && r.matched {
+		toks = append(toks, token{text: "↑" + r.implicitStatus, style: muted})
+	}
+	if r.archived {
+		toks = append(toks, token{text: archivedMarkerText, style: muted})
+	}
+	if r.collapsed && r.hidden > 0 {
+		toks = append(toks, token{text: fmt.Sprintf("+%d", r.hidden), style: muted})
+	}
+
+	textW := max(width-prefixW, 1)
+	lines := wrapTokens(toks, textW, treeRowMaxLines, plain)
+	out := make([]string, len(lines))
+	indent := plain.Render(strings.Repeat(" ", max(prefixW-1, 0)))
+	for j, l := range lines {
+		if j == 0 {
+			out[j] = fitWidth(bar+prefix+l, width, plain)
+		} else {
+			out[j] = fitWidth(bar+indent+l, width, plain)
+		}
+	}
+	return out
+}
+
+// View renders the rows area: exactly m.height lines of m.width cells.
 func (m listModel) View() string {
-	if m.err != nil {
-		return fmt.Sprintf("Error: %v\n\nPress q to quit.", m.err)
-	}
-
-	if m.width == 0 {
-		return "Loading..."
-	}
-
-	// Update title based on active filters
-	m.list.Title = m.title()
-
-	// Inner height: total height minus border (2) minus footer (1) minus padding (1)
-	return m.viewContent(m.height-4) + "\n" + m.Footer()
+	return strings.Join(m.viewLines(), "\n")
 }
 
-// viewContent renders just the bordered list without footer.
-// innerHeight is the content height inside the border (not including border lines).
-func (m listModel) viewContent(innerHeight int) string {
-	border := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ui.ColorMuted).
-		Width(m.width - 2).
-		Height(innerHeight)
-
-	return border.Render(m.list.View())
-}
-
-// keyHint is a single "key description" entry in a footer.
-type keyHint struct {
-	key  string
-	desc string
-}
-
-func (h keyHint) render() string {
-	return helpKeyStyle.Render(h.key) + " " + helpStyle.Render(h.desc)
-}
-
-// footerHintSeparator separates hints in a footer.
-const footerHintSeparator = "  "
-
-// renderHints renders footer hints on a single line that fits within width.
-// Hints are given in order of importance; pinned hints are always shown at the
-// end. Less important hints that do not fit are dropped, so the footer never
-// wraps or gets cut off mid-hint. A width <= 0 means unlimited.
-func renderHints(hints, pinned []keyHint, width int) string {
-	render := func(hs []keyHint) string {
-		parts := make([]string, len(hs))
-		for i, h := range hs {
-			parts[i] = h.render()
+func (m listModel) viewLines() []string {
+	w, h := max(m.width, 1), max(m.height, 0)
+	var lines []string
+	switch {
+	case m.err != nil:
+		lines = append(lines, fg(colDanger()).Render(clampWidth(fmt.Sprintf("Error: %v", m.err), w)))
+	case !m.loaded:
+		lines = append(lines, mutedStyle().Render(" Loading…"))
+	case len(m.rows) == 0:
+		msg := " No beans yet. Press c to create one."
+		if !m.filters.isEmpty() || m.query() != "" {
+			msg = " No beans match. Press esc to clear."
 		}
-		return strings.Join(parts, footerHintSeparator)
-	}
-
-	if width <= 0 {
-		return render(append(append([]keyHint{}, hints...), pinned...))
-	}
-
-	used := lipgloss.Width(render(pinned))
-	var shown []keyHint
-	for _, h := range hints {
-		w := lipgloss.Width(h.render()) + lipgloss.Width(footerHintSeparator)
-		if used+w > width {
-			continue
+		lines = append(lines, mutedStyle().Render(truncateText(msg, w)))
+	default:
+		for i := m.offset; i < len(m.rows) && len(lines) < h; i++ {
+			lines = append(lines, m.renderRow(i, w)...)
 		}
-		shown = append(shown, h)
-		used += w
 	}
-	line := render(append(shown, pinned...))
-	// Even the pinned hints may not fit on very narrow terminals.
-	return lipgloss.NewStyle().MaxWidth(width).Render(line)
+	if len(lines) > h {
+		lines = lines[:h]
+	}
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	for i, l := range lines {
+		lines[i] = fitWidth(l, w, lipgloss.NewStyle())
+	}
+	return lines
 }
 
-// footerHints returns the list footer hints in order of importance, plus the
-// hints that must always be shown.
-func (m listModel) footerHints() (hints, pinned []keyHint) {
+// searchLine renders the search input line shown above the rows.
+func (m listModel) searchLine(width int) string {
+	prompt := accentStyle().Render("/ ")
+	if !m.searching {
+		return fitWidth(prompt+m.search.Value()+mutedStyle().Render("  (/ edit · esc clear)"), width, lipgloss.NewStyle())
+	}
+	return fitWidth(prompt+m.search.View(), width, lipgloss.NewStyle())
+}
+
+// showSearchLine reports whether the search line is shown.
+func (m listModel) showSearchLine() bool {
+	return m.searching || m.search.Value() != ""
+}
+
+// position returns "cursor/total" for the tree's border.
+func (m listModel) position() string {
+	if len(m.rows) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d/%d", m.cursor+1, len(m.rows))
+}
+
+// treeHints returns the footer hints for the tree in order of importance.
+func (m listModel) treeHints(wide bool) []keyHint {
+	if m.searching {
+		return []keyHint{{"enter", "apply"}, {"esc", "cancel"}, {"↑↓", "move"}}
+	}
 	hideLabel := "hide done"
 	if m.filters.hideResolved {
 		hideLabel = "show done"
 	}
-	pinned = []keyHint{{"?", "help"}, {"q", "quit"}}
-
-	switch {
-	case len(m.selectedBeans) > 0:
-		hints = []keyHint{
+	if len(m.selectedBeans) > 0 {
+		return []keyHint{
 			{"esc", "clear selection"},
 			{"space", "toggle"},
 			{"s", "status"},
 			{"t", "type"},
 			{"P", "priority"},
 			{"p", "parent"},
-			{"y", "copy id"},
-		}
-	case m.hasActiveFilter():
-		hints = []keyHint{
-			{"esc", "clear filter"},
-			{"F", "filters"},
-			{"enter", "view"},
-			{"/", "search"},
-			{"H", hideLabel},
-			{"c", "create"},
-			{"e", "edit"},
-			{"s", "status"},
-			{"t", "type"},
-			{"P", "priority"},
-			{"p", "parent"},
-			{"b", "blocking"},
-			{"space", "select"},
-			{"y", "copy id"},
-		}
-	default:
-		hints = []keyHint{
-			{"enter", "view"},
-			{"/", "search"},
-			{"F", "filters"},
-			{"c", "create"},
-			{"e", "edit"},
-			{"s", "status"},
-			{"t", "type"},
-			{"P", "priority"},
-			{"p", "parent"},
-			{"b", "blocking"},
-			{"space", "select"},
-			{"y", "copy id"},
-			{"H", hideLabel},
+			{"y", "copy ids"},
 		}
 	}
-	return hints, pinned
-}
-
-// Footer renders the help/status footer for the list view. It always fits on
-// a single line of the terminal width.
-func (m listModel) Footer() string {
-	// Show selection count if any beans are selected
-	var selectionPrefix string
-	if len(m.selectedBeans) > 0 {
-		selectionStyle := lipgloss.NewStyle().Foreground(ui.ColorWarning).Bold(true)
-		selectionPrefix = selectionStyle.Render(fmt.Sprintf("(%d selected) ", len(m.selectedBeans)))
+	detail := "details"
+	if !wide {
+		detail = "open"
 	}
-
-	// Show status message if present, otherwise show help
-	footer := selectionPrefix
-	if m.statusMessage != "" {
-		statusStyle := lipgloss.NewStyle().Foreground(ui.ColorSuccess).Bold(true)
-		footer += statusStyle.Render(m.statusMessage)
-	} else {
-		hintsWidth := 0
-		if m.width > 0 {
-			hintsWidth = max(m.width-lipgloss.Width(selectionPrefix), 1)
-		}
-		hints, pinned := m.footerHints()
-		footer += renderHints(hints, pinned, hintsWidth)
+	var hints []keyHint
+	if m.search.Value() != "" {
+		hints = append(hints, keyHint{"esc", "clear search"})
+	} else if m.hasActiveFilter() {
+		hints = append(hints, keyHint{"esc", "clear filter"})
 	}
-
-	if m.width > 0 {
-		footer = lipgloss.NewStyle().MaxWidth(m.width).Render(footer)
-	}
-	return footer
-}
-
-// ViewConstrained renders the list constrained to the given width and height.
-// Used for the left pane in two-column mode. Returns only the content without footer.
-// The output will be exactly `height` lines tall.
-func (m listModel) ViewConstrained(width, height int) string {
-	// Temporarily set constrained dimensions
-	m.width = width
-	m.height = height
-
-	// Inner height for border content (height minus 2 for top/bottom border)
-	innerHeight := height - 2
-	m.list.SetSize(width-2, innerHeight)
-
-	// Recalculate columns for constrained width
-	m.cols = ui.CalculateResponsiveColumns(width, m.hasTags)
-	m.updateDelegate()
-
-	// Update title based on active filters
-	m.list.Title = m.title()
-
-	return m.viewContent(innerHeight)
+	return append(hints,
+		keyHint{"enter", detail},
+		keyHint{"e", "edit"},
+		keyHint{"c", "create"},
+		keyHint{"s", "status"},
+		keyHint{"t", "type"},
+		keyHint{"P", "priority"},
+		keyHint{"p", "parent"},
+		keyHint{"b", "blocking"},
+		keyHint{"←→", "fold"},
+		keyHint{"space", "select"},
+		keyHint{"H", hideLabel},
+		keyHint{"y", "copy id"},
+		keyHint{"zR zM", "open/close all"},
+		keyHint{"g t", "tag"},
+	)
 }

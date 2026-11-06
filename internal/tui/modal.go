@@ -45,9 +45,9 @@ func renderPickerModal(cfg pickerModalConfig) string {
 	subtitle := ui.Muted.Render(cfg.BeanID)
 
 	// Help footer
-	help := helpKeyStyle.Render("enter") + " " + helpStyle.Render("select") + "  " +
-		helpKeyStyle.Render("/") + " " + helpStyle.Render("filter") + "  " +
-		helpKeyStyle.Render("esc") + " " + helpStyle.Render("cancel")
+	help := helpKeyStyle().Render("enter") + " " + helpStyle().Render("select") + "  " +
+		helpKeyStyle().Render("/") + " " + helpStyle().Render("filter") + "  " +
+		helpKeyStyle().Render("esc") + " " + helpStyle().Render("cancel")
 
 	// Border style
 	border := lipgloss.NewStyle().
@@ -81,7 +81,7 @@ func overlayModal(bgView, modal string, width, height int) string {
 	}
 
 	// Dim the background
-	dimStyle := modalDimStyle
+	dimStyle := modalDimStyle()
 	for i, line := range bgLines {
 		bgLines[i] = dimStyle.Render(stripAnsi(line))
 	}
@@ -127,7 +127,7 @@ func overlayLine(bgLine, modalLine string, startX, maxWidth int) string {
 		suffix = string(bgRunes[suffixStart:])
 	}
 
-	dimStyle := modalDimStyle
+	dimStyle := modalDimStyle()
 	return dimStyle.Render(prefix) + modalLine + dimStyle.Render(suffix)
 }
 

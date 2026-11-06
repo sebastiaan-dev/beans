@@ -99,8 +99,8 @@ func (m createModalModel) View() string {
 		Render(m.textInput.View())
 
 	// Help text
-	help := helpKeyStyle.Render("enter") + " " + helpStyle.Render("create") + "  " +
-		helpKeyStyle.Render("esc") + " " + helpStyle.Render("cancel")
+	help := helpKeyStyle().Render("enter") + " " + helpStyle().Render("create") + "  " +
+		helpKeyStyle().Render("esc") + " " + helpStyle().Render("cancel")
 
 	// Assemble content
 	content := header + "\n\n" + inputBox + "\n\n" + help

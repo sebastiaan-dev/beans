@@ -365,14 +365,14 @@ func renderOptionRow(label string, checked, isCursor bool) string {
 	}
 	box := ui.Muted.Render("[ ]")
 	if checked {
-		box = helpKeyStyle.Render("[x]")
+		box = helpKeyStyle().Render("[x]")
 	}
 	return cursor + box + " " + label
 }
 
 func (m filterPickerModel) sectionHeader(s filterSection, label string) string {
 	if m.section == s {
-		return listTitleStyle.Render(label)
+		return listTitleStyle().Render(label)
 	}
 	return ui.Muted.Render(label)
 }
@@ -441,7 +441,7 @@ func (m filterPickerModel) View() string {
 	// Never wider than the terminal (the border adds 2 columns).
 	modalWidth := max(1, min(max(50, min(70, m.width*60/100)), m.width-2))
 
-	title := listTitleStyle.Render("Filter Beans")
+	title := listTitleStyle().Render("Filter Beans")
 
 	statusCol := m.renderChoiceSection(filterSectionStatus, "Status", func(o filterOption) string {
 		return ui.RenderStatusTextWithColor(o.name, o.color, o.isArchive)
@@ -460,12 +460,12 @@ func (m filterPickerModel) View() string {
 	}
 	hideLine := ui.Muted.Render("completed/scrapped: " + hide + " (toggle with H in the list)")
 
-	help := helpKeyStyle.Render("tab") + " " + helpStyle.Render("section") + "  " +
-		helpKeyStyle.Render("↑↓") + " " + helpStyle.Render("move") + "  " +
-		helpKeyStyle.Render("space") + " " + helpStyle.Render("toggle") + "\n" +
-		helpKeyStyle.Render("ctrl+x") + " " + helpStyle.Render("clear") + "  " +
-		helpKeyStyle.Render("enter") + " " + helpStyle.Render("apply") + "  " +
-		helpKeyStyle.Render("esc") + " " + helpStyle.Render("cancel")
+	help := helpKeyStyle().Render("tab") + " " + helpStyle().Render("section") + "  " +
+		helpKeyStyle().Render("↑↓") + " " + helpStyle().Render("move") + "  " +
+		helpKeyStyle().Render("space") + " " + helpStyle().Render("toggle") + "\n" +
+		helpKeyStyle().Render("ctrl+x") + " " + helpStyle().Render("clear") + "  " +
+		helpKeyStyle().Render("enter") + " " + helpStyle().Render("apply") + "  " +
+		helpKeyStyle().Render("esc") + " " + helpStyle().Render("cancel")
 
 	content := title + "\n\n" + columns + "\n\n" + m.renderTagSection() + "\n\n" + hideLine + "\n\n" + help
 
