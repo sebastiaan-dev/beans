@@ -107,7 +107,7 @@ func (m *Manager) openWorktrunk(name string, tio TerminalIO) (*Worktree, bool, e
 	}
 	args = append(args, name, "--no-cd")
 	cmd := exec.Command(wb.bin, args...)
-	cmd.Env = commandEnv()
+	cmd.Env = ChildEnv()
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = tio.Stdin, tio.Stdout, tio.Stderr
 	if err := cmd.Run(); err != nil {
 		return nil, false, fmt.Errorf("wt switch %s failed: %w", name, err)

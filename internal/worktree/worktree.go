@@ -14,9 +14,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/hmans/beans/internal/gitutil"
-	"github.com/hmans/beans/pkg/bean"
 )
 
 // DefaultFetchTimeout is the default timeout for git fetch operations during
@@ -245,7 +242,21 @@ func (m *Manager) notify() {
 // worktrees on beans/* branches, for the worktrunk backend every linked
 // worktree. The main worktree is never included. Worktrees are returned in
 // git's order (creation order, oldest first).
+//
+// BeanIDs are detected for every worktree (concurrently, see detectBeanIDsAll);
+// callers that don't need them should use ListBasic, which is much cheaper.
 func (m *Manager) List() ([]Worktree, error) {
+	worktrees, err := m.ListBasic()
+	if err != nil {
+		return nil, err
+	}
+	m.detectBeanIDsAll(worktrees)
+	return worktrees, nil
+}
+
+// ListBasic is List without bean detection: BeanIDs are left nil. It only
+// runs `git worktree list --porcelain` and reads metadata files.
+func (m *Manager) ListBasic() ([]Worktree, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -271,7 +282,6 @@ func (m *Manager) List() ([]Worktree, error) {
 				wt.Name = filepath.Base(wt.Path)
 			}
 		}
-		wt.BeanIDs = m.DetectBeanIDs(wt.Path)
 		if st, ok := m.setupStatuses[wt.ID]; ok {
 			wt.Setup = st.status
 			wt.SetupError = st.err
@@ -423,52 +433,6 @@ func samePath(a, b string) bool {
 	ra, errA := filepath.EvalSymlinks(a)
 	rb, errB := filepath.EvalSymlinks(b)
 	return errA == nil && errB == nil && ra == rb
-}
-
-// DetectBeanIDs returns bean IDs found in the worktree's diff vs the base branch.
-// It filters for .beans/*.md files, excluding dot-prefixed subdirs (like .worktrees/,
-// .conversations/) and the archive/ directory.
-func (m *Manager) DetectBeanIDs(worktreePath string) []string {
-	changes, err := gitutil.AllChangesVsUpstream(worktreePath, m.baseRef)
-	if err != nil {
-		return nil
-	}
-
-	seen := make(map[string]bool)
-	var ids []string
-
-	for _, change := range changes {
-		// Must be directly under .beans/ and end with .md
-		rest, ok := strings.CutPrefix(change.Path, ".beans/")
-		if !ok {
-			continue
-		}
-
-		// Exclude subdirectories: anything with a / is nested
-		if strings.Contains(rest, "/") {
-			continue
-		}
-
-		// Must be a .md file
-		if !strings.HasSuffix(rest, ".md") {
-			continue
-		}
-
-		// Skip if the file was deleted in the worktree
-		fullPath := filepath.Join(worktreePath, ".beans", rest)
-		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
-			continue
-		}
-
-		id, _ := bean.ParseFilename(rest)
-		if id != "" && !seen[id] {
-			seen[id] = true
-			ids = append(ids, id)
-		}
-	}
-
-	sort.Strings(ids)
-	return ids
 }
 
 // Create creates a new worktree for a workspace with the given name and stores

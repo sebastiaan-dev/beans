@@ -228,7 +228,7 @@ func runServer(port int, origins []string) error {
 			return
 		}
 		// Only if this worktree exists and doesn't already have a description
-		if wts, err := wtManager.List(); err == nil {
+		if wts, err := wtManager.ListBasic(); err == nil {
 			for _, wt := range wts {
 				if wt.ID == beanID && wt.Description == "" {
 					desc := agent.GenerateDescription(message)
@@ -275,7 +275,7 @@ func runServer(port int, origins []string) error {
 			return ""
 		}
 		var branch, wtPath string
-		if wts, err := wtManager.List(); err == nil {
+		if wts, err := wtManager.ListBasic(); err == nil {
 			for _, wt := range wts {
 				if wt.ID == beanID {
 					branch = wt.Branch
@@ -455,7 +455,7 @@ func newWorkspaceSyncer(wtManager *worktree.Manager, portAlloc *portalloc.Alloca
 		mu.Lock()
 		defer mu.Unlock()
 
-		wts, err := wtManager.List()
+		wts, err := wtManager.ListBasic()
 		if err != nil {
 			log.Printf("[beans] warning: failed to list worktrees: %v", err)
 			return

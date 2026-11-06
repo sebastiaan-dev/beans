@@ -2,9 +2,7 @@ package worktree
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
-	"strings"
 )
 
 // BackendKind identifies a worktree backend (the worktree.backend config value).
@@ -110,19 +108,4 @@ func LookupWorktrunk() (string, error) {
 func WorktrunkAvailable() bool {
 	_, err := LookupWorktrunk()
 	return err == nil
-}
-
-// commandEnv returns the environment for backend subprocesses: the server's
-// environment without worktrunk shell-integration directives, so wt never
-// tries to change the directory of a shell that started beans-serve.
-func commandEnv() []string {
-	env := os.Environ()
-	out := env[:0:0]
-	for _, kv := range env {
-		if strings.HasPrefix(kv, "WORKTRUNK_DIRECTIVE_") {
-			continue
-		}
-		out = append(out, kv)
-	}
-	return out
 }

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	gopty "github.com/aymanbagabas/go-pty"
+
+	"github.com/hmans/beans/internal/worktree"
 )
 
 const scrollbackSize = 64 * 1024 // 64KB
@@ -418,7 +420,9 @@ func (m *Manager) spawn(sessionID, workDir string, cols, rows uint16, args ...st
 		return nil, fmt.Errorf("failed to resize PTY: %w", err)
 	}
 
-	env := append(os.Environ(), "TERM=xterm-256color")
+	// Shell-integration directives belong to the shell that started
+	// beans-serve; see worktree.ChildEnv.
+	env := append(worktree.ChildEnv(), "TERM=xterm-256color")
 	if m.envFunc != nil {
 		env = append(env, m.envFunc(sessionID)...)
 	}

@@ -429,3 +429,43 @@ func TestCreateWithCommandEnvFunc(t *testing.T) {
 		}
 	}
 }
+
+// TestSessionEnvDropsShellDirectives checks that terminal sessions don't
+// inherit worktrunk shell-integration directives from the server, while other
+// variables pass through.
+func TestSessionEnvDropsShellDirectives(t *testing.T) {
+	t.Setenv("SHELL", "/bin/sh")
+	t.Setenv("WORKTRUNK_DIRECTIVE_FILE", "/tmp/directive")
+	t.Setenv("WORKTRUNK_DIRECTIVE_CD_FILE", "/tmp/cd")
+	t.Setenv("TERMINAL_ENV_TEST", "kept")
+
+	mgr := NewManager(nil)
+	defer mgr.Shutdown()
+
+	sess, err := mgr.CreateWithCommand("test-env-directives", os.TempDir(), 200, 24,
+		`echo "directives=[$(env | grep -c '^WORKTRUNK_DIRECTIVE_')] test=[$TERMINAL_ENV_TEST]"`)
+	if err != nil {
+		t.Fatalf("CreateWithCommand failed: %v", err)
+	}
+	_, output := sess.Attach()
+
+	const want = "directives=[0] test=[kept]"
+	deadline := time.After(15 * time.Second)
+	var collected []byte
+	for {
+		select {
+		case data := <-output:
+			collected = append(collected, data...)
+			if containsSubstring(collected, want) {
+				return
+			}
+		case <-sess.Done():
+			if containsSubstring(collected, want) {
+				return
+			}
+			t.Fatalf("session ended without %q; got: %q", want, string(collected))
+		case <-deadline:
+			t.Fatalf("timed out; collected output: %q", string(collected))
+		}
+	}
+}
