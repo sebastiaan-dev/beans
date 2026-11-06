@@ -27,13 +27,13 @@ const DefaultNvimTimeout = 3 * time.Second
 
 // nvimCacheVersion is part of every cache key; bump it when the export
 // script or the NvimExport format changes.
-const nvimCacheVersion = "1"
+const nvimCacheVersion = "2"
 
 // NvimHighlightGroups are the highlight groups exported from Neovim.
 var NvimHighlightGroups = []string{
 	"Normal", "NormalFloat", "Comment", "Function", "Statement", "String", "Type",
 	"Constant", "Identifier", "Special", "Title", "Visual", "CursorLine", "Search",
-	"FloatBorder", "WinSeparator", "LineNr", "DiagnosticError", "DiagnosticWarn",
+	"FloatBorder", "WinSeparator", "LineNr", "NonText", "DiagnosticError", "DiagnosticWarn",
 	"DiagnosticOk", "DiagnosticInfo", "DiagnosticHint", "DiffAdd", "DiffDelete",
 }
 
@@ -265,6 +265,20 @@ var (
 	nvimConfigDirs  = []string{"lua", "colors", "plugin", "after"}
 )
 
+// NvimThemeSources returns the parts of the Neovim config in configDir that
+// are part of the cache key (see NvimCacheKey): the top-level files and the
+// directories whose contents are fingerprinted recursively. Watching them
+// detects every change that can invalidate a cached export.
+func NvimThemeSources(configDir string) (files, dirs []string) {
+	for _, name := range nvimConfigFiles {
+		files = append(files, filepath.Join(configDir, name))
+	}
+	for _, name := range nvimConfigDirs {
+		dirs = append(dirs, filepath.Join(configDir, name))
+	}
+	return files, dirs
+}
+
 type hashWriter interface{ Write([]byte) (int, error) }
 
 func fingerprintNvimConfig(h hashWriter, dir string) error {
@@ -357,7 +371,10 @@ func writeNvimCache(path string, exp *NvimExport) error {
 //	Fg        Normal.fg
 //	Bg        Normal.bg
 //	Muted     Comment.fg, LineNr.fg
-//	Border    FloatBorder.fg, WinSeparator.fg, LineNr.fg (first that differs from Bg)
+//	Border    FloatBorder.fg, WinSeparator.fg, LineNr.fg, NonText.fg,
+//	          Comment.fg: the first whose contrast against Bg is at least
+//	          MinBorderContrast and differs from Fg (else Fg, else the one
+//	          with the most contrast)
 //	Accent    Function.fg, Title.fg, Statement.fg
 //	Selection Visual.bg, CursorLine.bg
 //	Success   DiagnosticOk.fg, String.fg
@@ -402,7 +419,8 @@ func FromNvim(exp *NvimExport, colorscheme string) (*Theme, error) {
 		return ""
 	}
 	t.Muted = first(fg("Comment"), fg("LineNr"))
-	t.Border = first(fg("FloatBorder"), fg("WinSeparator"), fg("LineNr"), t.Muted)
+	t.Border = pickBorder(t.Bg, t.Fg, first(fg("FloatBorder")), first(fg("WinSeparator")),
+		first(fg("LineNr")), first(fg("NonText")), first(fg("Comment")), t.Muted)
 	t.Accent = first(fg("Function"), fg("Title"), fg("Statement"))
 	t.Selection = first(bg("Visual"), bg("CursorLine"))
 	t.Success = first(fg("DiagnosticOk"), fg("String"))

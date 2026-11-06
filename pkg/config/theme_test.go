@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -126,10 +127,88 @@ func TestGetThemeBackground(t *testing.T) {
 	}
 }
 
+func TestParseThemeOverrides(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    map[string]string
+		wantErr string
+	}{
+		{"", map[string]string{}, ""},
+		{"border=#5c6066,accent=4", map[string]string{"border": "#5c6066", "accent": "4"}, ""},
+		{" Border = gray , , focus_border=bright-blue ", map[string]string{"border": "gray", "focus_border": "bright-blue"}, ""},
+		{"border=#111,border=#222", map[string]string{"border": "#222"}, ""},
+		{"border", nil, "use role=color"},
+		{"=red", nil, "use role=color"},
+		{"frame=red", nil, `unknown theme role "frame"`},
+		{"border=", nil, "missing color"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got, err := ParseThemeOverrides(tt.in)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ParseThemeOverrides(%q) = %v, %v; want %v", tt.in, got, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetThemeOverrides(t *testing.T) {
+	t.Setenv(ThemeOverridesEnvVar, "")
+	cfg := Default()
+	if o, err := cfg.GetThemeOverrides(); err != nil || len(o) != 0 {
+		t.Errorf("default overrides = %v, %v", o, err)
+	}
+
+	cfg.TUI.ThemeOverrides = map[string]string{"Border": " #393b44 ", "accent": "5"}
+	t.Setenv(ThemeOverridesEnvVar, "border=#5c6066,danger=red")
+	o, err := cfg.GetThemeOverrides()
+	want := map[string]string{"border": "#5c6066", "accent": "5", "danger": "red"}
+	if err != nil || !reflect.DeepEqual(o, want) {
+		t.Errorf("merged overrides = %v, %v; want %v (env wins per role)", o, err, want)
+	}
+
+	t.Setenv(ThemeOverridesEnvVar, "nope=1")
+	if _, err := cfg.GetThemeOverrides(); err == nil || !strings.Contains(err.Error(), "$BEANS_THEME_OVERRIDES") {
+		t.Errorf("err = %v, want an error naming $BEANS_THEME_OVERRIDES", err)
+	}
+	t.Setenv(ThemeOverridesEnvVar, "")
+	cfg.TUI.ThemeOverrides = map[string]string{"frame": "1"}
+	if _, err := cfg.GetThemeOverrides(); err == nil || !strings.Contains(err.Error(), "tui.theme_overrides") {
+		t.Errorf("err = %v, want an error naming tui.theme_overrides", err)
+	}
+	cfg.TUI.ThemeOverrides = map[string]string{"bg": ""}
+	if _, err := cfg.GetThemeOverrides(); err == nil || !strings.Contains(err.Error(), "missing color") {
+		t.Errorf("err = %v, want a missing color error", err)
+	}
+}
+
+// TestGetThemeBackgroundTerminalOverride: the terminal theme paints a
+// background only when a bg override gives it one.
+func TestGetThemeBackgroundTerminalOverride(t *testing.T) {
+	t.Setenv(ThemeBackgroundEnvVar, "")
+	t.Setenv(ThemeOverridesEnvVar, "bg=#101010")
+	cfg := Default()
+	term := ThemeSpec{Kind: ThemeTerminal}
+	if bg, _ := cfg.GetThemeBackground(term); !bg {
+		t.Error("bg override on the terminal theme should paint the background")
+	}
+	off := false
+	cfg.TUI.ThemeBackground = &off
+	if bg, _ := cfg.GetThemeBackground(term); bg {
+		t.Error("tui.theme_background: false must win over the bg override")
+	}
+}
+
 func TestTUIConfigLoadAndSave(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ConfigFileName)
-	if err := os.WriteFile(path, []byte("beans:\n  prefix: x-\ntui:\n  theme: nvim:kanso-mist\n  theme_background: false\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("beans:\n  prefix: x-\ntui:\n  theme: nvim:kanso-mist\n  theme_background: false\n  theme_overrides:\n    border: \"#5c6066\"\n    accent: \"4\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := Load(path)
@@ -138,6 +217,9 @@ func TestTUIConfigLoadAndSave(t *testing.T) {
 	}
 	if cfg.TUI.Theme != "nvim:kanso-mist" || cfg.TUI.ThemeBackground == nil || *cfg.TUI.ThemeBackground {
 		t.Fatalf("loaded tui config = %+v", cfg.TUI)
+	}
+	if cfg.ConfigPath() != path {
+		t.Errorf("ConfigPath() = %q, want %q", cfg.ConfigPath(), path)
 	}
 	if err := cfg.Save(dir); err != nil {
 		t.Fatal(err)
@@ -152,6 +234,9 @@ func TestTUIConfigLoadAndSave(t *testing.T) {
 	}
 	if reloaded.TUI.Theme != "nvim:kanso-mist" || reloaded.TUI.ThemeBackground == nil || *reloaded.TUI.ThemeBackground {
 		t.Errorf("round trip lost the tui config: %+v", reloaded.TUI)
+	}
+	if want := map[string]string{"border": "#5c6066", "accent": "4"}; !reflect.DeepEqual(reloaded.TUI.ThemeOverrides, want) {
+		t.Errorf("round trip overrides = %v, want %v", reloaded.TUI.ThemeOverrides, want)
 	}
 
 	// The default config has no tui section.

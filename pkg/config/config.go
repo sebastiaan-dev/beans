@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -190,6 +191,8 @@ type Config struct {
 	// configDir is the directory containing the config file (not serialized)
 	// Used to resolve relative paths
 	configDir string `yaml:"-"`
+	// configPath is the config file read by Load ("" for defaults).
+	configPath string `yaml:"-"`
 }
 
 // BeansConfig defines settings for bean creation.
@@ -295,6 +298,7 @@ func Load(configPath string) (*Config, error) {
 
 	// Store the config directory for resolving relative paths
 	cfg.configDir = filepath.Dir(configPath)
+	cfg.configPath = configPath
 
 	// Apply defaults for missing values
 	if cfg.Beans.Path == "" {
@@ -353,6 +357,12 @@ func (c *Config) ResolveBeansPath() string {
 // ConfigDir returns the directory containing the config file.
 func (c *Config) ConfigDir() string {
 	return c.configDir
+}
+
+// ConfigPath returns the config file the configuration was loaded from, or
+// "" when it was not loaded from a file (defaults).
+func (c *Config) ConfigPath() string {
+	return c.configPath
 }
 
 // SetConfigDir sets the config directory (for testing or when creating new configs).
@@ -498,6 +508,20 @@ func (c *Config) toYAMLNode() *yaml.Node {
 		key := strNode("theme_background")
 		key.HeadComment = "Paint the theme's background behind the TUI (default: true for nvim/file themes)"
 		tuiMapping.Content = append(tuiMapping.Content, key, scalar(fmt.Sprintf("%t", *c.TUI.ThemeBackground), "!!bool"))
+	}
+	if len(c.TUI.ThemeOverrides) > 0 {
+		key := strNode("theme_overrides")
+		key.HeadComment = "Per-role colors (#rrggbb, 0-15 or a color name) applied on top of the theme\n(single roles overridden by $BEANS_THEME_OVERRIDES)"
+		overrides := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		roles := make([]string, 0, len(c.TUI.ThemeOverrides))
+		for role := range c.TUI.ThemeOverrides {
+			roles = append(roles, role)
+		}
+		sort.Strings(roles)
+		for _, role := range roles {
+			overrides.Content = append(overrides.Content, strNode(role), strNode(c.TUI.ThemeOverrides[role]))
+		}
+		tuiMapping.Content = append(tuiMapping.Content, key, overrides)
 	}
 
 	// Build the top-level mapping

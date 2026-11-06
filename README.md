@@ -137,9 +137,13 @@ By default the TUI (`beans tui`, `beans-tui`) and colored CLI output use your te
 tui:
   theme: nvim                # terminal (default) | nvim | nvim:<colorscheme> | file:<path>
   theme_background: true     # paint the theme's background behind the TUI (default for nvim/file themes)
+  theme_overrides:           # optional: set single roles on top of any theme (also "terminal")
+    border: "#5c6066"
+    accent: "4"              # ANSI palette index 0-15 (the theme's palette slot)
+    danger: bright-red       # or a color name
 ```
 
-Themes are a personal preference, so you can also set them for yourself without touching the project config: `BEANS_THEME` overrides `tui.theme` and `BEANS_THEME_BACKGROUND` (`true`/`false`) overrides `tui.theme_background`, e.g. `export BEANS_THEME=nvim` in your shell profile.
+Themes are a personal preference, so you can also set them for yourself without touching the project config: `BEANS_THEME` overrides `tui.theme` and `BEANS_THEME_BACKGROUND` (`true`/`false`) overrides `tui.theme_background`, and `BEANS_THEME_OVERRIDES` (comma-separated `role=color` pairs, e.g. `border=#5c6066,accent=4`) overrides single roles of `tui.theme_overrides`, e.g. `export BEANS_THEME=nvim` in your shell profile.
 
 - **`nvim`** uses the colorscheme your Neovim config loads by default; **`nvim:<colorscheme>`** a specific one (e.g. `nvim:kanso-mist`). Beans runs `nvim --headless` once with your normal config (so plugin colorschemes load, e.g. with LazyVim), reads the highlight groups (`Normal`, `Comment`, `Function`, `Visual`, `FloatBorder`, `Diagnostic*`, …) and `g:terminal_color_0..15`, and caches the result in your user cache directory (`beans/themes/`). The cache is refreshed when the colorscheme argument, the nvim binary, or your Neovim config (`init.lua`/`init.vim`, `lazy-lock.json`, `lazyvim.json`, `lua/`, `colors/`, `plugin/`, `after/`) changes.
 - **`file:<path>`** reads a palette file (YAML or JSON; relative paths are resolved against the directory of `.beans.yml`, or the current directory for `BEANS_THEME`). Every key is optional; missing roles are derived from the `ansi` slots and vice versa, so you can export a palette from any editor or terminal theme:
@@ -150,7 +154,8 @@ Themes are a personal preference, so you can also set them for yourself without 
   fg: "#c5c9c7"          # text
   bg: "#22262d"          # background
   muted: "#75797f"       # help, metadata
-  border: "#393b44"      # borders, tree lines
+  border: "#5c6066"      # borders, tree lines
+  focus_border: "#8ba4b0" # border of the focused pane (default: accent)
   accent: "#8ba4b0"      # IDs, headings, focus
   selection: "#393b44"   # selected row background
   success: "#98bb6c"
@@ -164,7 +169,13 @@ Themes are a personal preference, so you can also set them for yourself without 
 
 With a theme, the color names used for statuses, types and priorities (`red`, `green`, `blue`, `purple`, `gray`, …) and palette indices (`0`–`15`) map to the theme's palette instead of the terminal's. Theme colors are true colors; on terminals without true color support they are approximated with the 256- or 16-color palette, and `NO_COLOR` or non-terminal output stays plain. With `theme_background: false` the TUI keeps your terminal's background and default text color and only uses the theme's accent colors.
 
-If a theme can't be loaded (e.g. nvim is not installed or the colorscheme doesn't exist), beans prints a warning and falls back to terminal colors. `beans check` reports unknown or broken themes as errors, and a missing nvim as a warning.
+**Border contrast.** Many colorschemes draw floating window borders barely distinguishable from the background (kanso-mist's `FloatBorder` `#393b44` on `#22262d`), which would make the TUI's pane borders vanish. For `nvim` and `file:` themes the border must therefore have a contrast ratio (WCAG luminance ratio) of at least 1.6 against the background; otherwise beans uses the next candidate that does: `WinSeparator`, `LineNr`, `NonText`, `Comment` for nvim themes (a candidate equal to the text color only as a last resort), `muted` and then `ansi[8]` for palette files. For kanso-mist that is `LineNr` (`#75797f`).
+
+**Role overrides.** `tui.theme_overrides` sets single roles to a color — `#rrggbb`, an ANSI palette index `0`–`15` or a color name (`red`, `bright-blue`, `gray`, …, `default` for the terminal's default); indices and names refer to the theme's palette. The roles are `fg`, `bg`, `muted`, `border`, `focus_border`, `accent`, `selection`, `success`, `warning`, `danger` and `info`. Overrides are applied on top of every theme, including `terminal`, and always win over the theme and the border contrast guard. `bg` and `fg` only take effect where the background is painted (with `terminal`, a `bg` override paints the background unless `theme_background: false`); an `fg` override always applies.
+
+**Live reload.** The TUI reloads its theme automatically while it runs: when the `tui` settings in `.beans.yml` change, when the palette file of a `file:` theme changes, or when your Neovim config changes (the files listed above, e.g. after switching the colorscheme in `init.lua` or a plugin spec under `lua/`). The colorscheme is re-exported in the background and applied without restarting; if the reload fails, the current theme is kept and the error is shown in the status line. The `BEANS_THEME*` variables keep taking precedence (they can't change for a running TUI).
+
+If a theme can't be loaded (e.g. nvim is not installed or the colorscheme doesn't exist), beans prints a warning and falls back to terminal colors. `beans check` reports unknown or broken themes and invalid `theme_overrides`/`BEANS_THEME_OVERRIDES` as errors, and a missing nvim as a warning.
 
 ## Agent Configuration
 

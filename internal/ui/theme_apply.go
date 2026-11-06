@@ -2,8 +2,10 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,18 +61,58 @@ func OnThemeApplied(fn func()) {
 // ApplyTheme sets the color palette (all Color* variables, NamedColors and
 // the palette slots used by ResolveColor) from t, rebuilds every shared
 // style and the markdown settings, and runs the OnThemeApplied hooks.
-// A nil theme restores the terminal theme.
+// A nil theme restores the terminal theme. It is ApplyThemeSettings without
+// role overrides.
 //
 // background selects whether the theme's background is painted (ColorBg and
 // ColorFg are set, see PaintBackground). It is ignored for the terminal
 // theme. Without a painted background, text keeps the terminal's default
 // foreground so it stays legible on the terminal's background.
 //
-// ApplyTheme is not safe for concurrent use with rendering; call it before
-// starting the UI.
+// ApplyTheme is not safe for concurrent use with rendering: call it before
+// starting the UI or, in the TUI, from the Bubbletea Update loop.
 func ApplyTheme(t *Theme, background bool) {
+	ApplyThemeSettings(ThemeSettings{Theme: t, Background: background})
+}
+
+// ThemeSettings is a theme together with how it is applied.
+type ThemeSettings struct {
+	// Theme is the theme (nil: terminal theme).
+	Theme *Theme
+	// Background paints the background (see ApplyTheme). With the terminal
+	// theme it paints the "bg" override, if any.
+	Background bool
+	// Overrides maps theme roles (config.ThemeRoles) to colors, applied on
+	// top of Theme (see ValidateThemeOverrides). Invalid entries are ignored.
+	Overrides map[string]string
+}
+
+// Equal reports whether s and o apply the same colors.
+func (s ThemeSettings) Equal(o ThemeSettings) bool {
+	if s.Background != o.Background || len(s.Overrides) != len(o.Overrides) {
+		return false
+	}
+	for k, v := range s.Overrides {
+		if ov, ok := o.Overrides[k]; !ok || ov != v {
+			return false
+		}
+	}
+	if s.Theme == nil || o.Theme == nil {
+		return s.Theme == o.Theme
+	}
+	return *s.Theme == *o.Theme
+}
+
+// ApplyThemeSettings applies a theme and its role overrides (see
+// ApplyTheme). Overrides win over every theme color, including the border
+// contrast guard of nvim and file themes. Override colors are resolved
+// against the theme's palette: an ANSI index or color name means the
+// theme's palette slot.
+//
+// Like ApplyTheme it must not run concurrently with rendering.
+func ApplyThemeSettings(s ThemeSettings) {
+	t, background := s.Theme, s.Background
 	currentTheme = t
-	paintBackground = t != nil && background && t.Bg != ""
 
 	if t == nil {
 		ColorPrimary = lipgloss.Color("5")
@@ -82,6 +124,7 @@ func ApplyTheme(t *Theme, background bool) {
 		ColorSubtle = lipgloss.Color("8")
 		ColorBlue = lipgloss.Color("4")
 		ColorCyan = lipgloss.Color("6")
+		ColorInfo = lipgloss.Color("4")
 		ColorFg = ""
 		ColorBg = ""
 		ColorBorder = lipgloss.Color("8")
@@ -101,11 +144,52 @@ func ApplyTheme(t *Theme, background bool) {
 		ColorDanger = colorOr(t.Danger, ansiPalette[1])
 		ColorBlue = ansiPalette[4]
 		ColorCyan = ansiPalette[6]
+		ColorInfo = colorOr(t.Info, ansiPalette[4])
 		ColorSelection = lipgloss.Color(t.Selection)
-		ColorFg, ColorBg = "", ""
-		if paintBackground {
-			ColorFg = lipgloss.Color(t.Fg)
-			ColorBg = lipgloss.Color(t.Bg)
+		ColorFg = lipgloss.Color(t.Fg)
+		ColorBg = lipgloss.Color(t.Bg)
+	}
+	updateNamedColors()
+
+	// Resolve all overrides against the base palette before assigning any,
+	// so e.g. "border=gray" means the theme's gray, not an overridden muted.
+	o := make(map[string]lipgloss.Color, len(s.Overrides))
+	for role, c := range s.Overrides {
+		if col, ok := resolveOverrideColor(c); ok {
+			o[role] = col
+		}
+	}
+	set := func(role string, dst ...*lipgloss.Color) {
+		if c, ok := o[role]; ok {
+			for _, d := range dst {
+				*d = c
+			}
+		}
+	}
+	set("accent", &ColorPrimary)
+	set("muted", &ColorMuted, &ColorSecondary)
+	set("border", &ColorBorder, &ColorSubtle)
+	set("success", &ColorSuccess)
+	set("warning", &ColorWarning)
+	set("danger", &ColorDanger)
+	set("info", &ColorInfo)
+	set("selection", &ColorSelection)
+	set("fg", &ColorFg)
+	set("bg", &ColorBg)
+	ColorFocusBorder = ColorPrimary
+	if t != nil && t.FocusBorder != "" {
+		ColorFocusBorder = lipgloss.Color(t.FocusBorder)
+	}
+	set("focus_border", &ColorFocusBorder)
+
+	// The background is only painted with a theme (or a bg override) and
+	// when the caller allows it. Without it, text keeps the terminal's
+	// default foreground unless fg is overridden explicitly.
+	paintBackground = background && ColorBg != "" && (t != nil || o["bg"] != "")
+	if !paintBackground {
+		ColorBg = ""
+		if _, ok := o["fg"]; !ok {
+			ColorFg = ""
 		}
 	}
 
@@ -119,6 +203,76 @@ func ApplyTheme(t *Theme, background bool) {
 	for _, fn := range hooks {
 		fn()
 	}
+}
+
+// Colors of theme roles that have no counterpart among the shared colors
+// above.
+var (
+	// ColorFocusBorder is the border of the focused pane (default:
+	// ColorPrimary).
+	ColorFocusBorder = lipgloss.Color("5")
+	// ColorInfo is the informational status color.
+	ColorInfo = lipgloss.Color("4")
+)
+
+// overrideColorNames are the color names accepted in role overrides (the
+// keys of NamedColors). It is fixed at init, so validating overrides is
+// safe while ApplyTheme updates NamedColors.
+var overrideColorNames = func() map[string]bool {
+	names := make(map[string]bool, len(NamedColors))
+	for name := range NamedColors {
+		names[name] = true
+	}
+	return names
+}()
+
+// ValidateThemeOverrides checks role overrides (as returned by
+// config.Config.GetThemeOverrides): every color must be "#rgb"/"#rrggbb",
+// an ANSI palette index "0".."15" or a color name (see NamedColors). It
+// does not depend on the applied theme and is safe to call concurrently
+// with ApplyTheme.
+func ValidateThemeOverrides(overrides map[string]string) error {
+	roles := make([]string, 0, len(overrides))
+	for role := range overrides {
+		roles = append(roles, role)
+	}
+	sort.Strings(roles)
+	for _, role := range roles {
+		if !config.IsThemeRole(role) {
+			return fmt.Errorf("unknown theme role %q", role)
+		}
+		if !validOverrideColor(overrides[role]) {
+			return fmt.Errorf("theme override %s: invalid color %q (use #rrggbb, 0-15 or a color name)", role, overrides[role])
+		}
+	}
+	return nil
+}
+
+func validOverrideColor(c string) bool {
+	c = strings.TrimSpace(c)
+	if strings.HasPrefix(c, "#") {
+		_, err := theme.NormalizeHex(c)
+		return err == nil
+	}
+	return isANSIIndex(c) || overrideColorNames[strings.ToLower(c)]
+}
+
+// resolveOverrideColor resolves an override color against the current
+// palette (call after updateNamedColors).
+func resolveOverrideColor(c string) (lipgloss.Color, bool) {
+	c = strings.TrimSpace(c)
+	if !validOverrideColor(c) {
+		return "", false
+	}
+	if strings.HasPrefix(c, "#") {
+		hex, _ := theme.NormalizeHex(c)
+		return lipgloss.Color(hex), true
+	}
+	if isANSIIndex(c) {
+		n, _ := strconv.Atoi(c)
+		return ansiSlot(n), true
+	}
+	return NamedColors[strings.ToLower(c)], true
 }
 
 func colorOr(c string, fallback lipgloss.Color) lipgloss.Color {
@@ -174,24 +328,56 @@ func LoadTheme(ctx context.Context, cfg *config.Config) (t *Theme, background bo
 	return t, background, nil
 }
 
-// ApplyConfiguredTheme loads and applies the theme configured by cfg.
-// background enables painting the theme's background when the
+// LoadThemeSettings loads the theme and role overrides configured by cfg
+// (see LoadTheme and config.Config.GetThemeOverrides). It runs no UI code,
+// so it can run in the background while the UI renders. On error it still
+// returns usable settings: the terminal theme when the theme fails to load,
+// no overrides when they are invalid.
+func LoadThemeSettings(ctx context.Context, cfg *config.Config) (ThemeSettings, error) {
+	var errs []error
+	overrides, err := cfg.GetThemeOverrides()
+	if err == nil {
+		err = ValidateThemeOverrides(overrides)
+	}
+	if err != nil {
+		errs = append(errs, err)
+		overrides = nil
+	}
+	if len(overrides) == 0 {
+		overrides = nil
+	}
+	t, bg, err := LoadTheme(ctx, cfg)
+	if err != nil {
+		errs = append(errs, err)
+		t = nil
+		bg, _ = cfg.GetThemeBackground(config.ThemeSpec{Kind: config.ThemeTerminal})
+	}
+	return ThemeSettings{Theme: t, Background: bg, Overrides: overrides}, errors.Join(errs...)
+}
+
+// ApplyConfiguredTheme loads and applies the theme and overrides configured
+// by cfg. background enables painting the theme's background when the
 // configuration allows it (the TUI passes true; line-oriented CLI output
 // passes false). Without color output (NO_COLOR, non-TTY: lipgloss's Ascii
-// profile) nothing is loaded. On error the terminal theme is applied and the
-// error is returned for the caller to report as a warning.
+// profile) nothing is loaded. On error the terminal theme (or the theme
+// without overrides) is applied and the error is returned for the caller to
+// report as a warning.
 func ApplyConfiguredTheme(cfg *config.Config, background bool) error {
+	_, err := ApplyConfiguredThemeSettings(cfg, background)
+	return err
+}
+
+// ApplyConfiguredThemeSettings is ApplyConfiguredTheme returning the
+// settings it applied.
+func ApplyConfiguredThemeSettings(cfg *config.Config, background bool) (ThemeSettings, error) {
 	if lipgloss.ColorProfile() == termenv.Ascii {
 		ApplyTheme(nil, false)
-		return nil
+		return ThemeSettings{}, nil
 	}
-	t, bg, err := LoadTheme(context.Background(), cfg)
-	if err != nil {
-		ApplyTheme(nil, false)
-		return err
-	}
-	ApplyTheme(t, background && bg)
-	return nil
+	s, err := LoadThemeSettings(context.Background(), cfg)
+	s.Background = background && s.Background
+	ApplyThemeSettings(s)
+	return s, err
 }
 
 // WarnThemeError prints a theme loading error to stderr.

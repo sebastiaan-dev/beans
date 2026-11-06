@@ -6,6 +6,8 @@ package theme
 
 import (
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 )
 
@@ -34,7 +36,10 @@ type Theme struct {
 	// Muted is used for de-emphasized text: help, metadata (Neovim: Comment).
 	Muted string `json:"muted,omitempty" yaml:"muted,omitempty"`
 	// Border is used for borders and tree lines (Neovim: FloatBorder).
+	// See MinBorderContrast for the contrast guard applied to it.
 	Border string `json:"border,omitempty" yaml:"border,omitempty"`
+	// FocusBorder is the border of the focused pane ("" = Accent).
+	FocusBorder string `json:"focus_border,omitempty" yaml:"focus_border,omitempty"`
 	// Accent is the primary color: IDs, headings, focus (Neovim: Function).
 	Accent string `json:"accent,omitempty" yaml:"accent,omitempty"`
 	// Selection is the background of selected rows (Neovim: Visual bg).
@@ -122,7 +127,8 @@ func (t *Theme) isEmpty() bool {
 func (t *Theme) roles() map[string]*string {
 	return map[string]*string{
 		"fg": &t.Fg, "bg": &t.Bg, "muted": &t.Muted, "border": &t.Border,
-		"accent": &t.Accent, "selection": &t.Selection, "success": &t.Success,
+		"focus_border": &t.FocusBorder,
+		"accent":       &t.Accent, "selection": &t.Selection, "success": &t.Success,
 		"warning": &t.Warning, "danger": &t.Danger, "info": &t.Info, "hint": &t.Hint,
 	}
 }
@@ -171,4 +177,80 @@ func NormalizeHex(c string) (string, error) {
 		c = "#" + strings.Repeat(c[1:2], 2) + strings.Repeat(c[2:3], 2) + strings.Repeat(c[3:4], 2)
 	}
 	return c, nil
+}
+
+// MinBorderContrast is the minimum contrast ratio (see ContrastRatio)
+// between the border role and the background of nvim and file themes. Many
+// colorschemes use a border color barely distinguishable from the
+// background for floating windows (e.g. kanso-mist: FloatBorder #393b44 on
+// #22262d, ratio 1.35), which makes the TUI's pane borders vanish. Below the
+// threshold the next candidate is used (see FromNvim and LoadFile).
+const MinBorderContrast = 1.6
+
+// ContrastRatio returns the WCAG contrast ratio (1-21) between two "#rrggbb"
+// colors, or 0 when either is not a valid hex color.
+func ContrastRatio(a, b string) float64 {
+	la, ok1 := relativeLuminance(a)
+	lb, ok2 := relativeLuminance(b)
+	if !ok1 || !ok2 {
+		return 0
+	}
+	if la < lb {
+		la, lb = lb, la
+	}
+	return (la + 0.05) / (lb + 0.05)
+}
+
+func relativeLuminance(c string) (float64, bool) {
+	c, err := NormalizeHex(c)
+	if err != nil || c == "" {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(c[1:], 16, 32)
+	if err != nil {
+		return 0, false
+	}
+	channel := func(x uint64) float64 {
+		f := float64(x) / 255
+		if f <= 0.03928 {
+			return f / 12.92
+		}
+		return math.Pow((f+0.055)/1.055, 2.4)
+	}
+	r, g, b := channel(v>>16&0xff), channel(v>>8&0xff), channel(v&0xff)
+	return 0.2126*r + 0.7152*g + 0.0722*b, true
+}
+
+// pickBorder returns the first candidate whose contrast against bg is at
+// least MinBorderContrast. Candidates equal to fg (the text color) are only
+// used when no other candidate qualifies, so borders stay quieter than text.
+// If none qualifies, the candidate with the highest contrast wins; without a
+// background the first set candidate is used. Unset candidates are skipped.
+func pickBorder(bg, fg string, cands ...string) string {
+	best, bestRatio := "", -1.0
+	textColored := ""
+	for _, c := range cands {
+		if c == "" {
+			continue
+		}
+		if bg == "" {
+			return c
+		}
+		r := ContrastRatio(c, bg)
+		if r >= MinBorderContrast {
+			if c != fg {
+				return c
+			}
+			if textColored == "" {
+				textColored = c
+			}
+		}
+		if r > bestRatio {
+			best, bestRatio = c, r
+		}
+	}
+	if textColored != "" {
+		return textColored
+	}
+	return best
 }

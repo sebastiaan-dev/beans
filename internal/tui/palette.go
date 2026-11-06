@@ -23,8 +23,9 @@ func colAccent() lipgloss.Color { return ui.ColorPrimary }
 // colBorder is the color of unfocused borders and rules.
 func colBorder() lipgloss.Color { return ui.ColorBorder }
 
-// colFocusBorder is the color of the focused pane's border.
-func colFocusBorder() lipgloss.Color { return ui.ColorPrimary }
+// colFocusBorder is the color of the focused pane's border (the accent
+// unless the theme or tui.theme_overrides set focus_border).
+func colFocusBorder() lipgloss.Color { return ui.ColorFocusBorder }
 
 // colSelection is the background of the selected tree row. The empty color
 // (terminal theme) means "no background": with the 16-color palette there is

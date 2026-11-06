@@ -272,6 +272,7 @@ hl("Comment", { fg = "#75797f" })
 hl("Function", { fg = "#8ba4b0" })
 hl("Visual", { bg = "#393b44" })
 hl("FloatBorder", { fg = "#393b44" })
+hl("WinSeparator", { fg = "#5c6066" })
 hl("DiagnosticError", { fg = "#c34043" })
 hl("MyLink", { fg = "#dca561" })
 hl("DiagnosticWarn", { link = "MyLink" })
@@ -297,7 +298,8 @@ func TestLoadNvimHeadless(t *testing.T) {
 		t.Fatal(err)
 	}
 	if th.Name != "beanstest" || th.Fg != "#c5c9c7" || th.Bg != "#22262d" || th.Muted != "#75797f" ||
-		th.Accent != "#8ba4b0" || th.Selection != "#393b44" || th.Border != "#393b44" ||
+		th.Accent != "#8ba4b0" || th.Selection != "#393b44" || th.Border != "#5c6066" || // FloatBorder is too faint
+
 		th.Danger != "#c34043" || th.Warning != "#dca561" {
 		t.Errorf("default colorscheme mapped to %+v", th)
 	}

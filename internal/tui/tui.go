@@ -286,6 +286,9 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		// Beans changed on disk - refresh
 		return a.list.loadBeans
 
+	case themeReloadedMsg:
+		return a.applyThemeReload(msg)
+
 	case openTagPickerMsg:
 		// Collect all tags with their counts
 		tags := a.collectTagsWithCounts()
@@ -747,10 +750,14 @@ func rebuildThemeStyles() {
 func Run(core *beancore.Core, cfg *config.Config) error {
 	// Apply the configured theme (with its background) before building any
 	// view. A theme that fails to load falls back to terminal colors.
-	ui.WarnThemeError(ui.ApplyConfiguredTheme(cfg, true))
+	themeSettings, themeErr := ui.ApplyConfiguredThemeSettings(cfg, true)
+	ui.WarnThemeError(themeErr)
 
 	app := New(core, cfg)
 	p := tea.NewProgram(app, tea.WithAltScreen())
+
+	// Reload the theme when its sources change (see theme_reload.go).
+	defer startThemeReload(cfg, themeSettings, p.Send)()
 
 	// Store reference to program for sending messages from watcher
 	app.program = p
