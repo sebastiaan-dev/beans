@@ -353,12 +353,12 @@ func runCmd(t *testing.T, app *App, cmd tea.Cmd) []tea.Msg {
 	return msgs
 }
 
-// matchedIDs returns the IDs of list items that matched the filters (not context ancestors).
+// matchedIDs returns the IDs of tree rows that matched the filters (not context ancestors).
 func matchedIDs(m listModel) []string {
 	var ids []string
-	for _, it := range m.list.Items() {
-		if bi, ok := it.(beanItem); ok && bi.matched {
-			ids = append(ids, bi.bean.ID)
+	for _, r := range m.rows {
+		if r.matched {
+			ids = append(ids, r.bean.ID)
 		}
 	}
 	sort.Strings(ids)
@@ -375,6 +375,18 @@ func pressKey(t *testing.T, app *App, key string) {
 		msg = tea.KeyMsg{Type: tea.KeyEnter}
 	case "tab":
 		msg = tea.KeyMsg{Type: tea.KeyTab}
+	case "shift+tab":
+		msg = tea.KeyMsg{Type: tea.KeyShiftTab}
+	case "backspace":
+		msg = tea.KeyMsg{Type: tea.KeyBackspace}
+	case "left":
+		msg = tea.KeyMsg{Type: tea.KeyLeft}
+	case "right":
+		msg = tea.KeyMsg{Type: tea.KeyRight}
+	case "up":
+		msg = tea.KeyMsg{Type: tea.KeyUp}
+	case "down":
+		msg = tea.KeyMsg{Type: tea.KeyDown}
 	default:
 		msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
 	}
@@ -402,7 +414,7 @@ func TestListHideResolvedToggle(t *testing.T) {
 	if got := app.list.title(); got != "Beans 2/6 · done hidden" {
 		t.Errorf("title = %q", got)
 	}
-	if !strings.Contains(app.list.Footer(), "show done") {
+	if !strings.Contains(stripAnsi(strings.Join(app.footerLines(300, true), " ")), "show done") {
 		t.Error("footer should offer to show done beans while hidden")
 	}
 
@@ -514,18 +526,20 @@ func TestListMarksArchivedBeans(t *testing.T) {
 	runCmd(t, app, app.Init())
 
 	var archived []string
-	for _, it := range app.list.list.Items() {
-		if bi := it.(beanItem); bi.archived {
-			archived = append(archived, bi.bean.ID)
+	for _, r := range app.list.rows {
+		if r.archived {
+			archived = append(archived, r.bean.ID)
 		}
 	}
 	if !reflect.DeepEqual(archived, []string{"t-arch"}) {
 		t.Errorf("archived items = %v, want [t-arch]", archived)
 	}
 
+	// Wide enough for every row to fit on one line.
+	app.list.setSize(80, 30)
 	view := stripAnsi(app.list.View())
 	for _, line := range strings.Split(view, "\n") {
-		hasMarker := strings.Contains(line, strings.TrimSpace(archivedMarkerText))
+		hasMarker := strings.Contains(line, archivedMarkerText)
 		if strings.Contains(line, "t-arch") != hasMarker {
 			t.Errorf("archived marker mismatch on line %q", line)
 		}
@@ -535,35 +549,35 @@ func TestListMarksArchivedBeans(t *testing.T) {
 	}
 }
 
-func TestListRowsDoNotWrapOnNarrowTerminal(t *testing.T) {
+func TestListRowsWrapWithinNarrowTree(t *testing.T) {
 	app, _ := setupListTestModel(t)
 	runCmd(t, app, app.Init())
-	const width = 44
-	app.list, _ = app.list.Update(tea.WindowSizeMsg{Width: width, Height: 30})
+	const width = 30
+	app.list.setSize(width, 40)
 
-	view := stripAnsi(app.list.View())
-	// Each bean, including the archived one and the child with an inherited
-	// status annotation, must render on a single row that fits the width.
-	for _, id := range []string{"t-arch", "t-child", "t-open"} {
-		found := false
-		for _, line := range strings.Split(view, "\n") {
-			if strings.Contains(line, id) {
-				found = true
-				if w := lipgloss.Width(line); w > width {
-					t.Errorf("row for %s is %d columns wide: %q", id, w, line)
-				}
-			}
-		}
-		if !found {
-			t.Errorf("%s not listed", id)
+	lines := strings.Split(stripAnsi(app.list.View()), "\n")
+	for _, line := range lines {
+		if w := lipgloss.Width(line); w != width {
+			t.Errorf("line is %d columns wide, want %d: %q", w, width, line)
 		}
 	}
-	for _, line := range strings.Split(view, "\n") {
-		trimmed := strings.TrimSpace(strings.Trim(line, "│ "))
-		if strings.HasPrefix(trimmed, "↑") {
-			t.Errorf("implicit status annotation wrapped onto its own line: %q", line)
+	// The child of the completed epic wraps; its continuation line, holding
+	// the implicit status annotation, is aligned under the title.
+	for i, line := range lines {
+		if !strings.Contains(line, "t-child") {
+			continue
 		}
+		titleCol := strings.Index(line, "Child")
+		if i+1 >= len(lines) || !strings.Contains(lines[i+1], "↑completed") {
+			t.Fatalf("expected the implicit status on the continuation line:\n%s", strings.Join(lines, "\n"))
+		}
+		next := lines[i+1]
+		if got := len(next) - len(strings.TrimLeft(next, " ")); got != titleCol {
+			t.Errorf("continuation starts at column %d, want %d (title column):\n%s\n%s", got, titleCol, line, next)
+		}
+		return
 	}
+	t.Fatal("t-child not listed")
 }
 
 // pressKeyQuits sends a key to the app and reports whether it (transitively)

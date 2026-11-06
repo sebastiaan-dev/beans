@@ -143,10 +143,10 @@ func (m tagPickerModel) View() string {
 	content := border.Render(m.list.View())
 
 	// Footer
-	help := helpKeyStyle.Render("enter") + " " + helpStyle.Render("select") + "  " +
-		helpKeyStyle.Render("/") + " " + helpStyle.Render("filter") + "  " +
-		helpKeyStyle.Render("esc") + " " + helpStyle.Render("cancel") + "  " +
-		helpKeyStyle.Render("q") + " " + helpStyle.Render("quit")
+	help := helpKeyStyle().Render("enter") + " " + helpStyle().Render("select") + "  " +
+		helpKeyStyle().Render("/") + " " + helpStyle().Render("filter") + "  " +
+		helpKeyStyle().Render("esc") + " " + helpStyle().Render("cancel") + "  " +
+		helpKeyStyle().Render("q") + " " + helpStyle().Render("quit")
 
 	return content + "\n" + help
 }

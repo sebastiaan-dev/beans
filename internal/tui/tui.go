@@ -6,13 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/hmans/beans/internal/ui"
 	"github.com/hmans/beans/pkg/beancore"
 	"github.com/hmans/beans/pkg/beangraph"
@@ -26,7 +24,6 @@ type viewState int
 
 const (
 	viewList viewState = iota
-	viewDetail
 	viewTagPicker
 	viewParentPicker
 	viewStatusPicker
@@ -38,30 +35,8 @@ const (
 	viewFilterPicker
 )
 
-// Two-column layout constants
-const (
-	TwoColumnMinWidth = 120 // minimum terminal width for two-column layout
-	RightPaneMaxWidth = 80  // max width of preview pane (text files follow 80 char convention)
-)
-
-// calculatePaneWidths returns (leftWidth, rightWidth) for two-column layout.
-// Right pane is capped at RightPaneMaxWidth, left pane gets remaining space.
-func calculatePaneWidths(totalWidth int) (int, int) {
-	rightWidth := RightPaneMaxWidth
-	if totalWidth-rightWidth < 40 { // ensure left pane has reasonable minimum
-		rightWidth = totalWidth - 40
-	}
-	leftWidth := totalWidth - rightWidth - 1 // 1 for separator
-	return leftWidth, rightWidth
-}
-
 // beansChangedMsg is sent when beans change on disk (via file watcher)
 type beansChangedMsg struct{}
-
-// cursorChangedMsg is sent when the list cursor moves to a different bean
-type cursorChangedMsg struct {
-	beanID string
-}
 
 // openTagPickerMsg requests opening the tag picker
 type openTagPickerMsg struct{}
@@ -70,6 +45,9 @@ type openTagPickerMsg struct{}
 type tagSelectedMsg struct {
 	tag string
 }
+
+// backToListMsg returns from a full-screen picker to the browse view
+type backToListMsg struct{}
 
 // clearFilterMsg is sent to clear any active filter
 type clearFilterMsg struct{}
@@ -103,7 +81,6 @@ type App struct {
 	state          viewState
 	list           listModel
 	detail         detailModel
-	preview        previewModel
 	tagPicker      tagPickerModel
 	parentPicker   parentPickerModel
 	statusPicker   statusPickerModel
@@ -113,7 +90,6 @@ type App struct {
 	createModal    createModalModel
 	helpOverlay    helpOverlayModel
 	filterPicker   filterPickerModel
-	history        []detailModel // stack of previous detail views for back navigation
 	core           *beancore.Core
 	resolver       *beangraph.CoreResolver
 	config         *config.Config
@@ -121,7 +97,14 @@ type App struct {
 	height         int
 	program        *tea.Program // reference to program for sending messages from watcher
 
+	// Browse view state
+	focus        focusArea // pane receiving keys
+	detailPinned string    // bean opened from a relation that is not in the tree
+	detailStale  bool      // beans were reloaded; refresh the detail pane
+	revealID     string    // bean to move the cursor to after the next load
+
 	// Key chord state - tracks partial key sequences like "g" waiting for "t"
+	// or "z" waiting for a fold command
 	pendingKey string
 
 	// Batched key state - keys held back until a view change requested by an
@@ -146,7 +129,7 @@ func New(core *beancore.Core, cfg *config.Config) *App {
 		resolver: resolver,
 		config:   cfg,
 		list:     newListModel(resolver, cfg),
-		preview:  newPreviewModel(nil, 0, 0),
+		detail:   newDetailModel(resolver, cfg),
 	}
 }
 
@@ -155,13 +138,58 @@ func (a *App) Init() tea.Cmd {
 	return a.list.Init()
 }
 
-// isTwoColumnMode returns true if the terminal width supports two-column layout
-func (a *App) isTwoColumnMode() bool {
-	return a.width >= TwoColumnMinWidth
-}
-
 // Update handles messages
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	cmd := a.update(msg)
+	a.syncLayout()
+	return a, cmd
+}
+
+// updateBeans applies an update to each bean and continues with other beans
+// if one fails.
+func (a *App) updateBeans(ids []string, input model.UpdateBeanInput) {
+	for _, id := range ids {
+		_, _ = a.resolver.UpdateBean(context.Background(), id, input)
+	}
+}
+
+// closePicker returns from a picker to the browse view and refreshes, in
+// case beans changed while it was open. Batch edits clear the selection.
+func (a *App) closePicker(clearSelection bool) tea.Cmd {
+	a.state = viewList
+	if clearSelection {
+		clear(a.list.selectedBeans)
+	}
+	return a.list.loadBeans
+}
+
+// handleChord handles the second key of a chord ("g t", "g g", "z o", ...).
+func (a *App) handleChord(first string, msg tea.KeyMsg) tea.Cmd {
+	switch first + " " + msg.String() {
+	case "g t":
+		return func() tea.Msg { return openTagPickerMsg{} }
+	case "g g":
+		if a.focus == focusTree {
+			a.list.moveCursor(-len(a.list.rows))
+		} else {
+			a.detail.bodyOffset = 0
+		}
+	case "z o":
+		a.list.foldOpen()
+	case "z c":
+		a.list.foldClose()
+	case "z a":
+		a.list.foldToggle()
+	case "z R":
+		a.list.openAll()
+	case "z M":
+		a.list.closeAll()
+	}
+	// Other second keys cancel the chord and are ignored.
+	return nil
+}
+
+func (a *App) update(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
@@ -169,72 +197,73 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.width = msg.Width
 		a.height = msg.Height
 
-		// Update preview dimensions if in two-column mode
-		if a.isTwoColumnMode() {
-			_, rightWidth := calculatePaneWidths(a.width)
-			a.preview.width = rightWidth
-			a.preview.height = a.height - 2
-		}
-
 	case tea.KeyMsg:
 		// Keep the order of keys while earlier keys of a batch are pending.
 		if a.holdingKeys {
 			a.heldKeys = append(a.heldKeys, msg)
-			return a, nil
+			return nil
 		}
 		// Several runes delivered at once are individual shortcuts, unless a
 		// text input is receiving them.
 		if keys, ok := splitBatchedRunes(msg); ok && !a.acceptsTextInput() {
-			return a, a.handleKeys(keys)
+			return a.handleKeys(keys)
 		}
 
 		// Clear status messages on any keypress
 		a.list.statusMessage = ""
-		a.detail.statusMessage = ""
+
+		if msg.String() == "ctrl+c" {
+			return tea.Quit
+		}
 
 		// Handle key chord sequences
-		if a.state == viewList && a.list.list.FilterState() != list.Filtering {
-			if a.pendingKey == "g" {
+		if a.state == viewList && !a.list.searching {
+			if first := a.pendingKey; first != "" {
 				a.pendingKey = ""
-				switch msg.String() {
-				case "t":
-					// "g t" - go to tags
-					return a, func() tea.Msg { return openTagPickerMsg{} }
-				default:
-					// Invalid second key, ignore the chord
-				}
-				// Don't forward this key since it was part of a chord attempt
-				return a, nil
+				return a.handleChord(first, msg)
 			}
-
-			// Start of potential chord
-			if msg.String() == "g" {
+			switch msg.String() {
+			case "g":
 				a.pendingKey = "g"
-				return a, nil
+				return nil
+			case "z":
+				if a.focus == focusTree {
+					a.pendingKey = "z"
+					return nil
+				}
 			}
 		}
 
 		// Clear pending key on any other key press
 		a.pendingKey = ""
 
+		// Moving the focus between the panes and opening relations is
+		// handled here, synchronously, so that the keys that follow already
+		// go to the right pane.
+		if a.state == viewList && !a.list.searching {
+			if handled := a.handleFocusKey(msg.String()); handled {
+				return nil
+			}
+		}
+
 		switch msg.String() {
-		case "ctrl+c":
-			return a, tea.Quit
 		case "?":
-			// Open help overlay if not already showing it (and not in a picker/modal)
-			if a.state == viewList || a.state == viewDetail {
+			// Open help overlay from the browse view
+			if a.state == viewList && !a.list.searching {
 				a.previousState = a.state
 				a.helpOverlay = newHelpOverlayModel(a.width, a.height)
 				a.state = viewHelpOverlay
-				return a, a.helpOverlay.Init()
+				return a.helpOverlay.Init()
 			}
 		case "q":
-			if a.state == viewDetail || a.state == viewTagPicker || a.state == viewParentPicker || a.state == viewStatusPicker || a.state == viewTypePicker || a.state == viewBlockingPicker || a.state == viewPriorityPicker || a.state == viewHelpOverlay {
-				return a, tea.Quit
-			}
-			// For list, only quit if not filtering
-			if a.state == viewList && a.list.list.FilterState() != list.Filtering {
-				return a, tea.Quit
+			switch a.state {
+			case viewTagPicker, viewParentPicker, viewStatusPicker, viewTypePicker, viewBlockingPicker, viewPriorityPicker, viewHelpOverlay:
+				return tea.Quit
+			case viewList:
+				// Only quit if not typing a search
+				if !a.list.searching {
+					return tea.Quit
+				}
 			}
 		}
 
@@ -242,256 +271,161 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		keys := a.heldKeys
 		a.heldKeys = nil
 		a.holdingKeys = false
-		return a, a.handleKeys(keys)
-
-	case cursorChangedMsg:
-		// Update preview with the newly highlighted bean
-		_, rightWidth := calculatePaneWidths(a.width)
-		if msg.beanID != "" {
-			bean, err := a.resolver.Bean(context.Background(), msg.beanID)
-			if err == nil && bean != nil {
-				a.preview = newPreviewModel(bean, rightWidth, a.height-2)
-			}
-		} else {
-			a.preview = newPreviewModel(nil, rightWidth, a.height-2)
-		}
-		return a, nil
+		return a.handleKeys(keys)
 
 	case beansLoadedMsg:
-		// Forward to list view
 		a.list, cmd = a.list.Update(msg)
-		// Update preview with current cursor position
-		_, rightWidth := calculatePaneWidths(a.width)
-		if len(msg.items) == 0 {
-			a.preview = newPreviewModel(nil, rightWidth, a.height-2)
-		} else if item, ok := a.list.list.SelectedItem().(beanItem); ok {
-			a.preview = newPreviewModel(item.bean, rightWidth, a.height-2)
+		a.detailStale = true
+		if a.revealID != "" {
+			a.list.reveal(a.revealID)
+			a.revealID = ""
 		}
-		return a, cmd
+		return cmd
 
 	case beansChangedMsg:
 		// Beans changed on disk - refresh
-		if a.state == viewDetail {
-			// Try to reload the current bean via GraphQL
-			updatedBean, err := a.resolver.Bean(context.Background(), a.detail.bean.ID)
-			if err != nil || updatedBean == nil {
-				// Bean was deleted - return to list
-				a.state = viewList
-				a.history = nil
-			} else {
-				// Recreate detail view with fresh bean data
-				a.detail = newDetailModel(updatedBean, a.resolver, a.config, a.width, a.height)
-			}
-		}
-		// Trigger list refresh
-		return a, a.list.loadBeans
+		return a.list.loadBeans
 
 	case openTagPickerMsg:
 		// Collect all tags with their counts
 		tags := a.collectTagsWithCounts()
 		if len(tags) == 0 {
 			// No tags in system, don't open picker
-			return a, nil
+			return nil
 		}
 		a.tagPicker = newTagPickerModel(tags, a.width, a.height)
 		a.state = viewTagPicker
-		return a, a.tagPicker.Init()
+		return a.tagPicker.Init()
 
 	case tagSelectedMsg:
 		a.state = viewList
 		a.list.setTagFilter(msg.tag)
-		return a, a.list.loadBeans
+		return a.list.loadBeans
+
+	case backToListMsg:
+		a.state = viewList
+		return nil
 
 	case openParentPickerMsg:
 		// Check if all bean types can have parents
 		for _, beanType := range msg.beanTypes {
 			if beancore.ValidParentTypes(beanType) == nil {
 				// At least one bean type (e.g., milestone) cannot have parents - don't open the picker
-				return a, nil
+				return nil
 			}
 		}
 		a.previousState = a.state // Remember where we came from for the modal background
 		a.parentPicker = newParentPickerModel(msg.beanIDs, msg.beanTitle, msg.beanTypes, msg.currentParent, a.resolver, a.config, a.width, a.height)
 		a.state = viewParentPicker
-		return a, a.parentPicker.Init()
+		return a.parentPicker.Init()
 
 	case closeParentPickerMsg:
-		// Return to previous view and refresh in case beans changed while picker was open
-		a.state = a.previousState
-		return a, a.list.loadBeans
+		return a.closePicker(false)
+
+	case parentSelectedMsg:
+		// Set the new parent via GraphQL mutation for all beans
+		var parentID *string
+		if msg.parentID != "" {
+			parentID = &msg.parentID
+		}
+		for _, beanID := range msg.beanIDs {
+			// Continue with other beans even if one fails
+			_, _ = a.resolver.SetParent(context.Background(), beanID, parentID, nil)
+		}
+		return a.closePicker(true)
 
 	case openStatusPickerMsg:
 		a.previousState = a.state
 		a.statusPicker = newStatusPickerModel(msg.beanIDs, msg.beanTitle, msg.currentStatus, a.config, a.width, a.height)
 		a.state = viewStatusPicker
-		return a, a.statusPicker.Init()
+		return a.statusPicker.Init()
 
 	case closeStatusPickerMsg:
-		// Return to previous view and refresh in case beans changed while picker was open
-		a.state = a.previousState
-		return a, a.list.loadBeans
+		return a.closePicker(false)
 
 	case statusSelectedMsg:
-		// Update all beans' status via GraphQL mutations
-		for _, beanID := range msg.beanIDs {
-			_, err := a.resolver.UpdateBean(context.Background(), beanID, model.UpdateBeanInput{
-				Status: &msg.status,
-			})
-			if err != nil {
-				// Continue with other beans even if one fails
-				continue
-			}
-		}
-		// Return to the previous view and refresh
-		a.state = a.previousState
-		// Clear selection after batch edit
-		clear(a.list.selectedBeans)
-		if a.state == viewDetail && len(msg.beanIDs) == 1 {
-			updatedBean, _ := a.resolver.Bean(context.Background(), msg.beanIDs[0])
-			if updatedBean != nil {
-				a.detail = newDetailModel(updatedBean, a.resolver, a.config, a.width, a.height)
-			}
-		}
-		return a, a.list.loadBeans
+		a.updateBeans(msg.beanIDs, model.UpdateBeanInput{Status: &msg.status})
+		return a.closePicker(true)
 
 	case openTypePickerMsg:
 		a.previousState = a.state
 		a.typePicker = newTypePickerModel(msg.beanIDs, msg.beanTitle, msg.currentType, a.config, a.width, a.height)
 		a.state = viewTypePicker
-		return a, a.typePicker.Init()
+		return a.typePicker.Init()
 
 	case closeTypePickerMsg:
-		// Return to previous view and refresh in case beans changed while picker was open
-		a.state = a.previousState
-		return a, a.list.loadBeans
+		return a.closePicker(false)
 
 	case typeSelectedMsg:
-		// Update all beans' type via GraphQL mutations
-		for _, beanID := range msg.beanIDs {
-			_, err := a.resolver.UpdateBean(context.Background(), beanID, model.UpdateBeanInput{
-				Type: &msg.beanType,
-			})
-			if err != nil {
-				// Continue with other beans even if one fails
-				continue
-			}
-		}
-		// Return to the previous view and refresh
-		a.state = a.previousState
-		// Clear selection after batch edit
-		clear(a.list.selectedBeans)
-		if a.state == viewDetail && len(msg.beanIDs) == 1 {
-			updatedBean, _ := a.resolver.Bean(context.Background(), msg.beanIDs[0])
-			if updatedBean != nil {
-				a.detail = newDetailModel(updatedBean, a.resolver, a.config, a.width, a.height)
-			}
-		}
-		return a, a.list.loadBeans
+		a.updateBeans(msg.beanIDs, model.UpdateBeanInput{Type: &msg.beanType})
+		return a.closePicker(true)
 
 	case openPriorityPickerMsg:
 		a.previousState = a.state
 		a.priorityPicker = newPriorityPickerModel(msg.beanIDs, msg.beanTitle, msg.currentPriority, a.config, a.width, a.height)
 		a.state = viewPriorityPicker
-		return a, a.priorityPicker.Init()
+		return a.priorityPicker.Init()
 
 	case closePriorityPickerMsg:
-		// Return to previous view and refresh in case beans changed while picker was open
-		a.state = a.previousState
-		return a, a.list.loadBeans
+		return a.closePicker(false)
 
 	case prioritySelectedMsg:
-		// Update all beans' priority via GraphQL mutations
-		for _, beanID := range msg.beanIDs {
-			_, err := a.resolver.UpdateBean(context.Background(), beanID, model.UpdateBeanInput{
-				Priority: &msg.priority,
-			})
-			if err != nil {
-				// Continue with other beans even if one fails
-				continue
-			}
-		}
-		// Return to the previous view and refresh
-		a.state = a.previousState
-		// Clear selection after batch edit
-		clear(a.list.selectedBeans)
-		if a.state == viewDetail && len(msg.beanIDs) == 1 {
-			updatedBean, _ := a.resolver.Bean(context.Background(), msg.beanIDs[0])
-			if updatedBean != nil {
-				a.detail = newDetailModel(updatedBean, a.resolver, a.config, a.width, a.height)
-			}
-		}
-		return a, a.list.loadBeans
+		a.updateBeans(msg.beanIDs, model.UpdateBeanInput{Priority: &msg.priority})
+		return a.closePicker(true)
 
 	case openHelpMsg:
 		a.previousState = a.state
 		a.helpOverlay = newHelpOverlayModel(a.width, a.height)
 		a.state = viewHelpOverlay
-		return a, a.helpOverlay.Init()
+		return a.helpOverlay.Init()
 
 	case closeHelpMsg:
 		a.state = a.previousState
-		return a, nil
+		return nil
 
 	case openBlockingPickerMsg:
 		a.previousState = a.state
 		a.blockingPicker = newBlockingPickerModel(msg.beanID, msg.beanTitle, msg.currentBlocking, a.resolver, a.config, a.width, a.height)
 		a.state = viewBlockingPicker
-		return a, a.blockingPicker.Init()
+		return a.blockingPicker.Init()
 
 	case closeBlockingPickerMsg:
-		// Return to previous view and refresh in case beans changed while picker was open
-		a.state = a.previousState
-		return a, a.list.loadBeans
+		return a.closePicker(false)
 
 	case blockingConfirmedMsg:
-		// Apply all blocking changes via GraphQL mutations
+		// Apply all blocking changes via GraphQL mutations, continuing with
+		// other changes if one fails
 		for _, targetID := range msg.toAdd {
-			_, err := a.resolver.AddBlocking(context.Background(), msg.beanID, targetID, nil)
-			if err != nil {
-				// Continue with other changes even if one fails
-				continue
-			}
+			_, _ = a.resolver.AddBlocking(context.Background(), msg.beanID, targetID, nil)
 		}
 		for _, targetID := range msg.toRemove {
-			_, err := a.resolver.RemoveBlocking(context.Background(), msg.beanID, targetID, nil)
-			if err != nil {
-				// Continue with other changes even if one fails
-				continue
-			}
+			_, _ = a.resolver.RemoveBlocking(context.Background(), msg.beanID, targetID, nil)
 		}
-		// Return to previous view and refresh
-		a.state = a.previousState
-		if a.state == viewDetail {
-			updatedBean, _ := a.resolver.Bean(context.Background(), msg.beanID)
-			if updatedBean != nil {
-				a.detail = newDetailModel(updatedBean, a.resolver, a.config, a.width, a.height)
-			}
-		}
-		return a, a.list.loadBeans
+		return a.closePicker(false)
 
 	case openCreateModalMsg:
 		a.previousState = a.state
 		a.createModal = newCreateModalModel(a.width, a.height)
 		a.state = viewCreateModal
-		return a, a.createModal.Init()
+		return a.createModal.Init()
 
 	case closeCreateModalMsg:
 		a.state = a.previousState
-		return a, nil
+		return nil
 
 	case beanCreatedMsg:
 		// Create the bean via GraphQL mutation; status and type use the configured defaults
 		createdBean, err := a.resolver.CreateBean(context.Background(), model.CreateBeanInput{
 			Title: msg.title,
 		})
-		if err != nil {
-			// TODO: Show error to user
-			a.state = a.previousState
-			return a, nil
-		}
-		// Return to list and open the new bean in editor
 		a.state = viewList
-		return a, tea.Batch(
+		if err != nil {
+			a.list.statusMessage = fmt.Sprintf("Failed to create bean: %v", err)
+			return nil
+		}
+		// Select the new bean and open it in the editor
+		a.revealID = createdBean.ID
+		return tea.Batch(
 			a.list.loadBeans,
 			func() tea.Msg {
 				return openEditorMsg{beanID: createdBean.ID, beanPath: createdBean.Path}
@@ -504,7 +438,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		fullPath, err := safepath.SafeJoin(a.core.Root(), msg.beanPath)
 		if err != nil {
 			a.list.statusMessage = fmt.Sprintf("unsafe bean path: %v", err)
-			return a, nil
+			return nil
 		}
 
 		// Record the bean ID and file mod time before editing
@@ -514,130 +448,59 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		c := exec.Command(editor, fullPath)
-		return a, tea.ExecProcess(c, func(err error) tea.Msg {
+		return tea.ExecProcess(c, func(err error) tea.Msg {
 			return editorFinishedMsg{err: err}
 		})
 
 	case editorFinishedMsg:
 		// Editor closed - check if file was modified and update updated_at if so
 		if a.editingBeanID != "" {
-			if b, err := a.core.Get(a.editingBeanID); err == nil {
-				fullPath, pathErr := safepath.SafeJoin(a.core.Root(), b.Path)
-				if pathErr != nil {
-					break
-				}
-				if info, err := os.Stat(fullPath); err == nil {
-					if info.ModTime().After(a.editingBeanModTime) {
-						// File was modified - reload from disk first to get user's changes,
-						// then call Update to set updated_at
-						_ = a.core.Load()
-						if b, err = a.core.Get(a.editingBeanID); err == nil {
-							_ = a.core.Update(b, nil)
-						}
-					}
-				}
-			}
+			a.touchEditedBean()
 			// Clear editing state
 			a.editingBeanID = ""
 			a.editingBeanModTime = time.Time{}
 		}
-		return a, nil
-
-	case parentSelectedMsg:
-		// Set the new parent via GraphQL mutation for all beans
-		var parentID *string
-		if msg.parentID != "" {
-			parentID = &msg.parentID
-		}
-		for _, beanID := range msg.beanIDs {
-			_, err := a.resolver.SetParent(context.Background(), beanID, parentID, nil)
-			if err != nil {
-				// Continue with other beans even if one fails
-				continue
-			}
-		}
-		// Return to the previous view and refresh
-		a.state = a.previousState
-		// Clear selection after batch edit
-		clear(a.list.selectedBeans)
-		if a.state == viewDetail && len(msg.beanIDs) == 1 {
-			// Refresh the bean to show updated parent
-			updatedBean, _ := a.resolver.Bean(context.Background(), msg.beanIDs[0])
-			if updatedBean != nil {
-				a.detail = newDetailModel(updatedBean, a.resolver, a.config, a.width, a.height)
-			}
-		}
-		return a, a.list.loadBeans
+		return a.list.loadBeans
 
 	case clearFilterMsg:
 		a.list.clearFilter()
-		return a, a.list.loadBeans
+		return a.list.loadBeans
 
 	case openFilterPickerMsg:
 		a.previousState = a.state
 		a.filterPicker = newFilterPickerModel(a.list.filters, a.collectTagsWithCounts(), a.width, a.height)
 		a.state = viewFilterPicker
-		return a, a.filterPicker.Init()
+		return a.filterPicker.Init()
 
 	case closeFilterPickerMsg:
 		a.state = a.previousState
-		return a, nil
+		return nil
 
 	case filtersAppliedMsg:
 		a.state = a.previousState
 		a.list.setFilters(msg.filters)
-		return a, a.list.loadBeans
+		return a.list.loadBeans
 
 	case copyBeanIDMsg:
-		var statusMsg string
 		text := strings.Join(msg.ids, ", ")
 		if err := clipboard.WriteAll(text); err != nil {
-			statusMsg = fmt.Sprintf("Failed to copy: %v", err)
+			a.list.statusMessage = fmt.Sprintf("Failed to copy: %v", err)
 		} else if len(msg.ids) == 1 {
-			statusMsg = fmt.Sprintf("Copied %s to clipboard", msg.ids[0])
+			a.list.statusMessage = fmt.Sprintf("Copied %s to clipboard", msg.ids[0])
 		} else {
-			statusMsg = fmt.Sprintf("Copied %d bean IDs to clipboard", len(msg.ids))
+			a.list.statusMessage = fmt.Sprintf("Copied %d bean IDs to clipboard", len(msg.ids))
 		}
-
-		// Set status on current view
-		if a.state == viewList {
-			a.list.statusMessage = statusMsg
-		} else if a.state == viewDetail {
-			a.detail.statusMessage = statusMsg
-		}
-
-		return a, nil
-
-	case selectBeanMsg:
-		// Push current detail view to history if we're already viewing a bean
-		if a.state == viewDetail {
-			a.history = append(a.history, a.detail)
-		}
-		a.state = viewDetail
-		a.detail = newDetailModel(msg.bean, a.resolver, a.config, a.width, a.height)
-		return a, a.detail.Init()
-
-	case backToListMsg:
-		// Pop from history if available, otherwise go to list
-		if len(a.history) > 0 {
-			a.detail = a.history[len(a.history)-1]
-			a.history = a.history[:len(a.history)-1]
-			// Stay in viewDetail state
-		} else {
-			a.state = viewList
-			// Force list to pick up any size changes that happened while in detail view
-			a.list, cmd = a.list.Update(tea.WindowSizeMsg{Width: a.width, Height: a.height})
-			return a, cmd
-		}
-		return a, nil
+		return nil
 	}
 
 	// Forward all messages to the current view
 	switch a.state {
 	case viewList:
-		a.list, cmd = a.list.Update(msg)
-	case viewDetail:
-		a.detail, cmd = a.detail.Update(msg)
+		if a.focus == focusDetail {
+			a.detail, cmd = a.detail.Update(msg)
+		} else {
+			a.list, cmd = a.list.Update(msg)
+		}
 	case viewTagPicker:
 		a.tagPicker, cmd = a.tagPicker.Update(msg)
 	case viewParentPicker:
@@ -658,7 +521,82 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.filterPicker, cmd = a.filterPicker.Update(msg)
 	}
 
-	return a, cmd
+	return cmd
+}
+
+// handleFocusKey handles the keys moving between the tree and the detail
+// pane and reports whether key was one of them.
+func (a *App) handleFocusKey(key string) bool {
+	if a.focus == focusTree {
+		if key != "enter" && key != "tab" {
+			return false
+		}
+		if a.list.currentBean() != nil {
+			a.focus = focusDetail
+			a.syncDetail()
+			a.detail.focus()
+		}
+		return true
+	}
+	switch key {
+	case "esc":
+		a.focusTree()
+	case "/", "F", "H", "c":
+		// Tree-wide actions return to the tree and are handled there.
+		a.focusTree()
+		return false
+	case "enter":
+		if id := a.detail.selectedRelation(); id != "" {
+			a.showBean(id, true)
+		}
+	case "backspace":
+		if id, ok := a.detail.popHistory(); ok {
+			a.showBean(id, false)
+		} else {
+			a.focusTree()
+		}
+	default:
+		return false
+	}
+	return true
+}
+
+// showBean shows a bean in the detail pane, moving the tree cursor to it if
+// it is in the (filtered) tree. record adds the current bean to the detail
+// history.
+func (a *App) showBean(id string, record bool) {
+	if cur := a.detail.bean; cur != nil && record {
+		a.detail.history = append(a.detail.history, cur.ID)
+	}
+	if a.list.reveal(id) {
+		a.detailPinned = ""
+	} else {
+		a.detailPinned = id
+	}
+	a.syncDetail()
+}
+
+// touchEditedBean sets updated_at of the bean being edited if the editor
+// modified its file.
+func (a *App) touchEditedBean() {
+	b, err := a.core.Get(a.editingBeanID)
+	if err != nil {
+		return
+	}
+	fullPath, err := safepath.SafeJoin(a.core.Root(), b.Path)
+	if err != nil {
+		return
+	}
+	info, err := os.Stat(fullPath)
+	if err != nil || !info.ModTime().After(a.editingBeanModTime) {
+		return
+	}
+	// File was modified - reload from disk first to get the user's changes,
+	// then call Update to set updated_at
+	_ = a.core.Load()
+	if b, err = a.core.Get(a.editingBeanID); err == nil {
+		_ = a.core.Update(b, nil)
+	}
 }
 
 // acceptsTextInput reports whether the active view currently routes typed
@@ -666,9 +604,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (a *App) acceptsTextInput() bool {
 	switch a.state {
 	case viewList:
-		return a.list.list.FilterState() == list.Filtering
-	case viewDetail:
-		return a.detail.linksActive && a.detail.linkList.FilterState() == list.Filtering
+		return a.list.searching
 	case viewTagPicker:
 		return a.tagPicker.list.FilterState() == list.Filtering
 	case viewParentPicker:
@@ -747,28 +683,6 @@ func (a *App) collectTagsWithCounts() []tagWithCount {
 	return tags
 }
 
-// renderTwoColumnView renders the list and preview side by side with app-global footer
-func (a *App) renderTwoColumnView() string {
-	leftWidth, rightWidth := calculatePaneWidths(a.width)
-	contentHeight := a.height - 1 // Reserve 1 line for footer
-
-	// Render left pane (list) with constrained width, no footer
-	leftPane := a.list.ViewConstrained(leftWidth, contentHeight)
-
-	// Render right pane (preview) with same height
-	a.preview.width = rightWidth
-	a.preview.height = contentHeight
-	rightPane := a.preview.View()
-
-	// Compose columns
-	columns := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
-
-	// App-global footer spans full width
-	footer := a.list.Footer()
-
-	return columns + "\n" + footer
-}
-
 // View renders the current view, painted with the theme's background (see
 // ui.PaintBackground; a no-op with the terminal theme).
 func (a *App) View() string {
@@ -779,44 +693,27 @@ func (a *App) View() string {
 func (a *App) view() string {
 	switch a.state {
 	case viewList:
-		if a.isTwoColumnMode() {
-			return a.renderTwoColumnView()
-		}
-		return a.list.View()
-	case viewDetail:
-		return a.detail.View()
+		return a.browseView()
 	case viewTagPicker:
 		return a.tagPicker.View()
 	case viewParentPicker:
-		return a.parentPicker.ModalView(a.getBackgroundView(), a.width, a.height)
+		return a.parentPicker.ModalView(a.browseView(), a.width, a.height)
 	case viewStatusPicker:
-		return a.statusPicker.ModalView(a.getBackgroundView(), a.width, a.height)
+		return a.statusPicker.ModalView(a.browseView(), a.width, a.height)
 	case viewTypePicker:
-		return a.typePicker.ModalView(a.getBackgroundView(), a.width, a.height)
+		return a.typePicker.ModalView(a.browseView(), a.width, a.height)
 	case viewPriorityPicker:
-		return a.priorityPicker.ModalView(a.getBackgroundView(), a.width, a.height)
+		return a.priorityPicker.ModalView(a.browseView(), a.width, a.height)
 	case viewBlockingPicker:
-		return a.blockingPicker.ModalView(a.getBackgroundView(), a.width, a.height)
+		return a.blockingPicker.ModalView(a.browseView(), a.width, a.height)
 	case viewCreateModal:
-		return a.createModal.ModalView(a.getBackgroundView(), a.width, a.height)
+		return a.createModal.ModalView(a.browseView(), a.width, a.height)
 	case viewHelpOverlay:
-		return a.helpOverlay.ModalView(a.getBackgroundView(), a.width, a.height)
+		return a.helpOverlay.ModalView(a.browseView(), a.width, a.height)
 	case viewFilterPicker:
-		return a.filterPicker.ModalView(a.getBackgroundView(), a.width, a.height)
+		return a.filterPicker.ModalView(a.browseView(), a.width, a.height)
 	}
 	return ""
-}
-
-// getBackgroundView returns the view to show behind modal pickers
-func (a *App) getBackgroundView() string {
-	switch a.previousState {
-	case viewList:
-		return a.list.View()
-	case viewDetail:
-		return a.detail.View()
-	default:
-		return a.list.View()
-	}
 }
 
 // getEditor returns the user's preferred editor using the fallback chain:
@@ -839,19 +736,11 @@ func init() {
 	ui.OnThemeApplied(rebuildThemeStyles)
 }
 
-// rebuildThemeStyles rebuilds the package-level styles derived from the ui
-// palette after ui.ApplyTheme (they are built at init, before any theme is
-// applied).
+// rebuildThemeStyles drops caches that captured the previous theme after
+// ui.ApplyTheme. All other TUI styles are built at render time from the
+// accessors in palette.go.
 func rebuildThemeStyles() {
-	listTitleStyle = lipgloss.NewStyle().Foreground(ui.ColorPrimary).Bold(true)
-	detailTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(ui.ColorPrimary).Reverse(true).Padding(0, 1)
-	helpStyle = lipgloss.NewStyle().Foreground(ui.ColorMuted)
-	helpKeyStyle = lipgloss.NewStyle().Foreground(ui.ColorPrimary).Bold(true)
-	modalDimStyle = lipgloss.NewStyle().Foreground(ui.ColorSubtle)
-
-	// The markdown renderer captures the theme's markdown style.
-	glamourRenderer = nil
-	glamourRendererOnce = sync.Once{}
+	resetMarkdownRenderers()
 }
 
 // Run starts the TUI application with file watching

@@ -1,0 +1,24 @@
+╭────────────────────────────────────────────────────────────────────╮
+│ beans: demo                 / search · F filters · ? help · q quit │
+│ ────────────────────────────────────────────────────────────────── │
+│ ╭─ Beans ────────────────────────────────────────────────────────╮ │
+│ │ ▾ T M m001 Release 1.0                                         │ │
+│ │   ▾ I E e001 Login overhaul                                    │ │
+│ │▌      I F t001 ! Two-factor authentication for the login form  │ │
+│ │       T T t002 Check the error texts of the login mask         │ │
+│ │       T T t003 ↓ Password reset via e-mail with a very long    │ │
+│ │                title that will need to wrap across several     │ │
+│ │                lines in the tree pane                          │ │
+│ │       C B t004 Session timeout bug [archived]                  │ │
+│ │   ▾ T E e002 Export                                            │ │
+│ │       T T t005 ‼ Export as CSV                                 │ │
+│ │       D T t006 → Export as JSON                                │ │
+│ │   T T t008 Loose task without parent                           │ │
+│ │ ▾ S M m002 Scrapped milestone                                  │ │
+│ │     T T t007 Child of scrapped ↑scrapped                       │ │
+│ │                                                                │ │
+│ ╰───────────────────────────────────────────────────────── 3/12 ─╯ │
+│ ────────────────────────────────────────────────────────────────── │
+│ enter open · e edit · c create · s status · t type · P priority    │
+│ p parent · b blocking · ←→ fold · space select · H hide done       │
+╰────────────────────────────────────────────────────────────────────╯

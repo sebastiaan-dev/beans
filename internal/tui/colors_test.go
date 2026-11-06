@@ -80,10 +80,6 @@ func TestTUIViewsUseANSIPalette(t *testing.T) {
 
 			views := map[string]string{
 				"help":     newHelpOverlayModel(w, h).ModalView("background", w, h),
-				"preview":  newPreviewModel(beans[1], 60, 30).View(),
-				"preview0": newPreviewModel(nil, 60, 30).View(),
-				"detail":   newDetailModel(beans[1], resolver, cfg, w, h).View(),
-				"detail0":  newDetailModel(beans[0], resolver, cfg, w, h).View(),
 				"status":   newStatusPickerModel(ids, "t", "todo", cfg, w, h).ModalView("bg", w, h),
 				"type":     newTypePickerModel(ids, "t", "task", cfg, w, h).ModalView("bg", w, h),
 				"priority": newPriorityPickerModel(ids, "t", "high", cfg, w, h).ModalView("bg", w, h),
@@ -91,6 +87,23 @@ func TestTUIViewsUseANSIPalette(t *testing.T) {
 				"blocking": newBlockingPickerModel(beans[1].ID, "t", beans[1].Blocking, resolver, cfg, w, h).ModalView("bg", w, h),
 				"tags":     newTagPickerModel([]tagWithCount{{tag: "a", count: 1}, {tag: "b", count: 2}}, w, h).View(),
 			}
+
+			// The browse view: wide (tree and detail side by side, with the
+			// filter bar), narrow, with the detail pane focused, filtered and
+			// with a search.
+			app := newBrowseTestApp(t, resolver, cfg)
+			views["browse"] = sizedView(t, app, w, h)
+			pressKey(t, app, "j")
+			pressKey(t, app, "enter")
+			views["browse-detail"] = sizedView(t, app, w, h)
+			views["browse-narrow-detail"] = sizedView(t, app, 70, 24)
+			pressKey(t, app, "esc")
+			views["browse-narrow"] = sizedView(t, app, 70, 24)
+			app.list.setFilters(listFilters{statuses: []string{"todo"}, tags: []string{"tag-todo"}, hideResolved: true})
+			runCmd(t, app, app.list.loadBeans)
+			pressKey(t, app, "/")
+			pressKey(t, app, "b")
+			views["browse-filtered"] = sizedView(t, app, w, h)
 
 			// The filter input is styled from the list theme; render it too.
 			sp := newStatusPickerModel(ids, "t", "todo", cfg, w, h)
@@ -108,6 +121,22 @@ func TestTUIViewsUseANSIPalette(t *testing.T) {
 			}
 		})
 	}
+}
+
+// newBrowseTestApp creates an app on the resolver's core and loads it.
+func newBrowseTestApp(t *testing.T, resolver *beangraph.CoreResolver, cfg *config.Config) *App {
+	t.Helper()
+	app := New(resolver.Core, cfg)
+	app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	runCmd(t, app, app.Init())
+	return app
+}
+
+// sizedView resizes the app and renders it.
+func sizedView(t *testing.T, app *App, w, h int) string {
+	t.Helper()
+	app.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	return app.View()
 }
 
 func profileName(p termenv.Profile) string {
@@ -147,23 +176,18 @@ func TestTUIViewsUseTheme(t *testing.T) {
 
 	accent := termenv.TrueColor.Color("#8ba4b0").Sequence(false)
 	bg := termenv.TrueColor.Color("#22262d").Sequence(true)
-	if got := listTitleStyle.Render("x"); !strings.Contains(got, accent) {
-		t.Errorf("listTitleStyle not rebuilt by the theme hook: %q", got)
+	selection := termenv.TrueColor.Color("#393b44").Sequence(true)
+	if got := listTitleStyle().Render("x"); !strings.Contains(got, accent) {
+		t.Errorf("listTitleStyle doesn't use the theme accent: %q", got)
 	}
-	if got := helpKeyStyle.Render("x"); !strings.Contains(got, accent) {
-		t.Errorf("helpKeyStyle not rebuilt by the theme hook: %q", got)
+	if got := helpKeyStyle().Render("x"); !strings.Contains(got, accent) {
+		t.Errorf("helpKeyStyle doesn't use the theme accent: %q", got)
 	}
 
-	resolver, cfg, beans := newColorTestResolver(t)
+	resolver, cfg, _ := newColorTestResolver(t)
 	const w, h = 140, 40
-	for name, view := range map[string]string{
-		"help":    newHelpOverlayModel(w, h).ModalView("background", w, h),
-		"preview": newPreviewModel(beans[1], 60, 30).View(),
-		"detail":  newDetailModel(beans[1], resolver, cfg, w, h).View(),
-	} {
-		if !strings.Contains(view, "38;2;") {
-			t.Errorf("%s: no theme (truecolor) colors: %q", name, view)
-		}
+	if view := newHelpOverlayModel(w, h).ModalView("background", w, h); !strings.Contains(view, "38;2;") {
+		t.Errorf("help: no theme (truecolor) colors: %q", view)
 	}
 
 	app := New(resolver.Core, cfg)
@@ -177,5 +201,14 @@ func TestTUIViewsUseTheme(t *testing.T) {
 		if !strings.HasPrefix(l, "\x1b["+bg) || lipgloss.Width(l) != w {
 			t.Fatalf("line %d not painted to full width: %q", i, l)
 		}
+	}
+	// The browse view (tree + detail pane) uses theme colors, including the
+	// selection background on the cursor row.
+	view = newDemoApp(t, w, h).View()
+	if !strings.Contains(view, accent) {
+		t.Error("browse view doesn't use the theme accent")
+	}
+	if !strings.Contains(view, selection) {
+		t.Error("browse view doesn't paint the theme selection background")
 	}
 }

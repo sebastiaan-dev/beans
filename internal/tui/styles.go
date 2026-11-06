@@ -3,35 +3,22 @@ package tui
 import (
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/hmans/beans/internal/ui"
 )
 
-var (
-	// List title style
-	listTitleStyle = lipgloss.NewStyle().
-			Foreground(ui.ColorPrimary).
-			Bold(true)
+// Shared styles. They are functions rather than package-level variables so
+// that they pick up the current palette (see palette.go) when rendering.
 
-	// Detail title style (badge: reverse video keeps theme contrast, see ui.badgeStyle)
-	detailTitleStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(ui.ColorPrimary).
-				Reverse(true).
-				Padding(0, 1)
+// listTitleStyle renders list and section titles.
+func listTitleStyle() lipgloss.Style { return fg(colAccent()).Bold(true) }
 
-	// Help text style
-	helpStyle = lipgloss.NewStyle().
-			Foreground(ui.ColorMuted)
+// helpStyle renders hint descriptions.
+func helpStyle() lipgloss.Style { return mutedStyle() }
 
-	// Help key style
-	helpKeyStyle = lipgloss.NewStyle().
-			Foreground(ui.ColorPrimary).
-			Bold(true)
+// helpKeyStyle renders hint keys.
+func helpKeyStyle() lipgloss.Style { return keyStyle() }
 
-	// Dimmed background behind modals
-	modalDimStyle = lipgloss.NewStyle().
-			Foreground(ui.ColorSubtle)
-)
+// modalDimStyle renders the dimmed background behind modals.
+func modalDimStyle() lipgloss.Style { return fg(colDim()) }
 
 // applyListTheme replaces the bubbles list defaults (which use fixed hex and
 // 256-color values) with ANSI palette styles so the list follows the terminal
@@ -42,36 +29,33 @@ var (
 func applyListTheme(l *list.Model) {
 	s := list.DefaultStyles()
 
-	s.Title = listTitleStyle
-	s.Spinner = lipgloss.NewStyle().Foreground(ui.ColorMuted)
-	s.FilterPrompt = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
-	s.FilterCursor = lipgloss.NewStyle().Foreground(ui.ColorPrimary)
-	s.StatusBar = s.StatusBar.Foreground(ui.ColorMuted)
-	s.StatusEmpty = lipgloss.NewStyle().Foreground(ui.ColorMuted)
+	s.Title = listTitleStyle()
+	s.Spinner = mutedStyle()
+	s.FilterPrompt = accentStyle()
+	s.FilterCursor = accentStyle()
+	s.StatusBar = s.StatusBar.Foreground(colMuted())
+	s.StatusEmpty = mutedStyle()
 	s.StatusBarActiveFilter = lipgloss.NewStyle()
-	s.StatusBarFilterCount = lipgloss.NewStyle().Foreground(ui.ColorMuted)
-	s.NoItems = lipgloss.NewStyle().Foreground(ui.ColorMuted)
-	s.ArabicPagination = lipgloss.NewStyle().Foreground(ui.ColorMuted)
-	s.ActivePaginationDot = s.ActivePaginationDot.Foreground(ui.ColorDefault)
-	s.InactivePaginationDot = s.InactivePaginationDot.Foreground(ui.ColorMuted)
-	s.DividerDot = s.DividerDot.Foreground(ui.ColorMuted)
+	s.StatusBarFilterCount = mutedStyle()
+	s.NoItems = mutedStyle()
+	s.ArabicPagination = mutedStyle()
+	s.ActivePaginationDot = s.ActivePaginationDot.Foreground(colFg())
+	s.InactivePaginationDot = s.InactivePaginationDot.Foreground(colMuted())
+	s.DividerDot = s.DividerDot.Foreground(colMuted())
 	l.Styles = s
 
 	l.FilterInput.PromptStyle = s.FilterPrompt
 	l.FilterInput.Cursor.Style = s.FilterCursor
-	l.FilterInput.PlaceholderStyle = lipgloss.NewStyle().Foreground(ui.ColorMuted)
-	l.FilterInput.CompletionStyle = lipgloss.NewStyle().Foreground(ui.ColorMuted)
+	l.FilterInput.PlaceholderStyle = mutedStyle()
+	l.FilterInput.CompletionStyle = mutedStyle()
 	l.Paginator.ActiveDot = s.ActivePaginationDot.String()
 	l.Paginator.InactiveDot = s.InactivePaginationDot.String()
 
-	keyStyle := lipgloss.NewStyle().Foreground(ui.ColorPrimary)
-	descStyle := lipgloss.NewStyle().Foreground(ui.ColorMuted)
-	sepStyle := lipgloss.NewStyle().Foreground(ui.ColorMuted)
-	l.Help.Styles.ShortKey = keyStyle
-	l.Help.Styles.ShortDesc = descStyle
-	l.Help.Styles.ShortSeparator = sepStyle
-	l.Help.Styles.Ellipsis = sepStyle
-	l.Help.Styles.FullKey = keyStyle
-	l.Help.Styles.FullDesc = descStyle
-	l.Help.Styles.FullSeparator = sepStyle
+	l.Help.Styles.ShortKey = accentStyle()
+	l.Help.Styles.ShortDesc = mutedStyle()
+	l.Help.Styles.ShortSeparator = mutedStyle()
+	l.Help.Styles.Ellipsis = mutedStyle()
+	l.Help.Styles.FullKey = accentStyle()
+	l.Help.Styles.FullDesc = mutedStyle()
+	l.Help.Styles.FullSeparator = mutedStyle()
 }
