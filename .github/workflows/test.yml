@@ -1,47 +1,169 @@
-# This workflow will build a golang project
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
-
 name: test
 
 on:
   push:
-    branches: ["main"]
-    tags:
-      - "v*"
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Base commit for the changed-files-only format checks
+  # (.github/scripts/changed-files.sh; falls back to the merge base with main).
+  BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
 
 jobs:
-  build:
+  lint:
+    name: lint (gofmt, vet, staticcheck, codegen)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Install mise
-        shell: bash
-        run: |
-          if [ ! -f "$HOME/.local/bin/mise" ]; then
-            curl https://mise.run | sh
-          fi
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # changed-files.sh diffs against the base commit
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
+      - uses: ./.github/actions/setup-frontend
+      - name: gofmt (changed files)
+        # TODO(repos-dl82): check all files once the repository is formatted.
+        run: .github/scripts/check-gofmt.sh
+      - name: go vet
+        run: go vet ./...
+      - name: Cache staticcheck
+        uses: actions/cache@v6
         with:
-          version: 10
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+          path: ~/.cache/beans-tools
+          key: beans-tools-${{ runner.os }}-${{ hashFiles('.github/scripts/staticcheck.sh') }}
+      - name: staticcheck (new findings only)
+        run: .github/scripts/staticcheck.sh
+      - name: Generated code is up to date
+        run: .github/scripts/check-codegen.sh
+
+  test-go:
+    name: go test -race
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          node-version: "24"
-          cache: "pnpm"
-          cache-dependency-path: "frontend/pnpm-lock.yaml"
-      - name: Install dependencies
-        run: mise deps
-      - name: Install Playwright browsers
+          go-version: stable
+      - uses: ./.github/actions/setup-worktrunk
+      - name: Configure git
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.invalid"
+          git config --global init.defaultBranch main
+      - name: go test
+        run: go test -race ./...
+
+  cross:
+    name: build + vet (${{ matrix.goos }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin, windows]
+    env:
+      GOOS: ${{ matrix.goos }}
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - name: go build
+        run: go build ./cmd/...
+      - name: go vet
+        run: go vet ./...
+
+  frontend:
+    name: frontend (check, vitest, prettier, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # changed-files.sh diffs against the base commit
+      - uses: ./.github/actions/setup-frontend
+      - name: svelte-check
         working-directory: frontend
-        run: npx playwright install --with-deps chromium
-      - name: Build
-        run: mise build
-      - name: Test
-        run: mise test
+        run: pnpm check
+      - name: vitest
+        working-directory: frontend
+        run: pnpm test
+      - name: prettier (changed files)
+        # TODO(repos-dl82): check all files once the repository is formatted.
+        run: .github/scripts/check-prettier.sh
+      - name: build
+        working-directory: frontend
+        run: pnpm build
+
+  e2e:
+    name: e2e (Playwright)
+    runs-on: ubuntu-latest
+    env:
+      # frontend/e2e/run.sh builds with `mise exec -- go build`; use the Go
+      # from setup-go instead of letting mise install the tools in mise.toml.
+      MISE_EXEC_AUTO_INSTALL: "false"
+      MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+      # mise resolves tool versions via the GitHub API; avoid anonymous rate limits.
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      - uses: ./.github/actions/setup-frontend
+      - uses: ./.github/actions/setup-worktrunk
+      - uses: jdx/mise-action@v5
+        with:
+          install: false
+          cache: false
+      - name: Configure git
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.invalid"
+          git config --global init.defaultBranch main
+      - name: Playwright version
+        id: playwright
+        working-directory: frontend
+        run: echo "version=$(pnpm exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Install Playwright system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        working-directory: frontend
+        run: pnpm exec playwright install-deps chromium
+      - name: Build embedded frontend
+        run: |
+          (cd frontend && pnpm build)
+          rm -rf internal/web/dist
+          mkdir -p internal/web/dist
+          cp -r frontend/build/* internal/web/dist/
+          touch internal/web/dist/.gitkeep
+      - name: Playwright
+        working-directory: frontend
+        run: pnpm test:e2e
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          retention-days: 7
+          if-no-files-found: ignore

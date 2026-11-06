@@ -302,6 +302,7 @@ When making a commit, include the relevant bean IDs in the commit message
 
 This project currently does not accept contributions -- it's just way too early for that!
 But if you do have suggestions or feedback, please feel free to open an issue.
+For building, testing and the checks CI runs, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

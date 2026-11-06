@@ -477,6 +477,12 @@ func (c *Config) toYAMLNode() *yaml.Node {
 	integrateKey.HeadComment = "Integration strategy: \"local\" (squash-merge locally) or \"pr\" (push and create PRs)"
 	worktreeMapping.Content = append(worktreeMapping.Content, integrateKey, strNode(string(c.GetWorktreeIntegrate())))
 
+	if c.Worktree.FetchTimeout != nil {
+		key := strNode("fetch_timeout")
+		key.HeadComment = "Timeout in seconds for the git fetch before creating a worktree (0 disables the fetch)"
+		worktreeMapping.Content = append(worktreeMapping.Content, key, intNode(*c.Worktree.FetchTimeout))
+	}
+
 	// Build the agent mapping
 	agentMapping := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	if c.Agent.Enabled != nil {
@@ -489,12 +495,27 @@ func (c *Config) toYAMLNode() *yaml.Node {
 		key.HeadComment = "Default mode for agent sessions (act, plan)"
 		agentMapping.Content = append(agentMapping.Content, key, strNode(string(c.Agent.DefaultMode)))
 	}
+	if c.Agent.DefaultEffort != "" {
+		key := strNode("default_effort")
+		key.HeadComment = "Default thinking effort for agent sessions (low, medium, high, max)"
+		agentMapping.Content = append(agentMapping.Content, key, strNode(c.Agent.DefaultEffort))
+	}
+
 	// Build the server mapping
 	serverMapping := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	if c.Server.Port != 0 {
 		portKey := strNode("port")
 		portKey.HeadComment = "Port for the web UI (used by `beans-serve`)"
 		serverMapping.Content = append(serverMapping.Content, portKey, intNode(c.Server.Port))
+	}
+	if len(c.Server.CORSOrigins) > 0 {
+		key := strNode("cors_origins")
+		key.HeadComment = "Allowed origins for CORS and WebSocket (port wildcards like \"http://localhost:*\" allowed)"
+		origins := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+		for _, origin := range c.Server.CORSOrigins {
+			origins.Content = append(origins.Content, strNode(origin))
+		}
+		serverMapping.Content = append(serverMapping.Content, key, origins)
 	}
 
 	// Build the tui mapping

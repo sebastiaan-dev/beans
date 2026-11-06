@@ -14,6 +14,9 @@ permissions:
 
 jobs:
   goreleaser:
+    # Publishes to hmans/homebrew-beans with HOMEBREW_TAP_TOKEN, which only the
+    # upstream repository has; forks skip the job instead of failing.
+    if: github.repository == 'hmans/beans'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -26,7 +29,7 @@ jobs:
           if [ ! -f "$HOME/.local/bin/mise" ]; then
             curl https://mise.run | sh
           fi
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Set up Go
         uses: actions/setup-go@v5
         with:

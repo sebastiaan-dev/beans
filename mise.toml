@@ -30,9 +30,58 @@ sources = ["frontend/package.json", "frontend/pnpm-lock.yaml"]
 [tasks.codegen]
 run = ["go generate ./...", "cd frontend && pnpm codegen"]
 
+[tasks."check:codegen"]
+description = "Fail if generated code (gqlgen, graphql-codegen) is out of date"
+run = ".github/scripts/check-codegen.sh"
+
+[tasks.fmt]
+description = "Format all Go (gofmt) and frontend (prettier) files"
+run = [
+  "git ls-files -z '*.go' | xargs -0 gofmt -w",
+  "cd frontend && pnpm format",
+]
+
+[tasks."lint:go"]
+description = "Go checks run in CI: gofmt (changed files), go vet (linux/darwin/windows), staticcheck"
+run = [
+  ".github/scripts/check-gofmt.sh",
+  "for os in linux darwin windows; do echo \"go vet (GOOS=$os)\"; GOOS=$os CGO_ENABLED=0 go vet ./... || exit 1; done",
+  ".github/scripts/staticcheck.sh",
+]
+
+[tasks."lint:frontend"]
+description = "Frontend checks run in CI: svelte-check, prettier (changed files)"
+run = [
+  "cd frontend && pnpm check",
+  ".github/scripts/check-prettier.sh",
+]
+
+[tasks.lint]
+description = "Run the lint checks of CI (lint:go, lint:frontend, check:codegen)"
+run = [
+  { task = "lint:go" },
+  { task = "lint:frontend" },
+  { task = "check:codegen" },
+]
+
 [tasks.test]
-depends = ["codegen", "test:e2e"]
+description = "Run all tests (Go, vitest, Playwright e2e)"
+depends = ["codegen"]
+# Sequential: the e2e tests and the Go tests are both timing-sensitive.
+run = [
+  { task = "test:go" },
+  { task = "test:frontend" },
+  { task = "test:e2e" },
+]
+
+[tasks."test:go"]
+description = "Run Go tests"
 run = "go test ./..."
+
+[tasks."test:frontend"]
+description = "Run frontend unit tests (vitest)"
+dir = "frontend"
+run = "pnpm test"
 
 [tasks."build:frontend"]
 description = "Build the SvelteKit frontend"

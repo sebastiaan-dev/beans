@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1685,5 +1687,128 @@ func TestWorktreeBackendLoadAndSave(t *testing.T) {
 	}
 	if reloaded.GetWorktreeBackend() != WorktreeBackendWorktrunk {
 		t.Errorf("round trip lost the backend: %q", reloaded.GetWorktreeBackend())
+	}
+}
+
+// roundTripValues pins fields whose values Save normalizes (e.g. invalid
+// integrate modes are written as "local") to valid non-default values.
+var roundTripValues = map[string]string{
+	"Worktree.Backend":    string(WorktreeBackendWorktrunk),
+	"Worktree.Integrate":  string(IntegrateModePR),
+	"Agent.DefaultMode":   string(PermissionModePlan),
+	"Agent.DefaultEffort": "high",
+}
+
+// fillAll sets every exported field reachable from v to a distinct non-zero
+// value, so that new config fields are covered automatically. With
+// zeroPointees, pointers point at zero values instead (e.g. fetch_timeout: 0,
+// enabled: false), which must survive a round trip as well.
+func fillAll(t *testing.T, v reflect.Value, path string, zeroPointees bool, counter *int) {
+	t.Helper()
+	*counter++
+	n := *counter
+	switch v.Kind() {
+	case reflect.Struct:
+		for i := 0; i < v.NumField(); i++ {
+			f := v.Type().Field(i)
+			if !f.IsExported() {
+				continue
+			}
+			p := f.Name
+			if path != "" {
+				p = path + "." + f.Name
+			}
+			fillAll(t, v.Field(i), p, zeroPointees, counter)
+		}
+	case reflect.String:
+		if val, ok := roundTripValues[path]; ok {
+			v.SetString(val)
+		} else {
+			v.SetString(fmt.Sprintf("value-%s-%d", strings.ToLower(path), n))
+		}
+	case reflect.Int:
+		v.SetInt(int64(n))
+	case reflect.Bool:
+		v.SetBool(true)
+	case reflect.Pointer:
+		v.Set(reflect.New(v.Type().Elem()))
+		if !zeroPointees {
+			fillAll(t, v.Elem(), path, zeroPointees, counter)
+		}
+	case reflect.Slice:
+		v.Set(reflect.MakeSlice(v.Type(), 2, 2))
+		for i := 0; i < 2; i++ {
+			fillAll(t, v.Index(i), fmt.Sprintf("%s[%d]", path, i), zeroPointees, counter)
+		}
+	case reflect.Map:
+		v.Set(reflect.MakeMap(v.Type()))
+		for i := 0; i < 2; i++ {
+			key := reflect.New(v.Type().Key()).Elem()
+			fillAll(t, key, fmt.Sprintf("%s.key%d", path, i), zeroPointees, counter)
+			val := reflect.New(v.Type().Elem()).Elem()
+			fillAll(t, val, fmt.Sprintf("%s[%d]", path, i), zeroPointees, counter)
+			v.SetMapIndex(key, val)
+		}
+	default:
+		t.Fatalf("fillAll: unsupported kind %s at %s; extend the round-trip test", v.Kind(), path)
+	}
+}
+
+// diffValues reports the paths of all exported fields that differ.
+func diffValues(path string, want, got reflect.Value) []string {
+	if want.Kind() != got.Kind() {
+		return []string{path}
+	}
+	switch want.Kind() {
+	case reflect.Struct:
+		var diffs []string
+		for i := 0; i < want.NumField(); i++ {
+			f := want.Type().Field(i)
+			if !f.IsExported() {
+				continue
+			}
+			diffs = append(diffs, diffValues(path+"."+f.Name, want.Field(i), got.Field(i))...)
+		}
+		return diffs
+	case reflect.Pointer:
+		if want.IsNil() || got.IsNil() {
+			if want.IsNil() != got.IsNil() {
+				return []string{fmt.Sprintf("%s: want nil=%t, got nil=%t", path, want.IsNil(), got.IsNil())}
+			}
+			return nil
+		}
+		return diffValues(path, want.Elem(), got.Elem())
+	default:
+		if !reflect.DeepEqual(want.Interface(), got.Interface()) {
+			return []string{fmt.Sprintf("%s: want %#v, got %#v", path, want.Interface(), got.Interface())}
+		}
+		return nil
+	}
+}
+
+// TestSaveRoundTripsEveryField guards against Save (toYAMLNode) forgetting
+// fields: every exported field is set via reflection and must survive
+// Load(Save(cfg)) unchanged.
+func TestSaveRoundTripsEveryField(t *testing.T) {
+	for _, zeroPointees := range []bool{false, true} {
+		t.Run(fmt.Sprintf("zeroPointees=%t", zeroPointees), func(t *testing.T) {
+			tmpDir := t.TempDir()
+			var cfg Config
+			counter := 0
+			fillAll(t, reflect.ValueOf(&cfg).Elem(), "", zeroPointees, &counter)
+			cfg.SetConfigDir(tmpDir)
+
+			if err := cfg.Save(tmpDir); err != nil {
+				t.Fatalf("Save() error = %v", err)
+			}
+			loaded, err := Load(filepath.Join(tmpDir, ConfigFileName))
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+
+			for _, d := range diffValues("Config", reflect.ValueOf(cfg), reflect.ValueOf(*loaded)) {
+				t.Errorf("round trip changed %s", d)
+			}
+		})
 	}
 }

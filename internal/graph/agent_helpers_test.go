@@ -23,9 +23,9 @@ func TestPrPrompt_NoPR(t *testing.T) {
 
 func TestPrPrompt_HasLocalChanges(t *testing.T) {
 	ctx := actionContext{
-		ForgeCLI:   "gh",
+		ForgeCLI:    "gh",
 		PullRequest: &forge.PullRequest{Checks: forge.CheckStatusPass},
-		HasChanges: true,
+		HasChanges:  true,
 	}
 	prompt := prPrompt(ctx)
 
