@@ -54,7 +54,7 @@ type commandPalette struct {
 func (a *App) openCommandPalette() tea.Cmd {
 	ti := textinput.New()
 	ti.Prompt = ": "
-	ti.Placeholder = "command or bean…"
+	ti.Placeholder = "command or bean" + glyphs().Ellipsis
 	ti.Cursor.SetMode(cursor.CursorStatic)
 	a.palette = commandPalette{input: ti}
 	a.previousState = a.state
@@ -334,7 +334,7 @@ func (a *App) paletteEntryLine(e paletteEntry, selected bool, width int) string 
 	muted := st(mutedStyle())
 	bar := plain.Render(" ")
 	if selected {
-		bar = st(accentStyle()).Render("▌")
+		bar = st(accentStyle()).Render(glyphs().Cursor)
 	}
 	titleStyle := plain
 	if selected {
@@ -343,11 +343,11 @@ func (a *App) paletteEntryLine(e paletteEntry, selected bool, width int) string 
 
 	var left, right string
 	if c := e.cmd; c != nil {
-		right = st(keyStyle()).Render(c.paletteKey())
-		left = titleStyle.Render(c.paletteTitle())
+		right = st(keyStyle()).Render(glyphs().localize(c.paletteKey()))
+		left = titleStyle.Render(glyphs().localize(c.paletteTitle()))
 		if e.reason != "" {
-			left = muted.Render(c.paletteTitle()) + muted.Render(" — "+e.reason)
-			right = muted.Render(c.paletteKey())
+			left = muted.Render(glyphs().localize(c.paletteTitle())) + muted.Render(" "+glyphs().Dash+" "+e.reason)
+			right = muted.Render(glyphs().localize(c.paletteKey()))
 		}
 	} else {
 		b := e.bean
@@ -409,13 +409,13 @@ func (a *App) commandPaletteView() string {
 		body = append(body, strings.Repeat(" ", inner))
 	}
 
-	rule := borderStyle().Render(strings.Repeat("─", inner))
-	footer := renderHints([]keyHint{{"↑↓", "move"}, {"enter", "run"}, {"esc", "close"}}, nil, inner)
+	rule := borderStyle().Render(strings.Repeat(glyphs().Horizontal, inner))
+	footer := renderHints([]keyHint{{glyphs().KeyUpDown, "move"}, {"enter", "run"}, {"esc", "close"}}, nil, inner)
 	if p.message != "" {
 		footer = clampWidth(fg(colWarning()).Bold(true).Render(p.message), inner)
 	} else if n := len(p.entries); n > 0 {
 		pos := mutedStyle().Render(fmt.Sprintf("%d/%d", p.cursor+1, n))
-		footer = renderHints([]keyHint{{"↑↓", "move"}, {"enter", "run"}, {"esc", "close"}}, nil, max(inner-lipgloss.Width(pos)-1, 1))
+		footer = renderHints([]keyHint{{glyphs().KeyUpDown, "move"}, {"enter", "run"}, {"esc", "close"}}, nil, max(inner-lipgloss.Width(pos)-1, 1))
 		footer = fitWidth(footer, inner-lipgloss.Width(pos), lipgloss.NewStyle()) + pos
 	}
 

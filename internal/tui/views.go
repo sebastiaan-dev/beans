@@ -652,13 +652,18 @@ func rowLine(s string, width int, r rowStyler) string {
 }
 
 // viewPaneLines renders the active view's list pane of the given outer size.
-func (a *App) viewPaneLines(l browseLayout) []string {
+func (a *App) viewPaneLines(l browseLayout, rec hitRecorder) []string {
 	fl := a.activeList()
 	var rows []string
 	if a.viewFilterApplies() && a.list.showSearchLine() {
 		rows = append(rows, a.list.searchLine(l.treeW-2))
 	}
-	rows = append(rows, fl.lines(max(l.treeW-2, 1), max(l.paneH-2-len(rows), 0))...)
+	rec.add(0, 0, l.treeW, l.paneH, hitTarget{kind: hitTreePane})
+	height := max(l.paneH-2-len(rows), 0)
+	for k := 0; k < height && fl.offset+k < len(fl.rows); k++ {
+		rec.add(1, 1+len(rows)+k, max(l.treeW-2, 1), 1, hitTarget{kind: hitViewRow, index: fl.offset + k})
+	}
+	rows = append(rows, fl.lines(max(l.treeW-2, 1), height)...)
 	return box{
 		label:    fl.title,
 		botRight: mutedStyle().Render(fl.position()),

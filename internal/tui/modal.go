@@ -88,18 +88,9 @@ func overlayModal(bgView, modal string, width, height int) string {
 
 	// Split modal into lines
 	modalLines := strings.Split(modal, "\n")
-	modalHeight := len(modalLines)
-	modalWidth := lipgloss.Width(modal)
 
-	// Calculate center position
-	startY := (height - modalHeight) / 2
-	startX := (width - modalWidth) / 2
-	if startY < 0 {
-		startY = 0
-	}
-	if startX < 0 {
-		startX = 0
-	}
+	// Center position (also used for mouse hit-testing)
+	startX, startY := modalOrigin(modal, width, height)
 
 	// Overlay modal onto background
 	for i, modalLine := range modalLines {

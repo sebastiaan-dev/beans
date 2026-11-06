@@ -214,8 +214,11 @@ func (g *glyphSet) localize(s string) string {
 }
 
 var asciiTextReplacer = strings.NewReplacer(
+	"⇧/⌥", "S/Opt", // mouse help ("⇧/⌥ drag"); before KeyShift
+	"×", "x", // mouse help ("click 2×")
 	unicodeGlyphs.KeyUpDown, asciiGlyphs.KeyUpDown,
 	unicodeGlyphs.KeyLeftRight, asciiGlyphs.KeyLeftRight,
+	"←", "lt", "→", "rt", // single arrow keys (after the pair)
 	unicodeGlyphs.KeyUp, asciiGlyphs.KeyUp,
 	unicodeGlyphs.KeyDown, asciiGlyphs.KeyDown,
 	unicodeGlyphs.KeyShift, asciiGlyphs.KeyShift,

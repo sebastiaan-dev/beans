@@ -113,6 +113,13 @@ type App struct {
 	// Undo history of changes made in this session (undo.go)
 	undo undoState
 
+	// Mouse support (mouse.go): the regions of the last rendered screen,
+	// the recorder of the App's renderers and the click state.
+	hits    *hitMap
+	rec     hitRecorder
+	mouse   mouseState
+	mouseOn bool // mouse reporting is enabled
+
 	// Editor state - tracks bean being edited to update updated_at on save
 	editingBeanID      string
 	editingBeanModTime time.Time
@@ -302,6 +309,9 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 			}
 		}
 
+	case tea.MouseMsg:
+		return a.handleMouse(msg)
+
 	case releaseHeldKeysMsg:
 		keys := a.heldKeys
 		a.heldKeys = nil
@@ -329,7 +339,7 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		return a.ws.apply(msg, a.core)
 
 	case workspaceStartedMsg:
-		return a.handleWorkspaceStarted(msg)
+		return tea.Batch(a.handleWorkspaceStarted(msg), a.restoreMouse())
 
 	case themeReloadedMsg:
 		return a.applyThemeReload(msg)
@@ -481,7 +491,7 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 			a.editingBeanID = ""
 			a.editingBeanModTime = time.Time{}
 		}
-		return a.list.loadBeans
+		return tea.Batch(a.list.loadBeans, a.restoreMouse())
 
 	case clearFilterMsg:
 		a.list.clearFilter()
@@ -737,29 +747,48 @@ func (a *App) View() string {
 }
 
 // view renders the current view without the theme background.
+// It records the clickable regions of the screen for the mouse (mouse.go).
 func (a *App) view() string {
+	a.hits = &hitMap{}
 	if a.width < minAppWidth || a.height < minAppHeight {
 		return a.tooSmallView()
+	}
+	picker := func(modal string, l *list.Model) string {
+		bg := a.browseView()
+		a.recordPicker(modal, l)
+		return overlayModal(bg, modal, a.width, a.height)
 	}
 	switch a.state {
 	case viewList:
 		return a.browseView()
 	case viewParentPicker:
-		return a.parentPicker.ModalView(a.browseView(), a.width, a.height)
+		return picker(a.parentPicker.View(), &a.parentPicker.list)
 	case viewStatusPicker:
-		return a.statusPicker.ModalView(a.browseView(), a.width, a.height)
+		return picker(a.statusPicker.View(), &a.statusPicker.list)
 	case viewTypePicker:
-		return a.typePicker.ModalView(a.browseView(), a.width, a.height)
+		return picker(a.typePicker.View(), &a.typePicker.list)
 	case viewPriorityPicker:
-		return a.priorityPicker.ModalView(a.browseView(), a.width, a.height)
+		return picker(a.priorityPicker.View(), &a.priorityPicker.list)
 	case viewBlockingPicker:
-		return a.blockingPicker.ModalView(a.browseView(), a.width, a.height)
+		return picker(a.blockingPicker.View(), &a.blockingPicker.list)
 	case viewHelpOverlay:
-		return a.helpOverlay.ModalView(a.browseView(), a.width, a.height)
+		bg, modal := a.browseView(), a.helpOverlay.View()
+		a.recordModal(modal)
+		return overlayModal(bg, modal, a.width, a.height)
 	case viewWorkspaces:
-		return overlayModal(a.browseView(), a.workspacesOverlayView(), a.width, a.height)
+		local := &hitMap{}
+		a.rec = local.recorder()
+		modal := a.workspacesOverlayView()
+		a.rec = hitRecorder{}
+		bg := a.browseView()
+		x, y := a.recordModal(modal)
+		a.hits.recorder().place(local, x, y)
+		return overlayModal(bg, modal, a.width, a.height)
 	case viewCommandPalette:
-		return overlayModal(a.browseView(), a.commandPaletteView(), a.width, a.height)
+		modal := a.commandPaletteView()
+		bg := a.browseView()
+		a.recordModal(modal)
+		return overlayModal(bg, modal, a.width, a.height)
 	}
 	return ""
 }
@@ -807,7 +836,8 @@ func Run(core *beancore.Core, cfg *config.Config) error {
 	setASCII(ascii)
 
 	app := New(core, cfg)
-	p := tea.NewProgram(app, tea.WithAltScreen())
+	app.mouseOn = mouseEnabled()
+	p := tea.NewProgram(app, programOptions(app.mouseOn)...)
 
 	// Reload the theme when its sources change (see theme_reload.go).
 	defer startThemeReload(cfg, themeSettings, p.Send)()

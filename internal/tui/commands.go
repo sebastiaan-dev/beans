@@ -75,6 +75,9 @@ func buildCommands() []command {
 		{id: "palette", section: "General", keys: []string{":", "ctrl+p"}, label: ": ^p", help: "Command palette", hint: "commands"},
 		{id: "help", section: "General", keys: []string{"?"}, help: "Keyboard shortcuts", title: "Show keyboard shortcuts", hint: "help", run: press},
 		{id: "undo", section: "General", keys: []string{"u"}, help: "Undo last change", hint: "undo", avail: canUndo, run: press},
+		// Mouse (no keys; documented in the help only).
+		{id: "mouse-open", section: "General", keys: []string{"<mouse>"}, label: "click 2×", help: "Select / open"},
+		{id: "mouse-select-text", section: "General", keys: []string{"<mouse-drag>"}, label: "⇧/⌥ drag", help: "Select text"},
 		{id: "quit", section: "General", keys: []string{"q"}, help: "Quit", title: "Quit beans", hint: "quit", run: press},
 
 		// Navigate

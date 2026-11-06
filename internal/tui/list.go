@@ -93,6 +93,9 @@ type listModel struct {
 
 	// Status message to display in footer
 	statusMessage string
+
+	// Records the clickable regions while rendering (layout.go).
+	hits hitRecorder
 }
 
 func newListModel(resolver *beangraph.CoreResolver, cfg *config.Config) listModel {
@@ -974,7 +977,9 @@ func (m listModel) viewLines() []string {
 			lines = append(lines, m.inlineCreateLine(w))
 		}
 		for i := m.offset; i < len(m.rows) && len(lines) < h; i++ {
-			lines = append(lines, m.renderRow(i, w)...)
+			row := m.renderRow(i, w)
+			m.recordRow(i, len(lines), w, len(row), h)
+			lines = append(lines, row...)
 			if m.creating() && i == insert {
 				lines = append(lines, m.inlineCreateLine(w))
 			}

@@ -602,6 +602,8 @@ func (a *App) workspacesOverlayView() string {
 	maxRows := max((a.height-8)/2, 1)
 	offset := max(0, a.wsOverlay.cursor-maxRows+1)
 	for i := offset; i < len(a.ws.list) && i < offset+maxRows; i++ {
+		// Below the border, the title and a blank line; inside border and padding.
+		a.rec.add(2, 3+len(body), inner, 2, hitTarget{kind: hitModalItem, index: i})
 		body = append(body, a.workspaceLines(a.ws.list[i], i == a.wsOverlay.cursor, inner)...)
 	}
 
