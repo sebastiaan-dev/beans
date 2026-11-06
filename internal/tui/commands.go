@@ -32,6 +32,8 @@ const (
 	scopeDetail
 	// scopeFilter keys work in the focused filter bar.
 	scopeFilter
+	// scopeReader keys work in the reader (reader.go).
+	scopeReader
 )
 
 // command is an action of the browse view.
@@ -57,7 +59,7 @@ type command struct {
 }
 
 // helpSectionOrder is the order of the help overlay's sections.
-var helpSectionOrder = []string{"General", "Navigate", "Details", "Filter", "Edit", "Workspaces"}
+var helpSectionOrder = []string{"General", "Navigate", "Details", "Reader", "Filter", "Edit", "Workspaces"}
 
 // commands is the registry. It is built in init because the run functions
 // reach code that looks commands up (the footer hints), which a package
@@ -111,6 +113,15 @@ func buildCommands() []command {
 		{id: "open-relation", section: "Details", keys: []string{"enter"}, help: "Open related bean", hint: "open", scope: scopeDetail},
 		{id: "previous-bean", section: "Details", keys: []string{"backspace"}, help: "Previous bean", hintKey: "bksp", hint: "previous", scope: scopeDetail},
 		{id: "back", section: "Details", keys: []string{"esc"}, help: "Back to the tree", title: "Focus the tree", hint: "back", scope: scopeDetail, avail: needsFocusAway, run: func(a *App, _ *command) tea.Cmd { a.focusTree(); return nil }},
+
+		// Reader. Scrolling works like in the detail pane; to keep the help
+		// on one page at 160x40 it is not listed again.
+		{id: "reader", section: "Reader", keys: []string{"f"}, help: "Reader mode", title: "Focus on bean (reader mode)", hint: "read", avail: needsFocusedBean, run: press},
+		{id: "reader-back", section: "Reader", keys: []string{"esc", "f", "q"}, help: "Back to the list", hint: "back", scope: scopeReader},
+		{id: "reader-scroll", section: "Reader", keys: []string{"up", "k", "down", "j", "g g", "G"}, label: "j k gg G", help: "Scroll, top, end", hintKey: "j/k", hint: "scroll", scope: scopeReader, noHelp: true},
+		{id: "reader-page", section: "Reader", keys: []string{" ", "pgdown", "pgup", "ctrl+d", "ctrl+u"}, label: "pgdn pgup", help: "Page (space: down)", hintKey: "space", hint: "page", scope: scopeReader, noHelp: true},
+		{id: "reader-prev-next", section: "Reader", keys: []string{"{", "}"}, label: "{ }", help: "Previous / next bean", hintKey: "{ }", hint: "prev/next", scope: scopeReader},
+		{id: "reader-related", section: "Reader", keys: []string{"tab", "enter"}, label: "tab enter", help: "Related bean", hint: "related", scope: scopeReader},
 
 		// Filter
 		{id: "focus-filter", section: "Filter", keys: []string{"F", "shift+tab"}, help: "Focus filter bar", hintKey: "F", hint: "filters", run: press},
@@ -332,6 +343,13 @@ func (a *App) focusedBean() *bean.Bean {
 
 func needsBean(a *App) string {
 	if ids, _ := a.list.selectionOrCurrent(); a.focusedBean() == nil && len(ids) == 0 {
+		return noBeanReason
+	}
+	return ""
+}
+
+func needsFocusedBean(a *App) string {
+	if a.focusedBean() == nil {
 		return noBeanReason
 	}
 	return ""

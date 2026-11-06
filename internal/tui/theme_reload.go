@@ -59,6 +59,9 @@ func (a *App) applyThemeReload(msg themeReloadedMsg) tea.Cmd {
 	}
 	ui.ApplyThemeSettings(msg.settings)
 	a.detail.bodyKey = "" // re-render the markdown body with the new colors
+	if a.reader != nil {
+		a.reader.bodyKey = ""
+	}
 	a.detailStale = true
 	return nil
 }

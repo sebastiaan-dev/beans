@@ -197,11 +197,12 @@ If a theme can't be loaded (e.g. nvim is not installed or the colorscheme doesn'
 | `e`, `s t P p b` | edit in `$EDITOR`; set status, type, priority, parent, blocking |
 | `n`, `u`, `K J` | jump to the next bean to work on, undo, move the bean up/down |
 | `[ ]`, `x` | move between the body's checkboxes, toggle one |
+| `f` | reader mode: the bean alone on the screen in a centered reading column (title, metadata, body, related beans); `j k`, `space`/`pgdn` `pgup`, `ctrl+d ctrl+u`, `gg G` scroll, `{ }` previous/next bean of the list it was opened from, `[ ]` `x` checkboxes, `tab`/`enter` open a related bean (`bksp` back), `e s t P p b y u` as usual; `esc`, `f` or `q` return with the cursor on the bean shown last |
 | `space`, `y` | select beans for batch edits, copy the ID(s) |
 | `w`, `W`, `g w` | start the bean in its workspace (git worktree), the same plus `tui.agent_command`, list the workspaces |
 | `1`–`4`, `R` | switch views: tree, ready (ranked like `beans next`), blocked (with their blockers), audit (`beans audit` findings, refreshed in the background); `R` re-runs the audit |
 | `:` / `ctrl+p` | command palette: fuzzy search over all actions and beans |
-| mouse | click rows, fold chevrons, filter fields, dropdown items, relations, field boxes (runs their key) and checkboxes; double-click opens; wheel scrolls; hold `⇧`/`⌥` to select text; `BEANS_TUI_MOUSE=0` turns it off |
+| mouse | click rows, fold chevrons, filter fields, dropdown items, relations, field boxes (runs their key) and checkboxes (also in reader mode); double-click opens; wheel scrolls; hold `⇧`/`⌥` to select text; `BEANS_TUI_MOUSE=0` turns it off |
 | `q` | quit |
 
 **Configuration** (`.beans.yml`; the environment variables override it for you alone):

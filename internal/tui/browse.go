@@ -105,6 +105,7 @@ func (a *App) syncLayout() {
 	}
 	a.syncDetail()
 	a.list.ensureVisible()
+	a.syncReader()
 }
 
 // syncDetail shows the bean selected in the active view in the detail pane,

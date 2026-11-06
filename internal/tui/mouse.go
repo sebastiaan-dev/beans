@@ -5,7 +5,6 @@ import (
 	"os"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -23,6 +22,8 @@ import (
 //   - filter bar: click a field focuses it and opens its dropdown (or flips
 //     a toggle); click an option toggles or chooses it; the wheel scrolls
 //     the dropdown; a click elsewhere closes it
+//   - reader (reader.go): click a checkbox line toggles it, click a
+//     relation opens it; the wheel scrolls
 //   - overlays (overlay.go): click an item chooses it (the blocking picker
 //     toggles it), a click outside closes the overlay, the wheel moves the
 //     cursor (or scrolls the help)
@@ -96,6 +97,9 @@ func (a *App) handleMouse(msg tea.MouseMsg) tea.Cmd {
 		a.list.statusMessage = ""
 		if o := a.activeOverlay(); o != nil {
 			return a.clickOverlay(o, msg.X, msg.Y)
+		}
+		if a.reader != nil {
+			return a.clickReader(msg.X, msg.Y)
 		}
 		return a.clickBrowse(msg.X, msg.Y)
 	}
@@ -307,6 +311,10 @@ func (a *App) handleWheel(x, y, delta int) tea.Cmd {
 		o.scroll(a, delta)
 		return nil
 	}
+	if a.reader != nil {
+		a.reader.scrollBy(delta * wheelBodyLines)
+		return nil
+	}
 	reg, ok := a.hits.find(x, y, hitDropdown, hitTreePane, hitDetailPane)
 	if !ok {
 		return nil
@@ -417,46 +425,14 @@ func (a *App) recordSummaryLine(rec hitRecorder, width int, xs map[barField]int)
 
 // Checkboxes -----------------------------------------------------------------
 
-// checkboxLineMarker is the first of the private-use runes marking the
-// checkboxes when mapping rendered body lines to checkboxes.
-const checkboxLineMarker = 0xF0000
-
 // checkboxAtLine returns the index of the checkbox whose item starts on
-// rendered body line, or -1.
-//
-// The body is rendered once more as it is shown, with the first character
-// of each checkbox item's text replaced by a marker rune of the same width,
-// so the lines wrap exactly as shown.
+// rendered body line, or -1 (see checkboxLines).
 func (m detailModel) checkboxAtLine(line int) int {
 	if m.bean == nil || len(m.checks) == 0 || line < 0 || line >= len(m.body) {
 		return -1
 	}
-	body := m.bean.Body
-	items := findCheckboxes(body)
-	if strings.ContainsRune(body, checkboxLineMarker) {
-		return -1
-	}
-	// Replace from the end so earlier offsets stay valid.
-	for k := len(items) - 1; k >= 0; k-- {
-		at := items[k].state + 2
-		for at < len(body) && (body[at] == ' ' || body[at] == '\t') {
-			at++
-		}
-		size := 0
-		if at < len(body) && body[at] != '\n' && body[at] != '\r' {
-			_, size = utf8.DecodeRuneInString(body[at:])
-		}
-		body = body[:at] + string(rune(checkboxLineMarker+k)) + body[at+size:]
-	}
-	if m.showCheckboxCursor() {
-		body, _ = markCheckbox(body, m.checkCursor)
-	}
-	lines := renderMarkdown(body, m.bodyWidth())
-	if line >= len(lines) {
-		return -1
-	}
-	for _, r := range lines[line] {
-		if k := int(r) - checkboxLineMarker; k >= 0 && k < len(items) {
+	for k, l := range checkboxLines(m.bean.Body, m.bodyWidth(), m.checkboxCursor()) {
+		if l == line {
 			return k
 		}
 	}

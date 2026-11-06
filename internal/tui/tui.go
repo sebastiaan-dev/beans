@@ -68,6 +68,9 @@ type App struct {
 	// Views beyond the tree: Ready, Blocked, Audit (views.go)
 	views viewsState
 
+	// The reader (reader.go): one bean on the whole screen; nil if closed.
+	reader *readerModel
+
 	// Browse view state
 	focus        focusArea // pane receiving keys
 	detailPinned string    // bean opened from a relation that is not in the tree
@@ -179,6 +182,7 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 			a.list.reveal(a.revealID)
 			a.revealID = ""
 		}
+		a.readerBeansLoaded()
 		return cmd
 
 	case errMsg:
@@ -349,6 +353,15 @@ func (a *App) view() string {
 	}
 	if o := a.activeOverlay(); o != nil {
 		return a.overlayView(o)
+	}
+	return a.baseView()
+}
+
+// baseView renders the view under the overlays: the reader if it is open,
+// else the browse view.
+func (a *App) baseView() string {
+	if a.reader != nil {
+		return a.readerView()
 	}
 	return a.browseView()
 }

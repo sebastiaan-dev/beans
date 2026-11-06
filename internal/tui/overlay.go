@@ -66,12 +66,12 @@ func (a *App) closeOverlay() tea.Cmd {
 	return nil
 }
 
-// overlayView renders the browse view with the overlay o on top and
+// overlayView renders the base view (browse view or reader) with the overlay o on top and
 // records the modal and its regions.
 func (a *App) overlayView(o overlay) string {
 	local := &hitMap{}
 	modal := o.view(a, local.recorder())
-	bg := a.browseView()
+	bg := a.baseView()
 	x, y := modalOrigin(modal, a.width, a.height)
 	rec := a.hits.recorder()
 	rec.add(x, y, lipgloss.Width(modal), len(strings.Split(modal, "\n")), hitTarget{kind: hitModal})
