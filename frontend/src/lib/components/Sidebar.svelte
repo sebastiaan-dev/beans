@@ -610,7 +610,7 @@
       message={warnings.length > 0
         ? `This worktree has ${warnings.join(' and ')}. Are you sure you want to destroy the worktree for "${label}"?${hooksNote} This cannot be undone.${statusNote}`
         : `Are you sure you want to destroy the worktree for "${label}"?${hooksNote} This cannot be undone.${statusNote}`}
-      confirmLabel={checkingStatus ? 'Checking…' : 'Destroy'}
+      confirmLabel="Destroy"
       confirmDisabled={checkingStatus}
       danger
       onConfirm={() => handleRemoveWorktree(confirmingRemoveId!)}
