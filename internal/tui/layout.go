@@ -26,21 +26,24 @@ func (r rect) intersect(o rect) rect {
 type hitKind int
 
 const (
-	hitTreePane     hitKind = iota + 1 // the tree box
-	hitTreeRow                         // index: tree row
-	hitViewRow                         // index: row of the Ready/Blocked/Audit list
-	hitTreeChevron                     // index: tree row
-	hitDetailPane                      // the detail pane
-	hitDetailField                     // key: action key of a field box
-	hitRelation                        // index: relation (detailModel.links)
-	hitBody                            // the body box's content
-	hitBodyLine                        // index: rendered body line
-	hitBarField                        // index: barField (full or one-line bar)
-	hitBarLine                         // the unfocused one-line filter summary
-	hitDropdown                        // the open dropdown
-	hitDropdownItem                    // index: dropdown option
-	hitModal                           // the box of an overlay
-	hitModalItem                       // index: overlay item
+	hitTreePane       hitKind = iota + 1 // the tree box
+	hitTreeRow                           // index: tree row
+	hitViewRow                           // index: row of the Ready/Blocked/Audit list
+	hitTreeChevron                       // index: tree row
+	hitDetailPane                        // the detail pane
+	hitDetailField                       // key: action key of a field box
+	hitRelation                          // index: relation (detailModel.links)
+	hitBody                              // the body box's content
+	hitBodyLine                          // index: rendered body line
+	hitBarField                          // index: barField (full or one-line bar)
+	hitBarLine                           // the unfocused one-line filter summary
+	hitDropdown                          // the open dropdown
+	hitDropdownItem                      // index: dropdown option
+	hitModal                             // the box of an overlay
+	hitModalItem                         // index: overlay item
+	hitReader                            // the reader (the whole screen)
+	hitReaderCheckbox                    // index: checkbox of the reader's body
+	hitReaderRelation                    // index: relation shown in the reader
 )
 
 // hitTarget is what a region stands for.

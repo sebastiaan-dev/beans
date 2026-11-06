@@ -535,30 +535,41 @@ func (m detailModel) relationLines(width int) []string {
 	if len(m.links) == 0 {
 		return []string{mutedStyle().Render("(none)")}
 	}
+	cursor := -1
+	if m.focused && m.section == sectionRelations {
+		cursor = m.relCursor
+	}
+	return relationLinesFor(m.config, m.links, cursor, width)
+}
+
+// relationLinesFor renders relations as "label  S T id title" lines of at
+// most width cells, the label shown once per group, with a cursor on the
+// cursor-th one (-1 = none).
+func relationLinesFor(cfg *config.Config, links []resolvedLink, cursor, width int) []string {
 	labelW := 0
-	for _, l := range m.links {
+	for _, l := range links {
 		labelW = max(labelW, lipgloss.Width(formatLinkLabel(l.linkType, l.incoming)))
 	}
-	lines := make([]string, len(m.links))
+	lines := make([]string, len(links))
 	prev := ""
-	for i, l := range m.links {
+	for i, l := range links {
 		label := formatLinkLabel(l.linkType, l.incoming)
 		shown := label
 		if label == prev {
 			shown = ""
 		}
 		prev = label
-		selected := m.focused && m.section == sectionRelations && i == m.relCursor
-		cursor := "  "
+		selected := i == cursor
+		cursorMark := "  "
 		if selected {
-			cursor = accentStyle().Render(glyphs().Cursor + " ")
+			cursorMark = accentStyle().Render(glyphs().Cursor + " ")
 		}
 		// Highlighted without a background inside the box.
-		ref := beanRef(m.config, l.bean, rowStyler{selected: selected})
+		ref := beanRef(cfg, l.bean, rowStyler{selected: selected})
 		if l.linkType == "implicit" {
 			ref = mutedStyle().Render(l.bean.Status+" "+glyphs().Sep) + " " + ref
 		}
-		line := cursor + mutedStyle().Render(fmt.Sprintf("%-*s", labelW, shown)) + "  " + ref
+		line := cursorMark + mutedStyle().Render(fmt.Sprintf("%-*s", labelW, shown)) + "  " + ref
 		lines[i] = truncateText(line, width)
 	}
 	return lines

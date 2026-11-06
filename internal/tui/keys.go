@@ -11,7 +11,8 @@ import (
 //     into single keys unless a text input receives them.
 //  2. ctrl+c quits from anywhere.
 //  3. An open overlay (overlay.go) gets all other keys.
-//  4. Otherwise handleBrowseKey dispatches in the browse view: chords
+//  4. The open reader (reader.go) gets all keys left.
+//  5. Otherwise handleBrowseKey dispatches in the browse view: chords
 //     ("g t", "z o"), the palette, the focused filter bar, the view keys
 //     (1-4 and the Ready/Blocked/Audit lists), the focus keys, the quick
 //     actions and the workspace keys, then the focused pane (tree or
@@ -42,6 +43,9 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	if o := a.activeOverlay(); o != nil {
 		a.pendingKey = ""
 		return o.update(a, msg)
+	}
+	if a.reader != nil {
+		return a.handleReaderKey(msg)
 	}
 	return a.handleBrowseKey(msg)
 }

@@ -25,11 +25,13 @@ func (a *App) reload() {
 }
 
 // handleQuickKey handles the global quick action keys of the browse view
-// ("n" and "u", from either pane) and reports whether key was one of them.
+// ("n", "f" and "u", from either pane) and reports whether key was one of them.
 func (a *App) handleQuickKey(key string) (tea.Cmd, bool) {
 	switch key {
 	case "n":
 		a.jumpToNext()
+	case "f":
+		a.openReader()
 	case "u":
 		a.list.statusMessage = a.undoLast()
 		a.reload()

@@ -15,6 +15,9 @@
 //     it edits the query owned by listModel.
 //   - The views Ready, Blocked and Audit (views.go, view_*.go) replace the
 //     tree with a flatList of rows; their state is App.views.
+//   - The reader (reader.go, App.reader): one bean on the whole screen as a
+//     centered reading column (f). It replaces the browse view while it is
+//     open; overlays (pickers, help) open on top of it.
 //   - Overlays (overlay.go): one modal at a time, selected by App.state
 //     and implementing the overlay interface: the picker (picker.go; status,
 //     type, priority, parent, blocking), the help (help.go), the workspace
@@ -23,8 +26,8 @@
 // Message flow. App.Update runs update, then the views' background command
 // (viewsCmd) and syncLayout, which sizes the panes for the terminal and
 // shows the active view's bean in the detail pane. Keys go through
-// handleKey (keys.go): ctrl+c quits; an open overlay gets every other key;
-// otherwise handleBrowseKey tries, in order, chords, the palette, the
+// handleKey (keys.go): ctrl+c quits; an open overlay gets every other key,
+// then the open reader (handleReaderKey); otherwise handleBrowseKey tries, in order, chords, the palette, the
 // focused filter bar, the view keys (1-4, the views' lists), the focus
 // keys, the quick actions (quickactions.go) and the workspace keys, and
 // the focused pane handles the rest. Keys that move the focus or open
