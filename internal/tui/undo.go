@@ -60,11 +60,6 @@ func (u *undoState) pop() (undoEntry, bool) {
 	return e, true
 }
 
-// copyBean returns a deep copy of a bean.
-func copyBean(b *bean.Bean) *bean.Bean {
-	return b.Clone()
-}
-
 // snapshotBeans copies the current state of the beans with the given IDs
 // (Core.Get returns copies).
 func (a *App) snapshotBeans(ids []string) []*bean.Bean {

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -273,7 +274,8 @@ func TestPaintBackground(t *testing.T) {
 		t.Errorf("terminal theme: PaintBackground = %q, want unchanged", got)
 	}
 	withTheme(t, kansoTheme(), true)
-	set := "\x1b[" + termenv.TrueColor.Color("#22262d").Sequence(true) + ";" + rgb("#c5c9c7") + "m"
+	// Exact components (termenv would emit 48;2;34;38;44 for #22262d).
+	set := "\x1b[48;2;34;38;45;38;2;197;201;199m"
 	view := "ab\n" + Danger.Render("x") + "y"
 	got := PaintBackground(view, 4, 3)
 	lines := strings.Split(got, "\n")
@@ -355,5 +357,42 @@ func TestApplyConfiguredTheme(t *testing.T) {
 	t.Setenv(config.ThemeEnvVar, "file:does-not-exist.yml")
 	if err := ApplyConfiguredTheme(cfg, true); err != nil || CurrentTheme() != nil {
 		t.Errorf("Ascii profile: err=%v theme=%v", err, CurrentTheme())
+	}
+}
+
+// TestColorSequence checks the SGR parameters of colors: hex colors under
+// TrueColor have their exact components, including those termenv gets wrong
+// by one (it truncates float conversions).
+func TestColorSequence(t *testing.T) {
+	tests := []struct {
+		profile termenv.Profile
+		color   string
+		bg      bool
+		want    string
+	}{
+		{termenv.TrueColor, "#22262d", true, "48;2;34;38;45"},
+		{termenv.TrueColor, "#22262d", false, "38;2;34;38;45"},
+		{termenv.TrueColor, "#C5C9C7", false, "38;2;197;201;199"},
+		{termenv.TrueColor, "#000000", true, "48;2;0;0;0"},
+		{termenv.TrueColor, "#ffffff", false, "38;2;255;255;255"},
+		{termenv.TrueColor, "#abc", true, "48;2;170;187;204"},
+		{termenv.TrueColor, "4", false, "34"},
+		{termenv.TrueColor, "12", true, "104"},
+		{termenv.TrueColor, "#zzzzzz", true, ""},
+		{termenv.ANSI256, "#22262d", true, termenv.ANSI256.Color("#22262d").Sequence(true)},
+		{termenv.ANSI, "#22262d", false, termenv.ANSI.Color("#22262d").Sequence(false)},
+	}
+	for _, tt := range tests {
+		if got := colorSequence(tt.profile, tt.color, tt.bg); got != tt.want {
+			t.Errorf("colorSequence(%s, %q, %v) = %q, want %q", tt.profile.Name(), tt.color, tt.bg, got, tt.want)
+		}
+	}
+	// Every 8-bit component round-trips exactly.
+	for v := 0; v < 256; v++ {
+		hex := fmt.Sprintf("#%02x%02x%02x", v, 255-v, v)
+		want := fmt.Sprintf("38;2;%d;%d;%d", v, 255-v, v)
+		if got := colorSequence(termenv.TrueColor, hex, false); got != want {
+			t.Fatalf("colorSequence(%q) = %q, want %q", hex, got, want)
+		}
 	}
 }

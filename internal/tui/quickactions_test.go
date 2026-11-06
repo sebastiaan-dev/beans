@@ -191,7 +191,7 @@ func TestInlineCreatePlacesSiblingAfterOrderedAnchor(t *testing.T) {
 	// Order t002 below t003 manually (both todo under e001).
 	moveTo(t, app, "demo-t002")
 	pressKey(t, app, "J")
-	if got := visibleIDs(app.list); strings.Index(strings.Join(got, " "), "demo-t003 demo-t002") < 0 {
+	if got := visibleIDs(app.list); !strings.Contains(strings.Join(got, " "), "demo-t003 demo-t002") {
 		t.Fatalf("J should move t002 below t003: %v", got)
 	}
 	moveTo(t, app, "demo-t003")

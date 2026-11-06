@@ -101,9 +101,10 @@ func modalOrigin(modal string, width, height int) (int, int) {
 	return x, y
 }
 
-// overlayModal places a modal on top of a background view
+// overlayModal places a modal on top of a background view, dimmed and
+// stripped of its styles. Positions are terminal cells, so wide runes (CJK,
+// emoji) in the background don't shift the modal.
 func overlayModal(bgView, modal string, width, height int) string {
-	// Split background into lines
 	bgLines := strings.Split(bgView, "\n")
 
 	// Pad or truncate background to fill the screen
@@ -114,43 +115,30 @@ func overlayModal(bgView, modal string, width, height int) string {
 		bgLines = bgLines[:height]
 	}
 
-	// Dim the background
-	dimStyle := modalDimStyle()
-	for i, line := range bgLines {
-		bgLines[i] = dimStyle.Render(stripAnsi(line))
-	}
-
-	// Split modal into lines
-	modalLines := strings.Split(modal, "\n")
-
 	// Center position (also used for mouse hit-testing)
 	startX, startY := modalOrigin(modal, width, height)
+	modalLines := strings.Split(modal, "\n")
 
-	// Overlay modal onto background
-	for i, modalLine := range modalLines {
-		bgY := startY + i
-		if bgY >= 0 && bgY < len(bgLines) {
-			bgLines[bgY] = overlayLine(bgLines[bgY], modalLine, startX, width)
+	dimStyle := modalDimStyle()
+	for i, line := range bgLines {
+		if mi := i - startY; mi >= 0 && mi < len(modalLines) {
+			bgLines[i] = overlayLine(line, modalLines[mi], startX, width)
+		} else {
+			bgLines[i] = dimStyle.Render(clampWidth(stripAnsi(line), width))
 		}
 	}
-
 	return strings.Join(bgLines, "\n")
 }
 
-// overlayLine places a modal line on top of a background line at position x
+// overlayLine places a modal line on top of a background line at cell
+// startX: the background, stripped, dimmed and padded to maxWidth cells,
+// shows left and right of the modal. A wide rune cut by an edge of the modal
+// becomes spaces.
 func overlayLine(bgLine, modalLine string, startX, maxWidth int) string {
-	bgRunes := []rune(stripAnsi(bgLine))
-	for len(bgRunes) < maxWidth {
-		bgRunes = append(bgRunes, ' ')
-	}
-
-	prefix := string(bgRunes[:startX])
-	modalWidth := lipgloss.Width(modalLine)
-	suffixStart := startX + modalWidth
-	suffix := ""
-	if suffixStart < len(bgRunes) {
-		suffix = string(bgRunes[suffixStart:])
-	}
+	plain := lipgloss.NewStyle()
+	bg := fitWidth(stripAnsi(bgLine), maxWidth, plain)
+	prefix := fitWidth(bg, startX, plain)
+	suffix := dropCells(bg, startX+lipgloss.Width(modalLine))
 
 	dimStyle := modalDimStyle()
 	return dimStyle.Render(prefix) + modalLine + dimStyle.Render(suffix)

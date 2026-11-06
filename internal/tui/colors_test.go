@@ -185,7 +185,9 @@ func TestTUIViewsUseTheme(t *testing.T) {
 	t.Cleanup(func() { ui.ApplyTheme(nil, false) })
 
 	accent := termenv.TrueColor.Color("#8ba4b0").Sequence(false)
-	bg := termenv.TrueColor.Color("#22262d").Sequence(true)
+	// Painted by ui.PaintBackground with the exact components (lipgloss
+	// styles go through termenv, which may truncate a component).
+	bg := "48;2;34;38;45"
 	selection := termenv.TrueColor.Color("#393b44").Sequence(true)
 	if got := listTitleStyle().Render("x"); !strings.Contains(got, accent) {
 		t.Errorf("listTitleStyle doesn't use the theme accent: %q", got)

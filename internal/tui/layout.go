@@ -149,8 +149,8 @@ func (r hitRecorder) place(o *hitMap, x, y int) {
 	}
 }
 
-// boxGridCells lays out field boxes in rows that fit width (see boxGrid) and
-// returns the lines and the rectangle of every box.
+// boxGridCells lays out field boxes in rows that fit width and returns
+// the lines and the rectangle of every box.
 func boxGridCells(width int, boxes []func(w int) []string) ([]string, []rect) {
 	per := boxesPerRow(width, len(boxes))
 	var out []string

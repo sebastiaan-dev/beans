@@ -157,19 +157,11 @@ func resolveAllLinks(resolver *beangraph.CoreResolver, cfg *config.Config, b *be
 			links = append(links, resolvedLink{linkType: "parent", bean: c, incoming: true})
 		}
 	}
-	// Beans this one blocks: its own blocking list plus beans listing it in
-	// their blocked_by (BeanBlocking only resolves the former).
-	blocks := map[string]bool{}
+	// BeanBlocking and BeanBlockedBy are symmetric: each combines the bean's
+	// own list with the other beans' inverse links.
 	if blocking, _ := resolver.BeanBlocking(ctx, b, nil); blocking != nil {
 		for _, c := range blocking {
-			blocks[c.ID] = true
 			links = append(links, resolvedLink{linkType: "blocking", bean: c})
-		}
-	}
-	for _, in := range resolver.Core.FindIncomingLinks(b.ID) {
-		if in.LinkType == "blocked_by" && !blocks[in.FromBean.ID] {
-			blocks[in.FromBean.ID] = true
-			links = append(links, resolvedLink{linkType: "blocking", bean: in.FromBean})
 		}
 	}
 	if blockedBy, _ := resolver.BeanBlockedBy(ctx, b, nil); blockedBy != nil {
@@ -577,14 +569,8 @@ func fieldBox(label, hotkey, value string, width int) []string {
 	return box{label: label, hotkey: hotkey, lines: []string{value}, width: width, padding: 1}.render()
 }
 
-// boxGrid lays out field boxes in rows that fit width.
-func boxGrid(width int, boxes []func(w int) []string) []string {
-	lines, _ := boxGridCells(width, boxes)
-	return lines
-}
-
-// recordGrid renders field boxes like boxGrid at line top of the pane and
-// records each box as a field invoking its key (none for "").
+// recordGrid lays out field boxes in rows that fit width (boxGridCells) at
+// line top of the pane and records each box as a field invoking its key (none for "").
 func (m detailModel) recordGrid(top, width int, keys []string, boxes []func(w int) []string) []string {
 	lines, cells := boxGridCells(width, boxes)
 	for i, c := range cells {

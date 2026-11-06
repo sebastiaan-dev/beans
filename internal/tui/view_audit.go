@@ -7,7 +7,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/hmans/beans/pkg/bean"
 	"github.com/hmans/beans/pkg/beancore"
 )
 
@@ -94,25 +93,20 @@ func (a *App) viewsCmd() tea.Cmd {
 	return tea.Tick(auditDebounce, func(time.Time) tea.Msg { return auditTickMsg{gen: gen} })
 }
 
-// startAudit starts a background audit run of a snapshot of the beans.
-// Beans are copied here, on the UI goroutine, because mutations modify the
-// core's beans in place.
+// startAudit starts a background audit run of the beans as they are now.
+// Core.All returns the core's immutable snapshots (changes store new beans),
+// so the run can read them on another goroutine without copying.
 func (a *App) startAudit() tea.Cmd {
 	s := &a.views.auditRun
 	s.running, s.dirty = true, false
 	a.views.audit.built = false
 
-	beans := a.core.All()
-	snapshot := make([]*bean.Bean, len(beans))
-	for i, b := range beans {
-		snapshot[i] = copyBean(b)
-	}
 	core := a.core
 	p := beancore.AuditRunParams{
 		BookkeepingPaths: []string{core.Root()},
 		StaleDays:        beancore.DefaultAuditStaleDays,
 		Now:              auditClock(),
-		Beans:            snapshot,
+		Beans:            core.All(),
 	}
 	if a.config != nil {
 		p.BaseRef = a.config.GetWorktreeBaseRef()
