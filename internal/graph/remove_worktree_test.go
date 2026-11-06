@@ -255,8 +255,106 @@ func TestRemoveWorktreeStopsAgent(t *testing.T) {
 	}
 
 	// The ID is unblocked once the removal has finished.
+	if err := os.Remove(filepath.Join(pidDir, "agent.pid")); err != nil {
+		t.Fatal(err)
+	}
 	if err := agentMgr.SendMessage(wt.ID, t.TempDir(), "after", nil); err != nil {
 		t.Errorf("SendMessage should work again after removal: %v", err)
+	} else {
+		// Wait for the new agent to start (with the fake claude still on PATH)
+		// before shutting it down.
+		readPID(t, filepath.Join(pidDir, "agent.pid"))
 	}
 	agentMgr.Shutdown()
+}
+
+// TestRemoveWorktreeClearsAgentConversation verifies that destroying a
+// workspace forgets its agent conversation (messages and Claude session ID),
+// so a new workspace with the same name starts fresh instead of resuming the
+// old conversation, and that subscribers are sent an explicit empty session.
+func TestRemoveWorktreeClearsAgentConversation(t *testing.T) {
+	repo := t.TempDir()
+	gitCmd(t, repo, "init", "-b", "main")
+	gitCmd(t, repo, "commit", "--allow-empty", "-m", "init")
+
+	beansDir := filepath.Join(repo, ".beans")
+	if err := os.MkdirAll(beansDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	core := beancore.New(beansDir, config.Default())
+	if err := core.Load(); err != nil {
+		t.Fatal(err)
+	}
+
+	agentMgr := agent.NewManager(beansDir, nil)
+	defer agentMgr.Shutdown()
+	r := &Resolver{
+		CoreResolver: &beangraph.CoreResolver{Core: core},
+		WorktreeMgr:  worktree.NewManager(repo, t.TempDir(), "main", "", worktree.WithFetchTimeout(0)),
+		AgentMgr:     agentMgr,
+		ProjectRoot:  repo,
+	}
+	ctx := context.Background()
+	mr := r.Mutation()
+
+	wt, err := mr.CreateWorktree(ctx, "reuse-me", nil)
+	if err != nil {
+		t.Fatalf("CreateWorktree: %v", err)
+	}
+	conversation := filepath.Join(beansDir, ".conversations", wt.ID+".jsonl")
+	seed := `{"type":"message","role":"user","content":"Old task"}` + "\n" +
+		`{"type":"meta","session_id":"old-claude-session"}` + "\n"
+	if err := os.WriteFile(conversation, []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if s := agentMgr.GetSession(wt.ID); s == nil || s.SessionID != "old-claude-session" {
+		t.Fatalf("seeded session not loaded: %+v", s)
+	}
+
+	subCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	updates, err := r.Subscription().AgentSessionChanged(subCtx, wt.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initial := <-updates; len(initial.Messages) != 1 {
+		t.Fatalf("initial payload has %d messages, want 1", len(initial.Messages))
+	}
+
+	if ok, err := mr.RemoveWorktree(ctx, wt.ID); err != nil || !ok {
+		t.Fatalf("RemoveWorktree: ok=%v err=%v", ok, err)
+	}
+
+	// Subscribers get an explicit empty session.
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case s := <-updates:
+			if len(s.Messages) == 0 {
+				goto cleared
+			}
+		case <-deadline:
+			t.Fatal("no empty session payload after RemoveWorktree")
+		}
+	}
+cleared:
+	if _, err := os.Stat(conversation); !os.IsNotExist(err) {
+		t.Errorf("conversation file should be deleted, stat err = %v", err)
+	}
+	if s := agentMgr.GetSession(wt.ID); s != nil {
+		t.Errorf("session after RemoveWorktree = %+v, want none", s)
+	}
+
+	// A new workspace with the same name starts without the old conversation.
+	gitCmd(t, repo, "branch", "-D", wt.Branch)
+	again, err := mr.CreateWorktree(ctx, "reuse-me", nil)
+	if err != nil {
+		t.Fatalf("CreateWorktree again: %v", err)
+	}
+	if again.ID != wt.ID {
+		t.Fatalf("recreated ID = %q, want %q", again.ID, wt.ID)
+	}
+	if s := agentMgr.GetSession(again.ID); s != nil {
+		t.Errorf("recreated workspace has session %+v, want none", s)
+	}
 }

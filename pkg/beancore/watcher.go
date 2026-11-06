@@ -284,6 +284,14 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 			if _, exists := c.beans[id]; exists {
 				// Only delete if it was in our map and file is actually gone
 				if !c.fileExists(path) {
+					// A linked bean keeps showing its worktree change.
+					if _, linked := c.worktreeLinks[id]; linked {
+						if ev, ok := c.resolveWorktreeBeanLocked(id); ok {
+							events = append(events, ev)
+						}
+						continue
+					}
+
 					delete(c.beans, id)
 
 					// Update search index
@@ -319,15 +327,15 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 
 			// A bean linked to a worktree is shown in its worktree version. Once
 			// main has caught up with that version (e.g. the worktree branch was
-			// merged), the link is stale: drop it so edits go to main again
-			// instead of being routed into the worktree. If the worktree still has
-			// its own changes on top, keep showing those, like the initial
-			// worktree scan does.
-			if wtPath, linked := c.worktreeLinks[newBean.ID]; linked {
-				if wtBean := c.loadWorktreeCopyLocked(wtPath, newBean.ID); wtBean != nil && wtBean.ETag() != newBean.ETag() {
-					continue
+			// merged), the link is stale: resolving drops it so edits go to main
+			// again instead of being routed into the worktree. If a worktree
+			// still has its own changes on top, those keep being shown, like the
+			// initial worktree scan does.
+			if _, linked := c.worktreeLinks[newBean.ID]; linked {
+				if ev, ok := c.resolveWorktreeBeanLocked(newBean.ID); ok {
+					events = append(events, ev)
 				}
-				delete(c.worktreeLinks, newBean.ID)
+				continue
 			}
 
 			c.beans[newBean.ID] = newBean

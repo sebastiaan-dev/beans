@@ -63,7 +63,11 @@ type Manager struct {
 	live map[string]map[*runningProcess]struct{}
 	// blocked counts active blocks per beanID; while > 0, no agent process
 	// may be started for that ID (see StopAndBlock).
-	blocked              map[string]int
+	blocked map[string]int
+	// cleared counts ClearSession calls per beanID, so GetSession can tell
+	// that a conversation it loaded from disk was cleared meanwhile and must
+	// not be materialized again.
+	cleared              map[string]uint64
 	store                *store // JSONL persistence (nil if no beansDir)
 	contextProvider      ContextProvider
 	systemPromptProvider SystemPromptProvider
@@ -99,6 +103,7 @@ func NewManager(beansDir string, contextProvider ContextProvider, defaultMode ..
 		processes:       make(map[string]*runningProcess),
 		live:            make(map[string]map[*runningProcess]struct{}),
 		blocked:         make(map[string]int),
+		cleared:         make(map[string]uint64),
 		subscribers:     make(map[string][]chan struct{}),
 		contextProvider: contextProvider,
 		defaultMode:     mode,
@@ -155,11 +160,16 @@ func (m *Manager) SetQuickReplyContext(fn QuickReplyContextFunc) {
 	m.quickReplyContext = fn
 }
 
+// testHookAfterLoad, if set, is called by GetSession after loading a persisted
+// conversation from disk (tests use it to interleave a ClearSession).
+var testHookAfterLoad func(beanID string)
+
 // GetSession returns a snapshot of the session for the given beanID, or nil.
 // If no in-memory session exists but a persisted conversation is found, it is loaded.
 func (m *Manager) GetSession(beanID string) *Session {
 	m.mu.RLock()
 	s, ok := m.sessions[beanID]
+	clearedBefore := m.cleared[beanID]
 	m.mu.RUnlock()
 
 	if !ok {
@@ -168,6 +178,9 @@ func (m *Manager) GetSession(beanID string) *Session {
 			return nil
 		}
 		msgs, sessionID, err := m.store.load(beanID)
+		if testHookAfterLoad != nil {
+			testHookAfterLoad(beanID)
+		}
 		if err != nil || len(msgs) == 0 {
 			return nil
 		}
@@ -178,6 +191,11 @@ func (m *Manager) GetSession(beanID string) *Session {
 			snap := s2.snapshot()
 			m.mu.Unlock()
 			return &snap
+		}
+		// The conversation was cleared after we loaded it: don't resurrect it.
+		if m.cleared[beanID] != clearedBefore {
+			m.mu.Unlock()
+			return m.GetSession(beanID)
 		}
 		s = m.newBaseSession(beanID)
 		s.Messages = msgs
@@ -666,6 +684,10 @@ func (m *Manager) ClearSession(beanID string) error {
 		delete(m.processes, beanID)
 	}
 	delete(m.sessions, beanID)
+	if m.cleared == nil {
+		m.cleared = make(map[string]uint64)
+	}
+	m.cleared[beanID]++
 	m.mu.Unlock()
 
 	if hasProc && proc != nil {
