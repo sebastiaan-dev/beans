@@ -158,6 +158,11 @@ type TUIConfig struct {
 	// ThemeBackground paints the theme's background color behind the TUI.
 	// Default: true for nvim/file themes. Overridden by $BEANS_THEME_BACKGROUND.
 	ThemeBackground *bool `yaml:"theme_background,omitempty"`
+	// AgentCommand is the agent the TUI launches in a bean's workspace (W),
+	// e.g. `claude "Work on bean {{bean_id}}"`; see Config.GetAgentCommand.
+	// Overridden by $BEANS_AGENT_COMMAND.
+	AgentCommand string `yaml:"agent_command,omitempty"`
+
 	// ThemeOverrides sets single theme roles (see ThemeRoles) to a color:
 	// "#rrggbb", an ANSI palette index "0".."15" or a color name (red,
 	// bright-blue, ...; resolved against the theme's palette). Applied on

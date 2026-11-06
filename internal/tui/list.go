@@ -39,6 +39,7 @@ type treeRow struct {
 type listModel struct {
 	resolver *beangraph.CoreResolver
 	config   *config.Config
+	ws       *workspaces // workspace badges (see workspaces.go)
 
 	// Size of the area the rows are rendered into (set by the layout).
 	width  int
@@ -924,6 +925,7 @@ func (m listModel) renderRow(i, width int) []string {
 	if r.implicitStatus != "" && r.matched {
 		toks = append(toks, token{text: "↑" + r.implicitStatus, style: muted})
 	}
+	toks = append(toks, workspaceTokens(m.resolver.Core, m.ws, b.ID, st)...)
 	if r.archived {
 		toks = append(toks, token{text: archivedMarkerText, style: muted})
 	}

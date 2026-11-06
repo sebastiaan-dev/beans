@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -17,7 +19,6 @@ import (
 	"github.com/hmans/beans/pkg/beangraph"
 	"github.com/hmans/beans/pkg/beangraph/model"
 	"github.com/hmans/beans/pkg/config"
-	"github.com/hmans/beans/pkg/safepath"
 )
 
 // viewState represents which view is currently active
@@ -31,6 +32,7 @@ const (
 	viewBlockingPicker
 	viewPriorityPicker
 	viewHelpOverlay
+	viewWorkspaces
 )
 
 // beansChangedMsg is sent when beans change on disk (via file watcher)
@@ -75,6 +77,8 @@ type App struct {
 	blockingPicker blockingPickerModel
 	priorityPicker priorityPickerModel
 	helpOverlay    helpOverlayModel
+	ws             *workspaces // workspace state (see workspaces.go)
+	wsOverlay      workspacesOverlay
 	core           *beancore.Core
 	resolver       *beangraph.CoreResolver
 	config         *config.Config
@@ -111,19 +115,22 @@ type App struct {
 // New creates a new TUI application
 func New(core *beancore.Core, cfg *config.Config) *App {
 	resolver := &beangraph.CoreResolver{Core: core}
-	return &App{
+	app := &App{
 		state:    viewList,
 		core:     core,
 		resolver: resolver,
 		config:   cfg,
 		list:     newListModel(resolver, cfg),
 		detail:   newDetailModel(resolver, cfg),
+		ws:       newWorkspaces(nil, nil, cfg),
 	}
+	app.list.ws, app.detail.ws = app.ws, app.ws
+	return app
 }
 
 // Init initializes the application
 func (a *App) Init() tea.Cmd {
-	return a.list.Init()
+	return tea.Batch(a.list.Init(), a.ws.refreshCmd(a.core))
 }
 
 // Update handles messages
@@ -156,6 +163,8 @@ func (a *App) handleChord(first string, msg tea.KeyMsg) tea.Cmd {
 	switch first + " " + msg.String() {
 	case "g t":
 		a.openFilterField(barTags)
+	case "g w":
+		return a.openWorkspacesOverlay()
 	case "g g":
 		if a.focus == focusTree {
 			a.list.moveCursor(-len(a.list.rows))
@@ -246,6 +255,9 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 			if cmd, handled := a.handleQuickKey(msg.String()); handled {
 				return cmd
 			}
+			if cmd, handled := a.handleWorkspaceKey(msg.String()); handled {
+				return cmd
+			}
 		}
 
 		switch msg.String() {
@@ -285,8 +297,17 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		return cmd
 
 	case beansChangedMsg:
-		// Beans changed on disk - refresh
-		return a.list.loadBeans
+		// Beans changed on disk - refresh (and the workspaces' status)
+		return tea.Batch(a.list.loadBeans, a.ws.refreshCmd(a.core))
+
+	case workspacesChangedMsg:
+		return a.ws.refreshCmd(a.core)
+
+	case workspacesLoadedMsg:
+		return a.ws.apply(msg, a.core)
+
+	case workspaceStartedMsg:
+		return a.handleWorkspaceStarted(msg)
 
 	case themeReloadedMsg:
 		return a.applyThemeReload(msg)
@@ -401,7 +422,7 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 	case openEditorMsg:
 		// Launch editor for the bean file
 		editor := getEditor()
-		fullPath, err := safepath.SafeJoin(a.core.Root(), msg.beanPath)
+		fullPath, err := a.beanFilePath(msg.beanID, msg.beanPath)
 		if err != nil {
 			a.list.statusMessage = fmt.Sprintf("unsafe bean path: %v", err)
 			return nil
@@ -478,6 +499,8 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		a.blockingPicker, cmd = a.blockingPicker.Update(msg)
 	case viewHelpOverlay:
 		a.helpOverlay, cmd = a.helpOverlay.Update(msg)
+	case viewWorkspaces:
+		cmd = a.updateWorkspacesOverlay(msg)
 	}
 
 	return cmd
@@ -598,7 +621,7 @@ func (a *App) touchEditedBean() {
 	if err != nil {
 		return
 	}
-	fullPath, err := safepath.SafeJoin(a.core.Root(), b.Path)
+	fullPath, err := a.beanFilePath(b.ID, b.Path)
 	if err != nil {
 		return
 	}
@@ -606,11 +629,12 @@ func (a *App) touchEditedBean() {
 	if err != nil || !info.ModTime().After(a.editingBeanModTime) {
 		return
 	}
-	// File was modified - reload from disk first to get the user's changes,
-	// then call Update to set updated_at
-	_ = a.core.Load()
-	if b, err = a.core.Get(a.editingBeanID); err == nil {
-		_ = a.core.Update(b, nil)
+	// File was modified - read the user's changes, then call Update to set
+	// updated_at (in the workspace for beans changed in one). Only the
+	// edited file is read: reloading all beans would drop the workspace
+	// versions of other beans.
+	if edited, err := readEditedBean(fullPath, b); err == nil {
+		_ = a.core.Update(edited, nil)
 	}
 }
 
@@ -696,6 +720,8 @@ func (a *App) view() string {
 		return a.blockingPicker.ModalView(a.browseView(), a.width, a.height)
 	case viewHelpOverlay:
 		return a.helpOverlay.ModalView(a.browseView(), a.width, a.height)
+	case viewWorkspaces:
+		return overlayModal(a.browseView(), a.workspacesOverlayView(), a.width, a.height)
 	}
 	return ""
 }
@@ -742,6 +768,18 @@ func Run(core *beancore.Core, cfg *config.Config) error {
 
 	// Store reference to program for sending messages from watcher
 	app.program = p
+
+	// Logs and warnings (worktree manager, worktree watchers) would draw over
+	// the TUI; failures are reported in the UI instead.
+	log.SetOutput(io.Discard)
+	defer log.SetOutput(os.Stderr)
+	core.SetWarnWriter(nil)
+	defer core.SetWarnWriter(os.Stderr)
+
+	// Show beans changed in workspaces (git worktrees) with their workspace
+	// version; off outside git repositories.
+	stopWorkspaces := setupWorkspaces(app, core, cfg, p.Send)
+	defer stopWorkspaces()
 
 	// Start file watching
 	if err := core.StartWatching(); err != nil {
