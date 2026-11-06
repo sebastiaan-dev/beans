@@ -41,55 +41,14 @@ func (r *CoreResolver) CreateBean(ctx context.Context, input model.CreateBeanInp
 		b.Tags = input.Tags
 	}
 
-	// Handle parent (with validation)
-	if input.Parent != nil && *input.Parent != "" {
-		// Normalise short ID to full ID
-		parentID, _ := r.Core.NormalizeID(*input.Parent)
-		if err := r.Core.ValidateParent(b, parentID); err != nil {
-			return nil, err
-		}
-		b.Parent = parentID
+	createOpts := []beancore.UpdateOption{
+		// Relations are normalised and validated under Core's write lock, so
+		// the beans they refer to can't change or disappear meanwhile.
+		beancore.WithValidation(func(tx *beancore.Tx, b *bean.Bean) error {
+			return applyCreateRelations(tx, b, input)
+		}),
 	}
-
-	// Handle blocking (with validation)
-	if len(input.Blocking) > 0 {
-		// Normalise short IDs to full IDs
-		normalizedBlocking := make([]string, len(input.Blocking))
-		for i, id := range input.Blocking {
-			normalizedBlocking[i], _ = r.Core.NormalizeID(id)
-			// Verify target exists
-			if _, err := r.Core.Get(normalizedBlocking[i]); err != nil {
-				return nil, fmt.Errorf("target bean not found: %s", id)
-			}
-		}
-		b.Blocking = normalizedBlocking
-	}
-
-	// Handle blocked_by (with cycle validation)
-	if len(input.BlockedBy) > 0 {
-		// Normalise short IDs to full IDs
-		normalizedBlockedBy := make([]string, len(input.BlockedBy))
-		for i, id := range input.BlockedBy {
-			normalizedBlockedBy[i], _ = r.Core.NormalizeID(id)
-			// Verify blocker exists
-			if _, err := r.Core.Get(normalizedBlockedBy[i]); err != nil {
-				return nil, fmt.Errorf("blocker bean not found: %s", id)
-			}
-		}
-		// Check for cycles with blocking relationships
-		// (new bean being blocked_by X means X→newBean, check if newBean→X exists via blocking)
-		for _, blockerID := range normalizedBlockedBy {
-			for _, blockingID := range b.Blocking {
-				if blockerID == blockingID {
-					return nil, fmt.Errorf("would create cycle: new bean both blocks and is blocked by %s", blockerID)
-				}
-			}
-		}
-		b.BlockedBy = normalizedBlockedBy
-	}
-
 	// Handle custom prefix - Core generates a unique ID with it
-	var createOpts []beancore.UpdateOption
 	if input.Prefix != nil && *input.Prefix != "" {
 		createOpts = append(createOpts, beancore.WithIDPrefix(*input.Prefix))
 	}
@@ -101,13 +60,62 @@ func (r *CoreResolver) CreateBean(ctx context.Context, input model.CreateBeanInp
 	return b, nil
 }
 
-// UpdateBean updates an existing bean.
-func (r *CoreResolver) UpdateBean(ctx context.Context, id string, input model.UpdateBeanInput, opts ...beancore.UpdateOption) (*bean.Bean, error) {
-	b, err := r.Core.Get(id)
-	if err != nil {
-		return nil, err
+// applyCreateRelations validates the parent, blocking and blocked-by
+// relations of a new bean and sets them (with normalised IDs) on b.
+func applyCreateRelations(tx *beancore.Tx, b *bean.Bean, input model.CreateBeanInput) error {
+	// Handle parent (with validation)
+	if input.Parent != nil && *input.Parent != "" {
+		// Normalise short ID to full ID
+		parentID, _ := tx.NormalizeID(*input.Parent)
+		if err := tx.ValidateParent(b, parentID); err != nil {
+			return err
+		}
+		b.Parent = parentID
 	}
 
+	// Handle blocking (with validation)
+	if len(input.Blocking) > 0 {
+		// Normalise short IDs to full IDs
+		normalizedBlocking := make([]string, len(input.Blocking))
+		for i, id := range input.Blocking {
+			normalizedBlocking[i], _ = tx.NormalizeID(id)
+			// Verify target exists
+			if _, ok := tx.Get(normalizedBlocking[i]); !ok {
+				return fmt.Errorf("target bean not found: %s", id)
+			}
+		}
+		b.Blocking = normalizedBlocking
+	}
+
+	// Handle blocked_by (with cycle validation)
+	if len(input.BlockedBy) > 0 {
+		// Normalise short IDs to full IDs
+		normalizedBlockedBy := make([]string, len(input.BlockedBy))
+		for i, id := range input.BlockedBy {
+			normalizedBlockedBy[i], _ = tx.NormalizeID(id)
+			// Verify blocker exists
+			if _, ok := tx.Get(normalizedBlockedBy[i]); !ok {
+				return fmt.Errorf("blocker bean not found: %s", id)
+			}
+		}
+		// Check for cycles with blocking relationships
+		// (new bean being blocked_by X means X→newBean, check if newBean→X exists via blocking)
+		for _, blockerID := range normalizedBlockedBy {
+			for _, blockingID := range b.Blocking {
+				if blockerID == blockingID {
+					return fmt.Errorf("would create cycle: new bean both blocks and is blocked by %s", blockerID)
+				}
+			}
+		}
+		b.BlockedBy = normalizedBlockedBy
+	}
+	return nil
+}
+
+// UpdateBean updates an existing bean. The input is applied to the current
+// version and validated under Core's write lock (see beancore.Core.Mutate):
+// if ifMatch or any validation fails, the bean is left unchanged.
+func (r *CoreResolver) UpdateBean(ctx context.Context, id string, input model.UpdateBeanInput, opts ...beancore.UpdateOption) (*bean.Bean, error) {
 	// Validate body and bodyMod are mutually exclusive
 	if input.Body != nil && input.BodyMod != nil {
 		return nil, fmt.Errorf("cannot specify both body and bodyMod")
@@ -118,6 +126,14 @@ func (r *CoreResolver) UpdateBean(ctx context.Context, id string, input model.Up
 		return nil, fmt.Errorf("cannot specify both tags and addTags/removeTags")
 	}
 
+	// If the bean is linked to a worktree, Core auto-routes the write there.
+	return r.Core.Mutate(id, input.IfMatch, func(tx *beancore.Tx, b *bean.Bean) error {
+		return applyUpdate(tx, b, input)
+	}, opts...)
+}
+
+// applyUpdate applies an update input to b, validating relationship changes.
+func applyUpdate(tx *beancore.Tx, b *bean.Bean, input model.UpdateBeanInput) error {
 	// Update fields if provided
 	if input.Title != nil {
 		b.Title = *input.Title
@@ -141,14 +157,12 @@ func (r *CoreResolver) UpdateBean(ctx context.Context, id string, input model.Up
 		workingBody := b.Body
 
 		// Apply replacements sequentially
-		if input.BodyMod.Replace != nil {
-			for i, replaceOp := range input.BodyMod.Replace {
-				newBody, err := bean.ReplaceOnce(workingBody, replaceOp.Old, replaceOp.New)
-				if err != nil {
-					return nil, fmt.Errorf("replacement %d failed: %w", i, err)
-				}
-				workingBody = newBody
+		for i, replaceOp := range input.BodyMod.Replace {
+			newBody, err := bean.ReplaceOnce(workingBody, replaceOp.Old, replaceOp.New)
+			if err != nil {
+				return fmt.Errorf("replacement %d failed: %w", i, err)
 			}
+			workingBody = newBody
 		}
 
 		// Apply append if provided
@@ -169,17 +183,13 @@ func (r *CoreResolver) UpdateBean(ctx context.Context, id string, input model.Up
 		}
 
 		// Add new tags
-		if input.AddTags != nil {
-			for _, tag := range input.AddTags {
-				tagSet[tag] = true
-			}
+		for _, tag := range input.AddTags {
+			tagSet[tag] = true
 		}
 
 		// Remove tags
-		if input.RemoveTags != nil {
-			for _, tag := range input.RemoveTags {
-				delete(tagSet, tag)
-			}
+		for _, tag := range input.RemoveTags {
+			delete(tagSet, tag)
 		}
 
 		// Convert back to slice
@@ -192,38 +202,31 @@ func (r *CoreResolver) UpdateBean(ctx context.Context, id string, input model.Up
 
 	// Handle parent relationship
 	if input.Parent != nil {
-		if err := r.ValidateAndSetParent(b, *input.Parent); err != nil {
-			return nil, err
+		if err := validateAndSetParent(tx, b, *input.Parent); err != nil {
+			return err
 		}
 	}
 
 	// Handle blocking relationships
 	if input.AddBlocking != nil {
-		if err := r.ValidateAndAddBlocking(b, input.AddBlocking); err != nil {
-			return nil, err
+		if err := validateAndAddBlocking(tx, b, input.AddBlocking); err != nil {
+			return err
 		}
 	}
 	if input.RemoveBlocking != nil {
-		r.RemoveBlockingRelationships(b, input.RemoveBlocking)
+		removeBlockingRelationships(tx, b, input.RemoveBlocking)
 	}
 
 	// Handle blocked-by relationships
 	if input.AddBlockedBy != nil {
-		if err := r.ValidateAndAddBlockedBy(b, input.AddBlockedBy); err != nil {
-			return nil, err
+		if err := validateAndAddBlockedBy(tx, b, input.AddBlockedBy); err != nil {
+			return err
 		}
 	}
 	if input.RemoveBlockedBy != nil {
-		r.RemoveBlockedByRelationships(b, input.RemoveBlockedBy)
+		removeBlockedByRelationships(tx, b, input.RemoveBlockedBy)
 	}
-
-	// ETag validation now happens inside Update() under write lock.
-	// If the bean is linked to a worktree, Core auto-routes the write there.
-	if err := r.Core.Update(b, input.IfMatch, opts...); err != nil {
-		return nil, err
-	}
-
-	return b, nil
+	return nil
 }
 
 // DeleteBean removes a bean and its incoming links.
@@ -249,133 +252,100 @@ func (r *CoreResolver) DeleteBean(ctx context.Context, id string) (bool, error) 
 
 // SetParent sets or clears the parent of a bean.
 func (r *CoreResolver) SetParent(ctx context.Context, id string, parentID *string, ifMatch *string) (*bean.Bean, error) {
-	b, err := r.Core.Get(id)
-	if err != nil {
-		return nil, err
-	}
-
-	newParent := ""
-	if parentID != nil {
-		// Normalise short ID to full ID
-		newParent, _ = r.Core.NormalizeID(*parentID)
-	}
-
-	// Validate parent type hierarchy
-	if newParent != "" {
-		if err := r.Core.ValidateParent(b, newParent); err != nil {
-			return nil, err
+	return r.Core.Mutate(id, ifMatch, func(tx *beancore.Tx, b *bean.Bean) error {
+		newParent := ""
+		if parentID != nil {
+			// Normalise short ID to full ID
+			newParent, _ = tx.NormalizeID(*parentID)
 		}
-		// Check for cycles
-		if cycle := r.Core.DetectCycle(b.ID, "parent", newParent); cycle != nil {
-			return nil, fmt.Errorf("would create cycle: %v", cycle)
-		}
-	}
 
-	b.Parent = newParent
-	// ETag validation now happens inside Update() under write lock
-	if err := r.Core.Update(b, ifMatch); err != nil {
-		return nil, err
-	}
-	return b, nil
+		// Validate parent type hierarchy
+		if newParent != "" {
+			if err := tx.ValidateParent(b, newParent); err != nil {
+				return err
+			}
+			// Check for cycles
+			if cycle := tx.DetectCycle(b.ID, "parent", newParent); cycle != nil {
+				return fmt.Errorf("would create cycle: %v", cycle)
+			}
+		}
+
+		b.Parent = newParent
+		return nil
+	})
 }
 
 // AddBlocking adds a blocking relationship.
 func (r *CoreResolver) AddBlocking(ctx context.Context, id string, targetID string, ifMatch *string) (*bean.Bean, error) {
-	b, err := r.Core.Get(id)
-	if err != nil {
-		return nil, err
-	}
+	return r.Core.Mutate(id, ifMatch, func(tx *beancore.Tx, b *bean.Bean) error {
+		// Normalise short ID to full ID
+		normalizedTargetID, _ := tx.NormalizeID(targetID)
 
-	// Normalise short ID to full ID
-	normalizedTargetID, _ := r.Core.NormalizeID(targetID)
+		if normalizedTargetID == b.ID {
+			return fmt.Errorf("bean cannot block itself")
+		}
 
-	if normalizedTargetID == b.ID {
-		return nil, fmt.Errorf("bean cannot block itself")
-	}
+		// Check target exists
+		if _, ok := tx.Get(normalizedTargetID); !ok {
+			return fmt.Errorf("target bean not found: %s", targetID)
+		}
 
-	// Check target exists
-	if _, err := r.Core.Get(normalizedTargetID); err != nil {
-		return nil, fmt.Errorf("target bean not found: %s", targetID)
-	}
+		// Check for cycles in both directions
+		if cycle := tx.DetectCycle(b.ID, "blocking", normalizedTargetID); cycle != nil {
+			return fmt.Errorf("would create cycle: %v", cycle)
+		}
+		if cycle := tx.DetectCycle(normalizedTargetID, "blocked_by", b.ID); cycle != nil {
+			return fmt.Errorf("would create cycle: %v", cycle)
+		}
 
-	// Check for cycles in both directions
-	if cycle := r.Core.DetectCycle(b.ID, "blocking", normalizedTargetID); cycle != nil {
-		return nil, fmt.Errorf("would create cycle: %v", cycle)
-	}
-	if cycle := r.Core.DetectCycle(normalizedTargetID, "blocked_by", b.ID); cycle != nil {
-		return nil, fmt.Errorf("would create cycle: %v", cycle)
-	}
-
-	b.AddBlocking(normalizedTargetID)
-	if err := r.Core.Update(b, ifMatch); err != nil {
-		return nil, err
-	}
-	return b, nil
+		b.AddBlocking(normalizedTargetID)
+		return nil
+	})
 }
 
 // RemoveBlocking removes a blocking relationship.
 func (r *CoreResolver) RemoveBlocking(ctx context.Context, id string, targetID string, ifMatch *string) (*bean.Bean, error) {
-	b, err := r.Core.Get(id)
-	if err != nil {
-		return nil, err
-	}
-
-	normalizedTargetID, _ := r.Core.NormalizeID(targetID)
-
-	b.RemoveBlocking(normalizedTargetID)
-	if err := r.Core.Update(b, ifMatch); err != nil {
-		return nil, err
-	}
-	return b, nil
+	return r.Core.Mutate(id, ifMatch, func(tx *beancore.Tx, b *bean.Bean) error {
+		normalizedTargetID, _ := tx.NormalizeID(targetID)
+		b.RemoveBlocking(normalizedTargetID)
+		return nil
+	})
 }
 
 // AddBlockedBy adds a blocked-by relationship.
 func (r *CoreResolver) AddBlockedBy(ctx context.Context, id string, targetID string, ifMatch *string) (*bean.Bean, error) {
-	b, err := r.Core.Get(id)
-	if err != nil {
-		return nil, err
-	}
+	return r.Core.Mutate(id, ifMatch, func(tx *beancore.Tx, b *bean.Bean) error {
+		normalizedTargetID, _ := tx.NormalizeID(targetID)
 
-	normalizedTargetID, _ := r.Core.NormalizeID(targetID)
+		if normalizedTargetID == b.ID {
+			return fmt.Errorf("bean cannot be blocked by itself")
+		}
 
-	if normalizedTargetID == b.ID {
-		return nil, fmt.Errorf("bean cannot be blocked by itself")
-	}
+		// Check target exists
+		if _, ok := tx.Get(normalizedTargetID); !ok {
+			return fmt.Errorf("blocker bean not found: %s", targetID)
+		}
 
-	// Check target exists
-	if _, err := r.Core.Get(normalizedTargetID); err != nil {
-		return nil, fmt.Errorf("blocker bean not found: %s", targetID)
-	}
+		// Check for cycles in both directions
+		if cycle := tx.DetectCycle(normalizedTargetID, "blocking", b.ID); cycle != nil {
+			return fmt.Errorf("would create cycle: %v", cycle)
+		}
+		if cycle := tx.DetectCycle(b.ID, "blocked_by", normalizedTargetID); cycle != nil {
+			return fmt.Errorf("would create cycle: %v", cycle)
+		}
 
-	// Check for cycles in both directions
-	if cycle := r.Core.DetectCycle(normalizedTargetID, "blocking", b.ID); cycle != nil {
-		return nil, fmt.Errorf("would create cycle: %v", cycle)
-	}
-	if cycle := r.Core.DetectCycle(b.ID, "blocked_by", normalizedTargetID); cycle != nil {
-		return nil, fmt.Errorf("would create cycle: %v", cycle)
-	}
-
-	b.AddBlockedBy(normalizedTargetID)
-	if err := r.Core.Update(b, ifMatch); err != nil {
-		return nil, err
-	}
-	return b, nil
+		b.AddBlockedBy(normalizedTargetID)
+		return nil
+	})
 }
 
 // RemoveBlockedBy removes a blocked-by relationship.
 func (r *CoreResolver) RemoveBlockedBy(ctx context.Context, id string, targetID string, ifMatch *string) (*bean.Bean, error) {
-	b, err := r.Core.Get(id)
-	if err != nil {
-		return nil, err
-	}
-
-	normalizedTargetID, _ := r.Core.NormalizeID(targetID)
-
-	b.RemoveBlockedBy(normalizedTargetID)
-	if err := r.Core.Update(b, ifMatch); err != nil {
-		return nil, err
-	}
-	return b, nil
+	return r.Core.Mutate(id, ifMatch, func(tx *beancore.Tx, b *bean.Bean) error {
+		normalizedTargetID, _ := tx.NormalizeID(targetID)
+		b.RemoveBlockedBy(normalizedTargetID)
+		return nil
+	})
 }
 
 // ArchiveBean archives a bean.

@@ -43,7 +43,7 @@ func (e EventType) String() string {
 // BeanEvent represents a change to a bean.
 type BeanEvent struct {
 	Type   EventType  // The type of change
-	Bean   *bean.Bean // The bean (nil for Deleted events)
+	Bean   *bean.Bean // The bean (nil for Deleted events); a shared, read-only snapshot
 	BeanID string     // Always set, useful for Deleted when Bean is nil
 }
 

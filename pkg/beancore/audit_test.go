@@ -193,7 +193,7 @@ func TestAudit(t *testing.T) {
 					t.Fatalf("Create(%s): %v", b.ID, err)
 				}
 				// Create stamps timestamps; restore the test's values.
-				b.CreatedAt, b.UpdatedAt = createdAt, updatedAt
+				setTimestampsForTest(core, b.ID, createdAt, updatedAt)
 			}
 
 			opts := tt.opts
@@ -212,6 +212,16 @@ func TestAudit(t *testing.T) {
 	}
 }
 
+// setTimestampsForTest replaces the stored bean with a copy carrying the
+// given timestamps (stored beans are immutable).
+func setTimestampsForTest(core *Core, id string, createdAt, updatedAt *time.Time) {
+	core.mu.Lock()
+	defer core.mu.Unlock()
+	b := core.beans[id].Clone()
+	b.CreatedAt, b.UpdatedAt = createdAt, updatedAt
+	core.beans[id] = b
+}
+
 func TestAuditDetails(t *testing.T) {
 	now := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
 	core, _ := setupTestCore(t)
@@ -225,7 +235,7 @@ func TestAuditDetails(t *testing.T) {
 	}
 	stale, _ := core.Get("aa02")
 	updated := now.Add(-20*24*time.Hour - time.Hour)
-	stale.UpdatedAt = &updated
+	setTimestampsForTest(core, "aa02", stale.CreatedAt, &updated)
 
 	commits := []AuditCommit{commit("c3", "feat: newest (aa01)"), commit("c2", "unrelated")}
 	for i := 0; i < maxAuditCommits+2; i++ {

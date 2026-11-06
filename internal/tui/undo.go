@@ -60,22 +60,18 @@ func (u *undoState) pop() (undoEntry, bool) {
 	return e, true
 }
 
-// copyBean returns a deep copy of the bean's fields managed by the TUI.
-// Core hands out its live beans, which mutations modify in place.
+// copyBean returns a deep copy of a bean.
 func copyBean(b *bean.Bean) *bean.Bean {
-	c := *b
-	c.Tags = slices.Clone(b.Tags)
-	c.Blocking = slices.Clone(b.Blocking)
-	c.BlockedBy = slices.Clone(b.BlockedBy)
-	return &c
+	return b.Clone()
 }
 
-// snapshotBeans copies the current state of the beans with the given IDs.
+// snapshotBeans copies the current state of the beans with the given IDs
+// (Core.Get returns copies).
 func (a *App) snapshotBeans(ids []string) []*bean.Bean {
 	var out []*bean.Bean
 	for _, id := range ids {
 		if b, err := a.core.Get(id); err == nil {
-			out = append(out, copyBean(b))
+			out = append(out, b)
 		}
 	}
 	return out

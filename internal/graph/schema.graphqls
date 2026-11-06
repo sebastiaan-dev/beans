@@ -534,9 +534,9 @@ type Bean {
   blockedByIds: [String!]!
 
   # Computed relationship fields
-  "Beans that block this one (incoming blocking links)"
+  "Beans that block this one (its blockedByIds and beans listing it in their blockingIds)"
   blockedBy(filter: BeanFilter): [Bean!]!
-  "Beans this one is blocking (resolved from blockingIds)"
+  "Beans this one is blocking (its blockingIds and beans listing it in their blockedByIds)"
   blocking(filter: BeanFilter): [Bean!]!
   "Parent bean (resolved from parentId)"
   parent: Bean

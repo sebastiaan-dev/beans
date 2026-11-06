@@ -32,12 +32,28 @@ type worktreeWatcher struct {
 	// from the main version counts as a change then. Guarded by Core.mu.
 	changed      map[string]bool
 	changedKnown bool
+	// scanned is set once the initial scan determined the changed set;
+	// before that, the worktree's copies don't count as changes. Guarded by
+	// Core.mu.
+	scanned bool
 }
 
 // mayChange reports whether the worktree's copy of a bean may count as a
 // worktree change. Must be called with Core.mu held.
 func (wt *worktreeWatcher) mayChange(id string) bool {
-	return !wt.changedKnown || wt.changed[id]
+	return wt.scanned && (!wt.changedKnown || wt.changed[id])
+}
+
+// candidateIDs returns the IDs of the beans whose worktree copy may count as
+// a worktree change. Must be called with Core.mu held.
+func (wt *worktreeWatcher) candidateIDs() map[string]bool {
+	if !wt.scanned {
+		return nil
+	}
+	if wt.changedKnown {
+		return wt.changed
+	}
+	return beanIDsIn(wt.beansDir)
 }
 
 // WatchWorktreeBeans starts watching a worktree's .beans/ directory for bean changes.
@@ -131,7 +147,7 @@ func (c *Core) loadWorktreeBeansInitial(wt *worktreeWatcher) []BeanEvent {
 	if c.worktreeWatchers[wt.worktreePath] != wt {
 		return nil // unwatched meanwhile
 	}
-	wt.changed, wt.changedKnown = changed, known
+	wt.changed, wt.changedKnown, wt.scanned = changed, known, true
 
 	var events []BeanEvent
 	for _, id := range sortedIDs(ids) {
@@ -294,18 +310,65 @@ func sortedIDs(ids map[string]bool) []string {
 	return sorted
 }
 
-// UnwatchWorktreeBeans stops watching a worktree's .beans/ directory.
+// reapplyWorktreeChangesLocked re-resolves every bean linked to a worktree or
+// changed in a watched worktree, e.g. after runtime state was reloaded from
+// main's disk. Returns the resulting events. Must be called with c.mu held.
+func (c *Core) reapplyWorktreeChangesLocked() []BeanEvent {
+	ids := make(map[string]bool, len(c.worktreeLinks))
+	for id := range c.worktreeLinks {
+		ids[id] = true
+	}
+	for _, wt := range c.worktreeWatchers {
+		for id := range wt.candidateIDs() {
+			ids[id] = true
+		}
+	}
+	var events []BeanEvent
+	for _, id := range sortedIDs(ids) {
+		if ev, ok := c.resolveWorktreeBeanLocked(id); ok {
+			events = append(events, ev)
+		}
+	}
+	return events
+}
+
+// unlinkWorktreesLocked re-resolves the beans linked to the given (no longer
+// watched) worktrees: each falls back to another watched worktree's change,
+// or else to main's version (it is dropped if main doesn't have it), so the
+// unwatched worktree's changes neither linger in runtime state nor get
+// written to main by a later edit. Returns the resulting events. Must be
+// called with c.mu held, after the worktrees' watchers were removed.
+func (c *Core) unlinkWorktreesLocked(worktreePaths map[string]bool) []BeanEvent {
+	ids := make(map[string]bool)
+	for id, wtp := range c.worktreeLinks {
+		if worktreePaths[wtp] {
+			ids[id] = true
+		}
+	}
+	var events []BeanEvent
+	for _, id := range sortedIDs(ids) {
+		if ev, ok := c.resolveWorktreeBeanLocked(id); ok {
+			events = append(events, ev)
+		}
+		// Resolving keeps the link if main's file can't be loaded; never
+		// route writes to an unwatched worktree.
+		if worktreePaths[c.worktreeLinks[id]] {
+			delete(c.worktreeLinks, id)
+		}
+	}
+	return events
+}
+
+// UnwatchWorktreeBeans stops watching a worktree's .beans/ directory. Beans
+// linked to the worktree revert to another watched worktree's change or to
+// main's version; subscribers are notified.
 func (c *Core) UnwatchWorktreeBeans(worktreePath string) {
 	c.mu.Lock()
 	wt, exists := c.worktreeWatchers[worktreePath]
+	var events []BeanEvent
 	if exists {
 		delete(c.worktreeWatchers, worktreePath)
-		// Clear all worktree links for this worktree
-		for id, wtp := range c.worktreeLinks {
-			if wtp == worktreePath {
-				delete(c.worktreeLinks, id)
-			}
-		}
+		events = c.unlinkWorktreesLocked(map[string]bool{worktreePath: true})
 	}
 	c.mu.Unlock()
 
@@ -313,6 +376,7 @@ func (c *Core) UnwatchWorktreeBeans(worktreePath string) {
 		close(wt.done)
 		c.logWarn("stopped watching worktree beans: %s", wt.beansDir)
 	}
+	c.fanOut(events)
 }
 
 // SyncWorktreeWatchers reconciles the worktree watchers with the given set of
@@ -378,17 +442,23 @@ func canonicalPath(p string) string {
 	return filepath.Clean(p)
 }
 
-// UnwatchAllWorktrees stops watching all worktree .beans/ directories.
+// UnwatchAllWorktrees stops watching all worktree .beans/ directories. Beans
+// linked to worktrees revert to main's version; subscribers are notified.
 func (c *Core) UnwatchAllWorktrees() {
 	c.mu.Lock()
 	watchers := c.worktreeWatchers
 	c.worktreeWatchers = make(map[string]*worktreeWatcher)
-	c.worktreeLinks = make(map[string]string)
+	paths := make(map[string]bool, len(c.worktreeLinks))
+	for _, wtp := range c.worktreeLinks {
+		paths[wtp] = true
+	}
+	events := c.unlinkWorktreesLocked(paths)
 	c.mu.Unlock()
 
 	for _, wt := range watchers {
 		close(wt.done)
 	}
+	c.fanOut(events)
 }
 
 // worktreeWatchLoop processes filesystem events from a worktree with debouncing.
@@ -503,7 +573,7 @@ func (c *Core) handleWorktreeChanges(wt *worktreeWatcher, changes map[string]fsn
 			ids[id] = true
 		}
 	}
-	wt.changed, wt.changedKnown = changed, known
+	wt.changed, wt.changedKnown, wt.scanned = changed, known, true
 
 	var events []BeanEvent
 	for _, id := range sortedIDs(ids) {

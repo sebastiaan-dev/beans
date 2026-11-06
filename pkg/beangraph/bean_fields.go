@@ -75,15 +75,32 @@ func (r *CoreResolver) BeanBlockedBy(ctx context.Context, obj *bean.Bean, filter
 	return filtered, nil
 }
 
-// BeanBlocking resolves the beans this bean is blocking.
+// BeanBlocking resolves the full list of beans this bean is blocking.
+// Symmetric to BeanBlockedBy, it combines both directions: the bean's own
+// blocking field AND incoming blocked_by links (other beans that list this
+// bean in their blocked_by field).
 func (r *CoreResolver) BeanBlocking(ctx context.Context, obj *bean.Bean, filter *model.BeanFilter) ([]*bean.Bean, error) {
+	seen := make(map[string]bool)
 	var result []*bean.Bean
+
+	// 1. Resolve beans from the direct blocking field (skipping broken links)
 	for _, targetID := range obj.Blocking {
-		// Filter out broken links
-		if target, err := r.Core.Get(targetID); err == nil {
-			result = append(result, target)
+		if !seen[targetID] {
+			seen[targetID] = true
+			if target, err := r.Core.Get(targetID); err == nil {
+				result = append(result, target)
+			}
 		}
 	}
+
+	// 2. Resolve beans from incoming blocked_by links (beans blocked by this one)
+	for _, link := range r.Core.FindIncomingLinks(obj.ID) {
+		if link.LinkType == "blocked_by" && !seen[link.FromBean.ID] {
+			seen[link.FromBean.ID] = true
+			result = append(result, link.FromBean)
+		}
+	}
+
 	filtered := ApplyFilter(result, filter, r.Core)
 	cfg := r.Core.Config()
 	bean.SortByStatusPriorityAndType(filtered, cfg.StatusNames(), cfg.PriorityNames(), cfg.TypeNames())

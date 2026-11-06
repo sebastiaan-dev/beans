@@ -150,11 +150,11 @@ export type AskUserQuestionInput = {
 
 /** A bean represents an issue/task in the beans tracker */
 export type Bean = {
-  /** Beans that block this one (incoming blocking links) */
+  /** Beans that block this one (its blockedByIds and beans listing it in their blockingIds) */
   blockedBy: Array<Bean>;
   /** IDs of beans that are blocking this bean (direct field) */
   blockedByIds: Array<Scalars['String']['output']>;
-  /** Beans this one is blocking (resolved from blockingIds) */
+  /** Beans this one is blocking (its blockingIds and beans listing it in their blockedByIds) */
   blocking: Array<Bean>;
   /** IDs of beans this bean is blocking */
   blockingIds: Array<Scalars['String']['output']>;
