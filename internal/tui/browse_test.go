@@ -263,7 +263,7 @@ func TestBrowseHeader(t *testing.T) {
 	withStableRendering(t)
 	app := newDemoApp(t, 100, 30)
 	header := stripAnsi(app.headerLine(96))
-	if !strings.HasPrefix(header, "beans: demo") || !strings.HasSuffix(header, "/ search · F filters · ? help · q quit") {
+	if !strings.HasPrefix(header, "beans: demo") || !strings.HasSuffix(header, "/ query · F filters · ? help · q quit") {
 		t.Errorf("header = %q", header)
 	}
 	// Narrow terminals drop the less important hints first.
@@ -277,32 +277,37 @@ func TestBrowseFilterBar(t *testing.T) {
 	withStableRendering(t)
 	app := newDemoApp(t, 120, 40)
 	bar := stripAnsi(strings.Join(app.filterBar(116), "\n"))
-	for _, want := range []string{"Status", "Type", "Tags", "Completed", "(any)", "shown", "(F)", "(g t)", "(H)"} {
+	for _, want := range []string{"Status", "Type", "Priority", "Tags", "Archived", "Ready", "Done", "any", "shown", "✕", "(F)", "(g t)", "(H)"} {
 		if !strings.Contains(bar, want) {
 			t.Errorf("filter bar lacks %q:\n%s", want, bar)
 		}
 	}
+	for _, l := range app.filterBar(116) {
+		if w := lipgloss.Width(l); w != 116 {
+			t.Errorf("filter bar line is %d wide, want 116: %q", w, stripAnsi(l))
+		}
+	}
 
-	app.list.setFilters(listFilters{statuses: []string{"todo", "draft"}, tags: []string{"auth"}, hideResolved: true})
-	runCmd(t, app, app.list.loadBeans)
-	pressKey(t, app, "/")
-	pressKey(t, app, "x")
+	setQuery(app, "status:todo,draft tag:auth done:no priority:>=high -type:bug archived:no ready:yes")
 	bar = stripAnsi(strings.Join(app.filterBar(116), "\n"))
-	for _, want := range []string{"todo, draft", "auth", "hidden", "Search", "x"} {
+	for _, want := range []string{"todo, draft", "auth", "hidden", "≥high", "not bug", "yes"} {
 		if !strings.Contains(bar, want) {
 			t.Errorf("filter bar lacks %q:\n%s", want, bar)
 		}
 	}
 
-	// Short terminals have no filter bar; the tree's label summarizes the
-	// filters instead.
+	// Short terminals show the bar as one line summarizing the filters; the
+	// tree's label carries the count and the filters.
 	app.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
 	screen := stripAnsi(app.View())
 	if strings.Contains(screen, "─ Status ─") {
-		t.Error("short terminals should not show the filter bar")
+		t.Error("short terminals should not show the full filter bar")
 	}
-	if !strings.Contains(screen, "done hidden") {
-		t.Errorf("tree label should summarize the filters:\n%s", screen)
+	if !strings.Contains(screen, "Filters Status todo, draft · Type not bug") {
+		t.Errorf("the one-line bar should summarize the filters:\n%s", screen)
+	}
+	if !strings.Contains(screen, "Beans 0/12 · status:todo,draft · tag:auth") {
+		t.Errorf("tree label should show the count and the filters:\n%s", screen)
 	}
 }
 

@@ -1,6 +1,7 @@
 ╭────────────────────────────────────────────────────────────────────╮
-│ beans: demo                 / search · F filters · ? help · q quit │
+│ beans: demo                  / query · F filters · ? help · q quit │
 │ ────────────────────────────────────────────────────────────────── │
+│ Filters none                                                   (F) │
 │ ╭─ Beans ────────────────────────────────────────────────────────╮ │
 │ │ ▾ T M m001 Release 1.0                                         │ │
 │ │   ▾ I E e001 Login overhaul                                    │ │
@@ -16,7 +17,6 @@
 │ │   T T t008 Loose task without parent                           │ │
 │ │ ▾ S M m002 Scrapped milestone                                  │ │
 │ │     T T t007 Child of scrapped ↑scrapped                       │ │
-│ │                                                                │ │
 │ ╰───────────────────────────────────────────────────────── 3/12 ─╯ │
 │ ────────────────────────────────────────────────────────────────── │
 │ enter open · e edit · c create · s status · t type · P priority    │

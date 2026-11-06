@@ -1,13 +1,17 @@
 package commands
 
 import (
+	"context"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hmans/beans/internal/ui"
 	"github.com/hmans/beans/pkg/bean"
+	"github.com/hmans/beans/pkg/beangraph"
+	"github.com/hmans/beans/pkg/beangraph/model"
 	"github.com/hmans/beans/pkg/config"
 )
 
@@ -351,5 +355,116 @@ func TestRenderTreeMarksArchivedBeans(t *testing.T) {
 	}
 	if !strings.Contains(out, "Done bean") || !strings.Contains(out, "Open bean") {
 		t.Fatalf("expected both beans in output:\n%s", out)
+	}
+}
+
+func TestApplyListQuery(t *testing.T) {
+	all := []*bean.Bean{
+		{ID: "m1", Title: "Version 1", Status: "todo", Type: "milestone"},
+		{ID: "a", Title: "Login bug", Status: "todo", Type: "bug", Priority: "high", Parent: "m1", Tags: []string{"auth"}},
+		{ID: "b", Title: "Old bug", Status: "completed", Type: "bug"},
+		{ID: "c", Title: "Blocked task", Status: "todo", Type: "task", BlockedBy: []string{"a"}},
+		{ID: "d", Title: "Draft", Status: "draft", Type: "task", Priority: "low", Path: "archive/d.md"},
+	}
+	ids := func(bs []*bean.Bean) []string {
+		out := []string{}
+		for _, b := range bs {
+			out = append(out, b.ID)
+		}
+		return out
+	}
+	tests := []struct {
+		query   string
+		beans   []*bean.Bean // nil = all
+		want    []string
+		wantErr string
+	}{
+		{query: "", want: []string{"m1", "a", "b", "c", "d"}},
+		{query: "type:bug -status:completed", want: []string{"a"}},
+		{query: "priority:>=high", want: []string{"a"}},
+		{query: "priority:<normal archived:yes", want: []string{"d"}},
+		{query: `milestone:"version 1"`, want: []string{"a"}},
+		{query: "ready:yes", want: []string{"m1", "a"}},
+		{query: "blocked:yes", want: []string{"c"}},
+		{query: "login", want: []string{"a"}},
+		// Relational terms see all beans, even when filtering a subset.
+		{query: "parent:m1", beans: all[1:2], want: []string{"a"}},
+		{query: "status:todoo", wantErr: `unknown value(s) todoo (known: draft, todo`},
+		{query: "blocked:maybe", wantErr: "unknown value(s) maybe"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.query, func(t *testing.T) {
+			beans := tt.beans
+			if beans == nil {
+				beans = all
+			}
+			got, err := applyListQuery(beans, all, tt.query)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(ids(got), tt.want) {
+				t.Errorf("got %v, want %v", ids(got), tt.want)
+			}
+		})
+	}
+}
+
+// TestQueryReadyMatchesReadyFlag checks that the query's ready:yes selects
+// the same beans as --ready.
+func TestQueryReadyMatchesReadyFlag(t *testing.T) {
+	testCore, cleanup := setupQueryTestCore(t)
+	defer cleanup()
+	for _, b := range []*bean.Bean{
+		{ID: "r-open", Title: "Open", Status: "todo", Type: "task"},
+		{ID: "r-draft", Title: "Draft", Status: "draft", Type: "task"},
+		{ID: "r-wip", Title: "WIP", Status: "in-progress", Type: "task"},
+		{ID: "r-done", Title: "Done epic", Status: "completed", Type: "epic"},
+		{ID: "r-child", Title: "Child of done", Status: "todo", Type: "task", Parent: "r-done"},
+		{ID: "r-blocker", Title: "Blocker", Status: "todo", Type: "task", Blocking: []string{"r-blocked"}},
+		{ID: "r-blocked", Title: "Blocked", Status: "todo", Type: "feature"},
+		{ID: "r-under", Title: "Under blocked", Status: "todo", Type: "task", Parent: "r-blocked"},
+		{ID: "r-free", Title: "Blocked by done", Status: "todo", Type: "task", BlockedBy: []string{"r-done"}},
+	} {
+		if err := testCore.Create(b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resolver := &beangraph.CoreResolver{Core: testCore}
+	isBlocked, excludeImplicit := false, true
+	flagged, err := resolver.Beans(context.Background(), &model.BeanFilter{
+		IsBlocked:               &isBlocked,
+		ExcludeStatus:           []string{"in-progress", "completed", "scrapped", "draft"},
+		ExcludeImplicitTerminal: &excludeImplicit,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := resolver.Beans(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queried, err := applyListQuery(all, all, "ready:yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := func(bs []*bean.Bean) []string {
+		var out []string
+		for _, b := range bs {
+			out = append(out, b.ID)
+		}
+		sort.Strings(out)
+		return out
+	}
+	if !reflect.DeepEqual(set(queried), set(flagged)) {
+		t.Errorf("ready:yes = %v, --ready = %v", set(queried), set(flagged))
+	}
+	if want := []string{"r-blocker", "r-free", "r-open"}; !reflect.DeepEqual(set(flagged), want) {
+		t.Errorf("--ready = %v, want %v", set(flagged), want)
 	}
 }

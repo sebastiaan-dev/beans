@@ -94,8 +94,8 @@ func TestBatchedRunesTriggerChord(t *testing.T) {
 	runCmd(t, app, app.Init())
 
 	sendBatched(t, app, "gt")
-	if app.state != viewTagPicker {
-		t.Fatalf("batched \"gt\" should open the tag picker, state = %v", app.state)
+	if app.focus != focusFilter || !app.bar.open || app.bar.field != barTags {
+		t.Fatalf("batched \"gt\" should open the tags dropdown: focus=%v bar=%+v", app.focus, app.bar)
 	}
 }
 
@@ -103,13 +103,14 @@ func TestBatchedRunesTriggerShortcuts(t *testing.T) {
 	app, _ := setupListTestModel(t)
 	runCmd(t, app, app.Init())
 
-	// "H" hides resolved beans, "F" then opens the filter modal.
-	sendBatched(t, app, "HF")
-	if !app.list.filters.hideResolved {
+	// "H" hides resolved beans, "F" then focuses the filter bar and "ll"
+	// moves to its third field.
+	sendBatched(t, app, "HFll")
+	if !app.list.doneHidden() {
 		t.Error("batched \"H\" should toggle hiding resolved beans")
 	}
-	if app.state != viewFilterPicker {
-		t.Errorf("batched \"F\" should open the filter modal, state = %v", app.state)
+	if app.focus != focusFilter || app.bar.field != barPriority {
+		t.Errorf("batched \"Fll\" should focus the bar's priority field: focus=%v field=%v", app.focus, app.bar.field)
 	}
 }
 
@@ -188,7 +189,16 @@ func TestFooterFitsWidth(t *testing.T) {
 	modes := map[string]func(a *App){
 		"default": func(a *App) {},
 		"filtered": func(a *App) {
-			a.list.filters = listFilters{tags: []string{"frontend"}, hideResolved: true}
+			setQuery(a, "tag:frontend done:no")
+		},
+		"filter bar": func(a *App) {
+			pressKey(t, a, "F")
+		},
+		"dropdown": func(a *App) {
+			pressKey(t, a, "F")
+			pressKey(t, a, "l")
+			pressKey(t, a, "l")
+			pressKey(t, a, "enter")
 		},
 		"selected": func(a *App) {
 			a.list.selectedBeans = map[string]bool{"t-open": true, "t-wip": true}

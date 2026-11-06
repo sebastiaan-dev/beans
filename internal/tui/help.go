@@ -66,10 +66,11 @@ var helpSections = []helpSection{
 		{"zR zM", "Open/close all"},
 		{"gg G", "First / last bean"},
 		{"enter tab", "Focus details"},
-		{"/", "Search title or ID"},
 	}},
 	{"Filter", [][2]string{
-		{"F", "Status/type/tags"},
+		{"F ⇧tab", "Focus filter bar"},
+		{"←→ enter", "Field / dropdown"},
+		{"/", "Query, e.g. tag:ui"},
 		{"H", "Hide/show done"},
 		{"g t", "Filter by tag"},
 		{"esc", "Clear filters"},
@@ -84,7 +85,7 @@ var helpSections = []helpSection{
 		{"y", "Copy bean ID"},
 	}},
 	{"Details", [][2]string{
-		{"tab", "Relations / body"},
+		{"tab ⇧tab", "Sections / panes"},
 		{"↑↓ j k", "Move / scroll"},
 		{"pgup pgdn", "Scroll body"},
 		{"enter", "Open related bean"},

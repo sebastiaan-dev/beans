@@ -148,8 +148,7 @@ func TestFoldingWithFilters(t *testing.T) {
 	pressKey(t, app, "M")
 
 	// A filter shows matches inside folded parents.
-	app.list.setFilters(listFilters{types: []string{"task"}})
-	runCmd(t, app, app.list.loadBeans)
+	setQuery(app, "type:task")
 	for _, id := range []string{"demo-t002", "demo-t003", "demo-t005", "demo-t006", "demo-t007", "demo-t008"} {
 		if app.list.rowIndex(id) < 0 {
 			t.Errorf("%s should be visible while filtering: %v", id, visibleIDs(app.list))
@@ -162,8 +161,7 @@ func TestFoldingWithFilters(t *testing.T) {
 	if app.list.rowIndex("demo-t005") >= 0 {
 		t.Error("folding while filtering should hide the children")
 	}
-	app.list.setFilters(listFilters{types: []string{"task", "bug"}})
-	runCmd(t, app, app.list.loadBeans)
+	setQuery(app, "type:task,bug")
 	if app.list.rowIndex("demo-t005") < 0 {
 		t.Error("changing the filter should reset the temporary folds")
 	}
@@ -292,8 +290,7 @@ func TestDetailFocusAndRelations(t *testing.T) {
 
 func TestDetailJumpOutsideFilter(t *testing.T) {
 	app := newDemoApp(t, 160, 40)
-	app.list.setFilters(listFilters{types: []string{"feature"}})
-	runCmd(t, app, app.list.loadBeans)
+	setQuery(app, "type:feature")
 	moveTo(t, app, "demo-t001")
 	pressKey(t, app, "enter")
 	pressKey(t, app, "j") // demo-t003, filtered out of the tree
@@ -390,7 +387,7 @@ func TestHelpOverlayListsNewKeys(t *testing.T) {
 		t.Fatalf("? should open the help, state = %v", app.state)
 	}
 	view := stripAnsi(app.View())
-	for _, want := range []string{"zR zM", "Collapse", "Focus details", "Open related bean", "Create new bean", "g t"} {
+	for _, want := range []string{"zR zM", "Collapse", "Focus details", "Open related bean", "Create new bean", "g t", "Focus filter bar", "Query, e.g. tag:ui"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("help lacks %q:\n%s", want, view)
 		}
@@ -441,7 +438,7 @@ func TestFocusChangesAreSynchronous(t *testing.T) {
 	if app.focus != focusDetail || app.detail.section != sectionBody {
 		t.Fatalf("enter then tab: focus=%v section=%v", app.focus, app.detail.section)
 	}
-	app.Update(keyType(tea.KeyTab))
+	app.Update(keyType(tea.KeyShiftTab))
 	app.Update(keyRunes("j"))
 	app.Update(keyType(tea.KeyEnter))
 	app.Update(keyType(tea.KeyEsc))
