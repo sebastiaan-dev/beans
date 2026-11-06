@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/hmans/beans/internal/ui"
+	"github.com/hmans/beans/pkg/bean"
 	"github.com/hmans/beans/pkg/beancore"
 	"github.com/hmans/beans/pkg/beangraph"
 	"github.com/hmans/beans/pkg/beangraph/model"
@@ -29,7 +30,6 @@ const (
 	viewTypePicker
 	viewBlockingPicker
 	viewPriorityPicker
-	viewCreateModal
 	viewHelpOverlay
 )
 
@@ -74,7 +74,6 @@ type App struct {
 	typePicker     typePickerModel
 	blockingPicker blockingPickerModel
 	priorityPicker priorityPickerModel
-	createModal    createModalModel
 	helpOverlay    helpOverlayModel
 	core           *beancore.Core
 	resolver       *beangraph.CoreResolver
@@ -100,6 +99,9 @@ type App struct {
 
 	// Modal state - tracks view behind modal pickers
 	previousState viewState
+
+	// Undo history of changes made in this session (undo.go)
+	undo undoState
 
 	// Editor state - tracks bean being edited to update updated_at on save
 	editingBeanID      string
@@ -178,6 +180,10 @@ func (a *App) handleChord(first string, msg tea.KeyMsg) tea.Cmd {
 func (a *App) update(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 
+	if a.handleQuickActionMsg(msg) {
+		return nil
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
@@ -226,7 +232,7 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		// Moving the focus between the panes and opening relations is
 		// handled here, synchronously, so that the keys that follow already
 		// go to the right pane.
-		if a.state == viewList && !a.list.searching {
+		if a.state == viewList && !a.list.typing() {
 			if a.focus == focusFilter {
 				if cmd, handled := a.updateFilterBar(msg); handled {
 					return cmd
@@ -236,6 +242,9 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 				if handled := a.handleFocusKey(msg.String()); handled {
 					return nil
 				}
+			}
+			if cmd, handled := a.handleQuickKey(msg.String()); handled {
+				return cmd
 			}
 		}
 
@@ -304,10 +313,12 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		if msg.parentID != "" {
 			parentID = &msg.parentID
 		}
-		for _, beanID := range msg.beanIDs {
-			// Continue with other beans even if one fails
-			_, _ = a.resolver.SetParent(context.Background(), beanID, parentID, nil)
-		}
+		a.trackChange(a.changeLabel("parent", msg.beanIDs), msg.beanIDs, func() {
+			for _, beanID := range msg.beanIDs {
+				// Continue with other beans even if one fails
+				_, _ = a.resolver.SetParent(context.Background(), beanID, parentID, nil)
+			}
+		})
 		return a.closePicker(true)
 
 	case openStatusPickerMsg:
@@ -320,7 +331,9 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		return a.closePicker(false)
 
 	case statusSelectedMsg:
-		a.updateBeans(msg.beanIDs, model.UpdateBeanInput{Status: &msg.status})
+		a.trackChange(a.changeLabel("status", msg.beanIDs), msg.beanIDs, func() {
+			a.updateBeans(msg.beanIDs, model.UpdateBeanInput{Status: &msg.status})
+		})
 		return a.closePicker(true)
 
 	case openTypePickerMsg:
@@ -333,7 +346,9 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		return a.closePicker(false)
 
 	case typeSelectedMsg:
-		a.updateBeans(msg.beanIDs, model.UpdateBeanInput{Type: &msg.beanType})
+		a.trackChange(a.changeLabel("type", msg.beanIDs), msg.beanIDs, func() {
+			a.updateBeans(msg.beanIDs, model.UpdateBeanInput{Type: &msg.beanType})
+		})
 		return a.closePicker(true)
 
 	case openPriorityPickerMsg:
@@ -346,7 +361,9 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		return a.closePicker(false)
 
 	case prioritySelectedMsg:
-		a.updateBeans(msg.beanIDs, model.UpdateBeanInput{Priority: &msg.priority})
+		a.trackChange(a.changeLabel("priority", msg.beanIDs), msg.beanIDs, func() {
+			a.updateBeans(msg.beanIDs, model.UpdateBeanInput{Priority: &msg.priority})
+		})
 		return a.closePicker(true)
 
 	case openHelpMsg:
@@ -371,42 +388,15 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 	case blockingConfirmedMsg:
 		// Apply all blocking changes via GraphQL mutations, continuing with
 		// other changes if one fails
-		for _, targetID := range msg.toAdd {
-			_, _ = a.resolver.AddBlocking(context.Background(), msg.beanID, targetID, nil)
-		}
-		for _, targetID := range msg.toRemove {
-			_, _ = a.resolver.RemoveBlocking(context.Background(), msg.beanID, targetID, nil)
-		}
-		return a.closePicker(false)
-
-	case openCreateModalMsg:
-		a.previousState = a.state
-		a.createModal = newCreateModalModel(a.width, a.height)
-		a.state = viewCreateModal
-		return a.createModal.Init()
-
-	case closeCreateModalMsg:
-		a.state = a.previousState
-		return nil
-
-	case beanCreatedMsg:
-		// Create the bean via GraphQL mutation; status and type use the configured defaults
-		createdBean, err := a.resolver.CreateBean(context.Background(), model.CreateBeanInput{
-			Title: msg.title,
+		a.trackChange(a.changeLabel("blocking", []string{msg.beanID}), []string{msg.beanID}, func() {
+			for _, targetID := range msg.toAdd {
+				_, _ = a.resolver.AddBlocking(context.Background(), msg.beanID, targetID, nil)
+			}
+			for _, targetID := range msg.toRemove {
+				_, _ = a.resolver.RemoveBlocking(context.Background(), msg.beanID, targetID, nil)
+			}
 		})
-		a.state = viewList
-		if err != nil {
-			a.list.statusMessage = fmt.Sprintf("Failed to create bean: %v", err)
-			return nil
-		}
-		// Select the new bean and open it in the editor
-		a.revealID = createdBean.ID
-		return tea.Batch(
-			a.list.loadBeans,
-			func() tea.Msg {
-				return openEditorMsg{beanID: createdBean.ID, beanPath: createdBean.Path}
-			},
-		)
+		return a.closePicker(false)
 
 	case openEditorMsg:
 		// Launch editor for the bean file
@@ -419,6 +409,10 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 
 		// Record the bean ID and file mod time before editing
 		a.editingBeanID = msg.beanID
+		a.undo.editing = nil
+		if before := a.snapshotBeans([]string{msg.beanID}); len(before) > 0 {
+			a.undo.editing = before[0]
+		}
 		if info, err := os.Stat(fullPath); err == nil {
 			a.editingBeanModTime = info.ModTime()
 		}
@@ -432,6 +426,10 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		// Editor closed - check if file was modified and update updated_at if so
 		if a.editingBeanID != "" {
 			a.touchEditedBean()
+			if a.undo.editing != nil {
+				a.recordChange(a.changeLabel("edit", []string{a.editingBeanID}), []*bean.Bean{a.undo.editing})
+				a.undo.editing = nil
+			}
 			// Clear editing state
 			a.editingBeanID = ""
 			a.editingBeanModTime = time.Time{}
@@ -478,8 +476,6 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		a.priorityPicker, cmd = a.priorityPicker.Update(msg)
 	case viewBlockingPicker:
 		a.blockingPicker, cmd = a.blockingPicker.Update(msg)
-	case viewCreateModal:
-		a.createModal, cmd = a.createModal.Update(msg)
 	case viewHelpOverlay:
 		a.helpOverlay, cmd = a.helpOverlay.Update(msg)
 	}
@@ -538,7 +534,7 @@ func (a *App) handleFocusKey(key string) bool {
 		}
 	case "esc":
 		a.focusTree()
-	case "/", "H", "c":
+	case "/", "H", "c", "C", "r", "K", "J":
 		// Tree-wide actions return to the tree and are handled there.
 		a.focusTree()
 		return false
@@ -577,7 +573,7 @@ func (a *App) focusDetailPane(first bool) bool {
 // typing reports whether the browse view routes typed characters into a
 // text field (the query input or the tag type-ahead).
 func (a *App) typing() bool {
-	return a.list.searching || (a.focus == focusFilter && a.bar.typing())
+	return a.list.typing() || (a.focus == focusFilter && a.bar.typing())
 }
 
 // showBean shows a bean in the detail pane, moving the tree cursor to it if
@@ -634,8 +630,6 @@ func (a *App) acceptsTextInput() bool {
 		return a.priorityPicker.list.FilterState() == list.Filtering
 	case viewBlockingPicker:
 		return a.blockingPicker.list.FilterState() == list.Filtering
-	case viewCreateModal:
-		return true
 	}
 	return false
 }
@@ -646,8 +640,8 @@ type releaseHeldKeysMsg struct{}
 // handleKeys handles key messages one after another, as if they had been
 // typed separately, splitting batched runes into single-key shortcuts.
 //
-// A key may return a command whose message changes the view (e.g. "c" opens
-// the create modal via openCreateModalMsg). The remaining keys, and any keys
+// A key may return a command whose message changes the view (e.g. "s" opens
+// the status picker via openStatusPickerMsg). The remaining keys, and any keys
 // arriving in the meantime, are therefore held back until that command's
 // messages have been processed. Once a text input has focus, the remaining
 // keys are delivered to it directly as text.
@@ -700,8 +694,6 @@ func (a *App) view() string {
 		return a.priorityPicker.ModalView(a.browseView(), a.width, a.height)
 	case viewBlockingPicker:
 		return a.blockingPicker.ModalView(a.browseView(), a.width, a.height)
-	case viewCreateModal:
-		return a.createModal.ModalView(a.browseView(), a.width, a.height)
 	case viewHelpOverlay:
 		return a.helpOverlay.ModalView(a.browseView(), a.width, a.height)
 	}

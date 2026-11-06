@@ -21,7 +21,7 @@ func TestHelpOverlayUsesTerminalForeground(t *testing.T) {
 	if strings.Contains(view, white) {
 		t.Error("help overlay renders text with a hardcoded white foreground")
 	}
-	if !strings.Contains(view, "Create new bean") {
+	if !strings.Contains(view, "New bean / child") {
 		t.Error("help overlay is missing shortcut descriptions")
 	}
 }

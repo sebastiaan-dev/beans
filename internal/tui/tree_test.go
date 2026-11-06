@@ -387,7 +387,7 @@ func TestHelpOverlayListsNewKeys(t *testing.T) {
 		t.Fatalf("? should open the help, state = %v", app.state)
 	}
 	view := stripAnsi(app.View())
-	for _, want := range []string{"zR zM", "Collapse", "Focus details", "Open related bean", "Create new bean", "g t", "Focus filter bar", "Query, e.g. tag:ui"} {
+	for _, want := range []string{"zR zM", "Collapse", "Focus details", "Open related bean", "New bean / child", "Rename", "Undo last change", "Next bean to do", "g t", "Focus filter bar", "Query, e.g. tag:ui"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("help lacks %q:\n%s", want, view)
 		}
@@ -407,24 +407,6 @@ func TestHelpOverlayListsNewKeys(t *testing.T) {
 	pressKey(t, app, "esc")
 	if app.state != viewList {
 		t.Error("esc should close the help")
-	}
-}
-
-func TestCreatedBeanIsSelected(t *testing.T) {
-	app := newDemoApp(t, 100, 30)
-	t.Setenv("EDITOR", "true")
-	t.Setenv("VISUAL", "")
-	_, cmd := app.Update(beanCreatedMsg{title: "Brand new"})
-	// Load the beans; the editor command is not run in tests.
-	for _, c := range cmd().(tea.BatchMsg) {
-		if msg := c(); msg != nil {
-			if _, isEditor := msg.(openEditorMsg); !isEditor {
-				app.Update(msg)
-			}
-		}
-	}
-	if b := app.list.currentBean(); b == nil || b.Title != "Brand new" {
-		t.Errorf("the new bean should be selected, cursor on %v", b)
 	}
 }
 

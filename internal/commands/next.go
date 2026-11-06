@@ -6,7 +6,6 @@ import (
 
 	"github.com/hmans/beans/internal/output"
 	"github.com/hmans/beans/internal/ui"
-	"github.com/hmans/beans/pkg/bean"
 	"github.com/hmans/beans/pkg/beangraph"
 	"github.com/spf13/cobra"
 )
@@ -40,7 +39,7 @@ non-zero only on errors.`,
 		ctx := context.Background()
 		resolver := &beangraph.CoreResolver{Core: core}
 
-		b, err := findNextBean(ctx, resolver)
+		b, err := resolver.NextBean(ctx)
 		if err != nil {
 			return cmdError(nextJSON, output.ErrValidation, "querying beans: %v", err)
 		}
@@ -60,23 +59,6 @@ non-zero only on errors.`,
 		showStyledBean(b)
 		return nil
 	},
-}
-
-// findNextBean returns the highest-ranked ready bean, or nil if none.
-func findNextBean(ctx context.Context, resolver *beangraph.CoreResolver) (*bean.Bean, error) {
-	candidates, err := resolver.Beans(ctx, readyFilter())
-	if err != nil {
-		return nil, err
-	}
-	if len(candidates) == 0 {
-		return nil, nil
-	}
-	all, err := resolver.Beans(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	rankNextCandidates(candidates, resolver.Core.Config().PriorityNames(), openChildCounts(all))
-	return candidates[0], nil
 }
 
 func RegisterNextCmd(root *cobra.Command) {

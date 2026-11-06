@@ -92,7 +92,7 @@ func buildMilestoneList(ctx context.Context, resolver *beangraph.CoreResolver, i
 func sortMilestones(milestones []*bean.Bean, priorityNames []string) {
 	// All milestones are containers, so the container tie-breaker of the
 	// `next` ranking never applies: this is priority, then created, then ID.
-	rankNextCandidates(milestones, priorityNames, nil)
+	beangraph.RankNextCandidates(milestones, priorityNames, nil)
 }
 
 // renderMilestoneList renders the human-readable milestone list.

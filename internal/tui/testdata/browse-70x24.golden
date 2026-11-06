@@ -19,6 +19,6 @@
 │ │     T T t007 Child of scrapped ↑scrapped                       │ │
 │ ╰───────────────────────────────────────────────────────── 3/12 ─╯ │
 │ ────────────────────────────────────────────────────────────────── │
-│ enter open · e edit · c create · s status · t type · P priority    │
-│ p parent · b blocking · ←→ fold · space select · H hide done       │
+│ enter open · e edit · c create · C child · r rename · s status     │
+│ t type · P priority · p parent · b blocking · n next · u undo      │
 ╰────────────────────────────────────────────────────────────────────╯
