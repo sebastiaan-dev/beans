@@ -42,11 +42,11 @@ func DefaultKeyMap() KeyMap {
 	return KeyMap{
 		Up: key.NewBinding(
 			key.WithKeys("up", "k"),
-			key.WithHelp("↑/k", "up"),
+			key.WithHelp(glyphs().KeyUp+"/k", "up"),
 		),
 		Down: key.NewBinding(
 			key.WithKeys("down", "j"),
-			key.WithHelp("↓/j", "down"),
+			key.WithHelp(glyphs().KeyDown+"/j", "down"),
 		),
 		Enter: key.NewBinding(
 			key.WithKeys("enter"),
@@ -97,11 +97,11 @@ func DefaultDetailKeyMap() DetailKeyMap {
 	return DetailKeyMap{
 		Up: key.NewBinding(
 			key.WithKeys("up", "k"),
-			key.WithHelp("↑/k", "scroll up"),
+			key.WithHelp(glyphs().KeyUp+"/k", "scroll up"),
 		),
 		Down: key.NewBinding(
 			key.WithKeys("down", "j"),
-			key.WithHelp("↓/j", "scroll down"),
+			key.WithHelp(glyphs().KeyDown+"/j", "scroll down"),
 		),
 		Back: key.NewBinding(
 			key.WithKeys("esc", "backspace"),

@@ -177,6 +177,47 @@ With a theme, the color names used for statuses, types and priorities (`red`, `g
 
 If a theme can't be loaded (e.g. nvim is not installed or the colorscheme doesn't exist), beans prints a warning and falls back to terminal colors. `beans check` reports unknown or broken themes and invalid `theme_overrides`/`BEANS_THEME_OVERRIDES` as errors, and a missing nvim as a warning.
 
+## Terminal UI
+
+`beans-tui` opens an interactive terminal UI on the project in the current directory (it accepts `--beans-path` like the CLI).
+
+**Layout.** One frame holds a header, the filter bar (one field box each for status, type, priority, tags, archived, ready and done; a single line on short terminals), the bean tree and the selected bean's detail boxes (title, status/type/priority, parent, tags, body, relations, history) next to it, and a footer with the keys of the focused pane. Terminals narrower than 100 or shorter than 16 lines show the tree only, and `enter` opens the detail pane in its place; when the detail boxes don't fit, the pane scrolls as a whole. Below 40×12 beans asks you to enlarge the terminal.
+
+**Keys** (`?` shows them all):
+
+| Keys | Action |
+| --- | --- |
+| `↑↓` `j k`, `gg` `G` | move in the tree; scroll the detail pane |
+| `←→` `h l`, `zo zc za`, `zR zM` | collapse/expand the tree, open/close/toggle a node, open/close all |
+| `enter`, `tab` / `shift+tab`, `esc` | open the detail pane, cycle tree, relations, body and filter bar, back |
+| `F` / `tab`, `←→`, `enter`, `bksp` | focus the filter bar, pick a field, open its dropdown (`space` toggles values), clear the field |
+| `/` | edit the filter query, e.g. `status:todo,draft -type:bug priority:>=high tag:ui ready:yes "free text"` (the same syntax as `beans list --query` and the Beans UI's planning views; also `parent:`, `milestone:`, `epic:`, `blocked:`, `done:`, `archived:`) |
+| `H`, `g t` | hide/show done beans, filter by tag |
+| `c` `C`, `r` | create a sibling / child bean inline, rename inline |
+| `e`, `s t P p b` | edit in `$EDITOR`; set status, type, priority, parent, blocking |
+| `n`, `u`, `K J` | jump to the next bean to work on, undo, move the bean up/down |
+| `[ ]`, `x` | move between the body's checkboxes, toggle one |
+| `space`, `y` | select beans for batch edits, copy the ID(s) |
+| `w`, `W`, `g w` | start the bean in its workspace (git worktree), the same plus `tui.agent_command`, list the workspaces |
+| `1`–`4` | switch views |
+| `:` / `ctrl+p` | command palette |
+| mouse | click to select and focus, scroll wheel to scroll |
+| `q` | quit |
+
+**Configuration** (`.beans.yml`; the environment variables override it for you alone):
+
+```yaml
+tui:
+  theme: nvim              # see Color Themes; $BEANS_THEME
+  theme_background: true   # $BEANS_THEME_BACKGROUND
+  theme_overrides:         # $BEANS_THEME_OVERRIDES="border=#5c6066,accent=4"
+    border: "#5c6066"
+  agent_command: claude "Work on bean {{bean_id}}: {{bean_title}}"  # run by W in the workspace; $BEANS_AGENT_COMMAND
+  ascii: true              # ASCII-only borders and symbols; $BEANS_TUI_ASCII=1
+```
+
+`agent_command` is split like a shell command line (no shell runs it); `{{bean_id}}`, `{{bean_title}}` and `{{path}}` (the workspace directory) are replaced. `ascii` draws `+-|` borders and ASCII symbols for terminals or fonts without the Unicode box-drawing characters. `beans check` validates the theme, `agent_command` and `ascii` settings, including the environment variables.
+
 ## Agent Configuration
 
 The most basic way to teach your agent about Beans is to simply add the following instruction to your `AGENTS.md`, `CLAUDE.md`, or equivalent file:
@@ -216,10 +257,10 @@ As a human, you can get an overview of the CLI's functionalities by running:
 beans help
 ```
 
-You might specifically be interested in the interactive TUI:
+You might specifically be interested in the interactive [terminal UI](#terminal-ui):
 
 ```bash
-beans tui
+beans-tui
 ```
 
 ### Example Workflows

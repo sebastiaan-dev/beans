@@ -169,7 +169,7 @@ func (a *App) handleChord(first string, msg tea.KeyMsg) tea.Cmd {
 		if a.focus == focusTree {
 			a.list.moveCursor(-len(a.list.rows))
 		} else {
-			a.detail.bodyOffset = 0
+			a.detail.scrollHome()
 		}
 	case "z o":
 		a.list.foldOpen()
@@ -705,6 +705,9 @@ func (a *App) View() string {
 
 // view renders the current view without the theme background.
 func (a *App) view() string {
+	if a.width < minAppWidth || a.height < minAppHeight {
+		return a.tooSmallView()
+	}
 	switch a.state {
 	case viewList:
 		return a.browseView()
@@ -759,6 +762,14 @@ func Run(core *beancore.Core, cfg *config.Config) error {
 	// view. A theme that fails to load falls back to terminal colors.
 	themeSettings, themeErr := ui.ApplyConfiguredThemeSettings(cfg, true)
 	ui.WarnThemeError(themeErr)
+
+	// ASCII glyphs (tui.ascii, $BEANS_TUI_ASCII) must be chosen before any
+	// view is built.
+	ascii, asciiErr := cfg.GetTUIASCII()
+	if asciiErr != nil {
+		fmt.Fprintf(os.Stderr, "beans: warning: %v\n", asciiErr)
+	}
+	setASCII(ascii)
 
 	app := New(core, cfg)
 	p := tea.NewProgram(app, tea.WithAltScreen())

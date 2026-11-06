@@ -19,9 +19,17 @@
  *   milestone:<id|title>   like parent:, but the ancestor must be a milestone
  *   epic:<id|title>        like parent:, but the ancestor must be an epic
  *   blocked:yes|no         bean is (not) blocked, directly or via an ancestor
+ *   ready:yes|no           bean is (not) ready to start, like `beans list --ready`:
+ *                          not blocked, not draft/in-progress/completed/scrapped
+ *                          and no completed/scrapped ancestor
+ *   done:yes|no            bean is (not) completed/scrapped, itself or via an ancestor
+ *   archived:yes|no        bean is (not) stored in the archive directory
  *   -status:completed      a leading "-" negates a field term
  *   "some words"           quotes group values/text containing spaces
  *   anything else          free-text search on title, id, type, status and tags
+ *
+ * The same syntax is implemented in Go by pkg/beangraph/filterquery (terminal
+ * UI, `beans list --query`); keep both in sync.
  */
 import type { Bean } from '$lib/beans.svelte';
 
@@ -34,6 +42,7 @@ export const TYPES = ['milestone', 'epic', 'feature', 'bug', 'task'] as const;
 export const PRIORITIES = ['critical', 'high', 'normal', 'low', 'deferred'] as const;
 const DEFAULT_PRIORITY = 'normal';
 const RESOLVED_STATUSES = new Set(['completed', 'scrapped']);
+const NOT_READY_STATUSES = new Set(['draft', 'in-progress', 'completed', 'scrapped']);
 
 export type FilterField =
   | 'status'
@@ -43,7 +52,10 @@ export type FilterField =
   | 'parent'
   | 'milestone'
   | 'epic'
-  | 'blocked';
+  | 'blocked'
+  | 'ready'
+  | 'done'
+  | 'archived';
 
 export const FILTER_FIELDS: readonly FilterField[] = [
   'status',
@@ -53,7 +65,10 @@ export const FILTER_FIELDS: readonly FilterField[] = [
   'parent',
   'milestone',
   'epic',
-  'blocked'
+  'blocked',
+  'ready',
+  'done',
+  'archived'
 ];
 
 /** Alternative spellings accepted by the parser (normalized on parse). */
@@ -72,11 +87,17 @@ export const FIELD_HELP: Record<FilterField, string> = {
   parent: 'Below a bean (any depth)',
   milestone: 'Below a milestone',
   epic: 'Below an epic',
-  blocked: 'Blocked: yes or no'
+  blocked: 'Blocked: yes or no',
+  ready: 'Ready to start: yes or no',
+  done: 'Completed/scrapped: yes or no',
+  archived: 'Archived: yes or no'
 };
 
 /** Fields whose values reference other beans. */
 export const PARENT_FIELDS: readonly FilterField[] = ['parent', 'milestone', 'epic'];
+
+/** Fields that take yes/no values. */
+export const BOOL_FIELDS: readonly FilterField[] = ['blocked', 'ready', 'done', 'archived'];
 
 export type CompareOp = '=' | '>=' | '<=' | '>' | '<';
 
@@ -226,10 +247,8 @@ export function knownValues(field: FilterField): readonly string[] | null {
       return TYPES;
     case 'priority':
       return PRIORITIES;
-    case 'blocked':
-      return ['yes', 'no'];
     default:
-      return null;
+      return BOOL_FIELDS.includes(field) ? ['yes', 'no'] : null;
   }
 }
 
@@ -246,7 +265,9 @@ const BOOLEAN_VALUES: Record<string, boolean> = {
 
 /** Values of a clause that cannot match anything (typos etc.), for UI hints. */
 export function invalidValues(clause: FilterClause): string[] {
-  if (clause.field === 'blocked') return clause.values.filter((v) => !(v in BOOLEAN_VALUES));
+  if (BOOL_FIELDS.includes(clause.field)) {
+    return clause.values.filter((v) => !(v in BOOLEAN_VALUES));
+  }
   if (clause.op !== '=' && clause.field !== 'priority') return clause.values;
   const known = knownValues(clause.field);
   return known ? clause.values.filter((v) => !known.includes(v)) : [];
@@ -319,7 +340,7 @@ export function setBlocked(query: FilterQuery, blocked: boolean | null): FilterQ
 // Matching
 // ---------------------------------------------------------------------------
 
-/** Lookups needed to evaluate relational clauses (parent, blocked). */
+/** Lookups needed to evaluate relational clauses (parent, blocked, ready, done). */
 export interface FilterContext {
   /** All known beans (including archived ones) by ID. */
   byId: ReadonlyMap<string, Bean>;
@@ -370,6 +391,11 @@ export function refersTo(bean: Bean, ref: string): boolean {
   );
 }
 
+/** Whether the bean is stored in the archive directory (mirrors bean.IsArchived). */
+export function isArchived(bean: Pick<Bean, 'path'>): boolean {
+  return bean.path.startsWith('archive/') || bean.path.startsWith('archive\\');
+}
+
 /** Case-insensitive substring match of one free-text term (the original filter behavior). */
 export function matchesText(bean: Bean, text: string): boolean {
   if (!text) return true;
@@ -415,7 +441,7 @@ export type BeanPredicate = (bean: Bean) => boolean;
 
 /**
  * Compile a filter into a predicate. Relational lookups (parent references,
- * blocked state) are resolved once per compiled filter and memoized.
+ * blocked and done state) are resolved once per compiled filter and memoized.
  */
 export function compileFilter(query: FilterQuery | string, ctx: FilterContext): BeanPredicate {
   const parsed = typeof query === 'string' ? parseFilter(query) : query;
@@ -437,6 +463,25 @@ export function compileFilter(query: FilterQuery | string, ctx: FilterContext): 
     }
     return result;
   };
+
+  const resolvedAncestorMemo = new Map<string, boolean>();
+  // Mirrors beancore.ImplicitStatus != "": a completed/scrapped ancestor.
+  const hasResolvedAncestor = (bean: Bean): boolean => {
+    let result = resolvedAncestorMemo.get(bean.id);
+    if (result === undefined) {
+      result = [...ancestors(bean, ctx.byId)].some((a) => RESOLVED_STATUSES.has(a.status));
+      resolvedAncestorMemo.set(bean.id, result);
+    }
+    return result;
+  };
+  // Mirrors `beans list --ready`: not blocked (explicitly or via an ancestor),
+  // not draft/in-progress/completed/scrapped and no completed/scrapped ancestor.
+  const isReady = (bean: Bean): boolean =>
+    !NOT_READY_STATUSES.has(bean.status) && !hasResolvedAncestor(bean) && !isBlocked(bean);
+  const isDone = (bean: Bean): boolean =>
+    RESOLVED_STATUSES.has(bean.status) || hasResolvedAncestor(bean);
+  const matchesBool = (clause: FilterClause, actual: boolean): boolean =>
+    clause.values.some((v) => v in BOOLEAN_VALUES && BOOLEAN_VALUES[v] === actual);
 
   // Resolve parent references to the set of bean IDs they identify.
   const refTargets = new Map<FilterClause, Set<string>>();
@@ -460,10 +505,14 @@ export function compileFilter(query: FilterQuery | string, ctx: FilterContext): 
         return matchesPriority(bean, clause);
       case 'tag':
         return bean.tags.some((t) => clause.values.includes(t.toLowerCase()));
-      case 'blocked': {
-        const blocked = isBlocked(bean);
-        return clause.values.some((v) => v in BOOLEAN_VALUES && BOOLEAN_VALUES[v] === blocked);
-      }
+      case 'blocked':
+        return matchesBool(clause, isBlocked(bean));
+      case 'ready':
+        return matchesBool(clause, isReady(bean));
+      case 'done':
+        return matchesBool(clause, isDone(bean));
+      case 'archived':
+        return matchesBool(clause, isArchived(bean));
       case 'parent':
       case 'milestone':
       case 'epic': {

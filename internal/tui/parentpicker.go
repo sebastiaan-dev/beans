@@ -55,7 +55,7 @@ func (d parentItemDelegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return ni
 func (d parentItemDelegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
 	var cursor string
 	if index == m.Index() {
-		cursor = lipgloss.NewStyle().Foreground(ui.ColorPrimary).Bold(true).Render("▌") + " "
+		cursor = lipgloss.NewStyle().Foreground(ui.ColorPrimary).Bold(true).Render(glyphs().Cursor) + " "
 	} else {
 		cursor = "  "
 	}

@@ -162,6 +162,10 @@ type TUIConfig struct {
 	// e.g. `claude "Work on bean {{bean_id}}"`; see Config.GetAgentCommand.
 	// Overridden by $BEANS_AGENT_COMMAND.
 	AgentCommand string `yaml:"agent_command,omitempty"`
+	// ASCII draws the TUI with ASCII characters only (borders, tree
+	// chevrons, symbols), for terminals or fonts lacking the Unicode ones.
+	// Overridden by $BEANS_TUI_ASCII.
+	ASCII bool `yaml:"ascii,omitempty"`
 
 	// ThemeOverrides sets single theme roles (see ThemeRoles) to a color:
 	// "#rrggbb", an ANSI palette index "0".."15" or a color name (red,

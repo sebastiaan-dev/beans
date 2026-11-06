@@ -48,6 +48,7 @@ func markdownRenderer(width int) *glamour.TermRenderer {
 		return r
 	}
 	style := ui.MarkdownStyleConfig()
+	applyMarkdownGlyphs(&style)
 	// The box around the body provides the margin. glamour's default document
 	// margin indents every line, and used to show as a 2-space indent on all
 	// but the first line once the output was trimmed.
@@ -247,6 +248,13 @@ type detailModel struct {
 	relCursor  int
 	bodyOffset int
 
+	// Scrolling of the whole pane when its boxes do not fit (see
+	// detail_scroll.go): the first line shown and the section the offset
+	// was last adjusted for.
+	paneOffset    int
+	scrollSection detailSection
+	scrollFocused bool
+
 	// Rendered body, cached for bodyKey (width and body text).
 	body    []string
 	bodyKey string
@@ -275,7 +283,7 @@ func (m *detailModel) setBean(b *bean.Bean, force bool) {
 		return
 	}
 	if b == nil || m.bean == nil || b.ID != m.bean.ID {
-		m.relCursor, m.bodyOffset, m.checkCursor = 0, 0, 0
+		m.relCursor, m.bodyOffset, m.checkCursor, m.paneOffset = 0, 0, 0, 0
 	}
 	m.bean = b
 	m.links = nil
@@ -330,11 +338,13 @@ func (m *detailModel) prepare() {
 	}
 	m.relCursor = max(0, min(m.relCursor, len(m.links)-1))
 	l := m.layout()
+	checkScroll := m.checkScroll
 	if m.checkScroll {
 		m.checkScroll = false
 		m.scrollToCheckbox(l.bodyRows)
 	}
 	m.bodyOffset = max(0, min(m.bodyOffset, len(m.body)-l.bodyRows))
+	m.syncPaneOffset(l, checkScroll)
 }
 
 // detailLayout is the vertical arrangement of the detail boxes.
@@ -348,6 +358,9 @@ type detailLayout struct {
 	// compactMeta shows status, type and priority in one box (very short
 	// terminals).
 	compactMeta bool
+	// scroll is set when the boxes do not fit even when shrunk: then all
+	// of them are shown in full and the whole pane scrolls.
+	scroll bool
 }
 
 // boxesPerRow returns how many small field boxes fit side by side.
@@ -404,6 +417,9 @@ func (m detailModel) layout() detailLayout {
 	if need() > m.height && l.metaRows > 1 {
 		l.metaRows, l.compactMeta = 1, true
 	}
+	if need() > m.height {
+		return m.scrollLayout()
+	}
 	room := m.height - need() + 1
 	if l.history && len(m.body) > room {
 		// The body matters more than the history.
@@ -445,8 +461,10 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 	}
 	b := m.bean
 	l := m.layout()
-	scroll := func(delta int) {
-		m.bodyOffset = max(0, min(m.bodyOffset+delta, len(m.body)-l.bodyRows))
+	scroll := func(delta int) { m.scrollBy(delta) }
+	page := max(l.bodyRows-1, 1)
+	if l.scroll {
+		page = max(m.height-1, 1)
 	}
 	if handled, cmd := m.handleCheckboxKey(key.String()); handled {
 		return m, cmd
@@ -465,13 +483,13 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 			scroll(1)
 		}
 	case "pgup", "ctrl+u", "ctrl+b":
-		scroll(-max(l.bodyRows-1, 1))
+		scroll(-page)
 	case "pgdown", "ctrl+d", "ctrl+f", " ":
-		scroll(max(l.bodyRows-1, 1))
+		scroll(page)
 	case "home":
-		scroll(-len(m.body))
+		m.scrollHome()
 	case "end", "G":
-		scroll(len(m.body))
+		m.scrollEnd()
 	case "p":
 		return m, func() tea.Msg {
 			return openParentPickerMsg{beanIDs: []string{b.ID}, beanTitle: b.Title, beanTypes: []string{b.Type}, currentParent: b.Parent}
@@ -505,9 +523,9 @@ func (m detailModel) hints() []keyHint {
 	var hints []keyHint
 	hints = append(hints, keyHint{"esc", "back"})
 	if m.section == sectionRelations {
-		hints = append(hints, keyHint{"enter", "open"}, keyHint{"↑↓", "move"})
+		hints = append(hints, keyHint{"enter", "open"}, keyHint{glyphs().KeyUpDown, "move"})
 	} else {
-		hints = append(hints, keyHint{"↑↓", "scroll"})
+		hints = append(hints, keyHint{glyphs().KeyUpDown, "scroll"})
 		if len(m.checks) > 0 {
 			hints = append(hints, keyHint{"[ ]", "checkbox"}, keyHint{"x", "toggle"})
 		}
@@ -566,12 +584,12 @@ func (m detailModel) relationLines(width int) []string {
 		cursor := "  "
 		titleStyle := lipgloss.NewStyle()
 		if selected {
-			cursor = accentStyle().Render("▌ ")
+			cursor = accentStyle().Render(glyphs().Cursor + " ")
 			titleStyle = accentStyle().Bold(true)
 		}
 		ref := m.beanLine(l.bean, titleStyle)
 		if l.linkType == "implicit" {
-			ref = mutedStyle().Render(l.bean.Status+" ·") + " " + ref
+			ref = mutedStyle().Render(l.bean.Status+" "+glyphs().Sep) + " " + ref
 		}
 		line := cursor + mutedStyle().Render(fmt.Sprintf("%-*s", labelW, shown)) + "  " + ref
 		lines[i] = truncateText(line, width)
@@ -614,6 +632,9 @@ func (m detailModel) viewLines() []string {
 	} else {
 		lines = m.renderBoxes(w)
 	}
+	if m.bean != nil && m.layout().scroll {
+		lines = lines[min(m.paneOffset, len(lines)):]
+	}
 	if len(lines) > h {
 		lines = lines[:h]
 	}
@@ -633,11 +654,11 @@ func (m detailModel) renderBoxes(w int) []string {
 	none := mutedStyle().Render("(none)")
 
 	var out []string
-	out = append(out, box{label: "Title · " + b.ID, topRight: workspaceBadge(m.resolver.Core, m.ws, b.ID, ""), hotkey: "e", lines: l.titleLines, width: w, padding: 1}.render()...)
+	out = append(out, box{label: "Title" + glyphs().sep() + b.ID, topRight: workspaceBadge(m.resolver.Core, m.ws, b.ID, ""), hotkey: "e", lines: l.titleLines, width: w, padding: 1}.render()...)
 
 	status := fg(colNamed(colors.StatusColor)).Bold(!colors.IsArchive).Render(b.Status)
 	if implicit, _ := m.resolver.Core.ImplicitStatus(b.ID); implicit != "" {
-		status += mutedStyle().Render(" ↑" + implicit)
+		status += mutedStyle().Render(" " + glyphs().Implicit + implicit)
 	}
 	typ := fg(colNamed(colors.TypeColor)).Render(b.Type)
 	if b.Type == "" {
@@ -648,8 +669,8 @@ func (m detailModel) renderBoxes(w int) []string {
 		prio = fg(colNamed(colors.PriorityColor)).Bold(b.Priority == "critical" || b.Priority == "high").Render(b.Priority)
 	}
 	if l.compactMeta {
-		sep := mutedStyle().Render(" · ")
-		out = append(out, fieldBox("Status · Type · Priority", "s t P", status+sep+typ+sep+prio, w)...)
+		sep := mutedStyle().Render(glyphs().sep())
+		out = append(out, fieldBox(strings.Join([]string{"Status", "Type", "Priority"}, glyphs().sep()), "s t P", status+sep+typ+sep+prio, w)...)
 	} else {
 		out = append(out, boxGrid(w, []func(int) []string{
 			func(bw int) []string { return fieldBox("Status", "s", status, bw) },
@@ -685,7 +706,7 @@ func (m detailModel) renderBoxes(w int) []string {
 	bodyLabel := "Body"
 	if len(m.body) > l.bodyRows {
 		end := min(m.bodyOffset+l.bodyRows, len(m.body))
-		bodyLabel = fmt.Sprintf("Body · %d–%d/%d", m.bodyOffset+1, end, len(m.body))
+		bodyLabel = fmt.Sprintf("Body%s%d%s%d/%d", glyphs().sep(), m.bodyOffset+1, glyphs().Range, end, len(m.body))
 	}
 	bodyLines := m.body[min(m.bodyOffset, len(m.body)):]
 	out = append(out, box{
@@ -706,7 +727,7 @@ func (m detailModel) renderBoxes(w int) []string {
 	}
 	relLabel := "Relations"
 	if len(rel) > l.relRows {
-		relLabel = fmt.Sprintf("Relations · %d/%d", m.relCursor+1, len(m.links))
+		relLabel = fmt.Sprintf("Relations%s%d/%d", glyphs().sep(), m.relCursor+1, len(m.links))
 	}
 	out = append(out, box{
 		label:   relLabel,
@@ -722,7 +743,7 @@ func (m detailModel) renderBoxes(w int) []string {
 		row := func(label, value string) string {
 			return mutedStyle().Render(fmt.Sprintf("%-9s", label)) + value
 		}
-		created, updated := "–", "–"
+		created, updated := glyphs().Range, glyphs().Range
 		if b.CreatedAt != nil {
 			created = b.CreatedAt.Local().Format("2006-01-02 15:04")
 		}

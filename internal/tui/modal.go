@@ -51,7 +51,7 @@ func renderPickerModal(cfg pickerModalConfig) string {
 
 	// Border style
 	border := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
+		Border(glyphs().border()).
 		BorderForeground(ui.ColorPrimary).
 		Padding(0, 1).
 		Width(modalWidth)

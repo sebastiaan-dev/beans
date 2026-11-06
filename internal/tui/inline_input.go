@@ -243,7 +243,7 @@ func (m listModel) inlineCreateLine(width int) string {
 		}
 	}
 	colors := m.config.GetBeanColors(m.config.GetDefaultStatus(), in.beanType, "")
-	prefix := accentStyle().Render("▌") + strings.Repeat("  ", depth) +
+	prefix := accentStyle().Render(glyphs().Cursor) + strings.Repeat("  ", depth) +
 		accentStyle().Render("+ ") +
 		fg(colNamed(colors.StatusColor)).Render(glyph(m.config.GetDefaultStatus(), ui.ShortStatus)) + " " +
 		fg(colNamed(colors.TypeColor)).Render(glyph(in.beanType, ui.ShortType)) + " "

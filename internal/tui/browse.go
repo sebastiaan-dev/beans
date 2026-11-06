@@ -22,19 +22,24 @@ import (
 //	│ enter details · e edit · …                    │  footer (1-2 lines)
 //	╰──────────────────────────────────────────────╯
 //
-// On narrow terminals the detail pane replaces the tree while it has focus.
+// On narrow or short terminals only the tree is shown; the detail pane
+// replaces it while it has focus (enter). Detail boxes that do not fit make
+// the detail pane scroll as a whole (detail_scroll.go). Below
+// minAppWidth x minAppHeight only a "terminal too small" message is shown.
 
 const (
-	// wideMinWidth is the minimum terminal width for side-by-side panes.
-	wideMinWidth = 100
+	// wideMinWidth and wideMinHeight are the minimum terminal size for
+	// side-by-side panes.
+	wideMinWidth  = 100
+	wideMinHeight = 16
 	// filterBarMinHeight is the minimum terminal height showing the full
 	// filter bar; shorter terminals show it as a single line.
 	filterBarMinHeight = 28
 	// twoLineFooterMinHeight is the minimum terminal height for a two-line footer.
 	twoLineFooterMinHeight = 20
 	// Below this size only a hint to enlarge the terminal is shown.
-	minAppWidth  = 30
-	minAppHeight = 10
+	minAppWidth  = 40
+	minAppHeight = 12
 )
 
 // focusArea is the pane that receives keys in the browse view.
@@ -59,7 +64,7 @@ type browseLayout struct {
 
 func (a *App) layout() browseLayout {
 	l := browseLayout{inner: max(a.width-4, 1)}
-	l.wide = a.width >= wideMinWidth
+	l.wide = a.width >= wideMinWidth && a.height >= wideMinHeight
 	l.showBar = a.height >= filterBarMinHeight
 	l.footer = a.footerLines(l.inner, l.wide)
 	fixed := 2 + 1 + 1 + 1 + len(l.footer) // frame, header, two rules, footer
@@ -148,7 +153,7 @@ func (h keyHint) render() string {
 }
 
 // footerHintSeparator separates hints in a footer.
-const footerHintSeparator = " · "
+func footerHintSeparator() string { return glyphs().sep() }
 
 // fitHintLines lays out hints on lines of the given widths (one entry per
 // line). Hints are given in order of importance and keep their order; a hint
@@ -159,8 +164,8 @@ func fitHintLines(hints, pinned []keyHint, widths []int) []string {
 	if len(widths) == 0 {
 		return nil
 	}
-	sepW := lipgloss.Width(footerHintSeparator)
-	sep := mutedStyle().Render(footerHintSeparator)
+	sepW := lipgloss.Width(footerHintSeparator())
+	sep := mutedStyle().Render(footerHintSeparator())
 	join := func(hs []keyHint) string {
 		parts := make([]string, len(hs))
 		for i, h := range hs {
@@ -255,7 +260,7 @@ func (a *App) footerLines(width int, wide bool) []string {
 
 	prefix := ""
 	if n := len(a.list.selectedBeans); n > 0 && a.focus == focusTree {
-		prefix = fg(colWarning()).Bold(true).Render(pluralize(n, "bean", "beans")+" selected") + mutedStyle().Render(footerHintSeparator)
+		prefix = fg(colWarning()).Bold(true).Render(pluralize(n, "bean", "beans")+" selected") + mutedStyle().Render(footerHintSeparator())
 	}
 
 	var lines []string
@@ -291,12 +296,12 @@ func pluralize(n int, one, many string) string {
 // browseView renders the browse view at the terminal size.
 func (a *App) browseView() string {
 	if a.width < minAppWidth || a.height < minAppHeight {
-		return mutedStyle().Render("Terminal too small for beans; please enlarge it.")
+		return a.tooSmallView()
 	}
 	l := a.layout()
 	var content []string
 	content = append(content, a.headerLine(l.inner))
-	content = append(content, borderStyle().Render(strings.Repeat("─", l.inner)))
+	content = append(content, borderStyle().Render(strings.Repeat(glyphs().Horizontal, l.inner)))
 	if l.showBar {
 		content = append(content, a.filterBar(l.inner)...)
 	} else {
@@ -305,26 +310,51 @@ func (a *App) browseView() string {
 	}
 	content = append(content, a.paneLines(l)...)
 	content = a.overlayDropdown(content, len(content)-l.paneH, l.inner, !l.showBar)
-	content = append(content, borderStyle().Render(strings.Repeat("─", l.inner)))
+	content = append(content, borderStyle().Render(strings.Repeat(glyphs().Horizontal, l.inner)))
 	content = append(content, l.footer...)
 	return strings.Join(frameLines(content, a.width, a.height), "\n")
+}
+
+// tooSmallView asks to enlarge a terminal below the minimum size, centered
+// and cut to the terminal size.
+func (a *App) tooSmallView() string {
+	msg := []string{
+		fg(colWarning()).Bold(true).Render("Terminal too small"),
+		mutedStyle().Render(fmt.Sprintf("%dx%d, beans needs %dx%d", a.width, a.height, minAppWidth, minAppHeight)),
+	}
+	w, h := max(a.width, 1), max(a.height, 1)
+	if len(msg) > h {
+		msg = msg[:h]
+	}
+	lines := make([]string, h)
+	top := (h - len(msg)) / 2
+	for i := range lines {
+		if j := i - top; j >= 0 && j < len(msg) {
+			l := clampWidth(msg[j], w)
+			lines[i] = fitWidth(strings.Repeat(" ", (w-lipgloss.Width(l))/2)+l, w, lipgloss.NewStyle())
+		} else {
+			lines[i] = strings.Repeat(" ", w)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // frameLines draws the app's outer frame around content lines, padding them
 // to exactly width x height.
 func frameLines(content []string, width, height int) []string {
 	frame := borderStyle()
+	g := glyphs()
 	inner := width - 4
 	out := make([]string, 0, height)
-	out = append(out, frame.Render("╭"+strings.Repeat("─", width-2)+"╮"))
+	out = append(out, frame.Render(g.TopLeft+strings.Repeat(g.Horizontal, width-2)+g.TopRight))
 	for i := 0; i < height-2; i++ {
 		line := ""
 		if i < len(content) {
 			line = content[i]
 		}
-		out = append(out, frame.Render("│")+" "+fitWidth(line, inner, lipgloss.NewStyle())+" "+frame.Render("│"))
+		out = append(out, frame.Render(g.Vertical)+" "+fitWidth(line, inner, lipgloss.NewStyle())+" "+frame.Render(g.Vertical))
 	}
-	out = append(out, frame.Render("╰"+strings.Repeat("─", width-2)+"╯"))
+	out = append(out, frame.Render(g.BottomLeft+strings.Repeat(g.Horizontal, width-2)+g.BottomRight))
 	return out
 }
 

@@ -43,7 +43,8 @@ func truncateText(s string, w int) string {
 	if lipgloss.Width(s) <= w {
 		return s
 	}
-	return clampWidth(s, w-1) + "…"
+	ell := glyphs().Ellipsis
+	return clampWidth(s, w-lipgloss.Width(ell)) + ell
 }
 
 // box describes a bordered box with a label in its top border and optional
@@ -83,16 +84,16 @@ func (b box) render() []string {
 	}
 
 	out := make([]string, 0, len(lines)+2)
-	out = append(out, borderLine(frame, "╭", "╮", w, b.labelSegment(), b.topRight))
+	out = append(out, borderLine(frame, glyphs().TopLeft, glyphs().TopRight, w, b.labelSegment(), b.topRight))
 	pad := strings.Repeat(" ", b.padding)
 	for _, l := range lines {
-		out = append(out, frame.Render("│")+pad+fitWidth(l, inner, lipgloss.NewStyle())+pad+frame.Render("│"))
+		out = append(out, frame.Render(glyphs().Vertical)+pad+fitWidth(l, inner, lipgloss.NewStyle())+pad+frame.Render(glyphs().Vertical))
 	}
 	right := b.botRight
 	if b.hotkey != "" {
 		right = keyStyle().Render("(" + b.hotkey + ")")
 	}
-	out = append(out, borderLine(frame, "╰", "╯", w, "", right))
+	out = append(out, borderLine(frame, glyphs().BottomLeft, glyphs().BottomRight, w, "", right))
 	return out
 }
 
@@ -119,7 +120,7 @@ func borderLine(frame lipgloss.Style, left, rightCorner string, w int, label, ri
 	used := 0
 	if label != "" && interior >= 4 {
 		label = clampWidth(label, interior-3)
-		seg = frame.Render("─ ") + label + " "
+		seg = frame.Render(glyphs().Horizontal+" ") + label + " "
 		used = 3 + lipgloss.Width(label)
 	}
 	var tail string
@@ -129,11 +130,11 @@ func borderLine(frame lipgloss.Style, left, rightCorner string, w int, label, ri
 		if used+tailW+1 > interior {
 			right, tailW = "", 0
 		} else {
-			tail = " " + right + " " + frame.Render("─")
+			tail = " " + right + " " + frame.Render(glyphs().Horizontal)
 		}
 	}
 	fill := interior - used - tailW
-	return frame.Render(left) + seg + frame.Render(strings.Repeat("─", max(fill, 0))) + tail + frame.Render(rightCorner)
+	return frame.Render(left) + seg + frame.Render(strings.Repeat(glyphs().Horizontal, max(fill, 0))) + tail + frame.Render(rightCorner)
 }
 
 // joinColumns places blocks of lines side by side, separated by gap spaces.

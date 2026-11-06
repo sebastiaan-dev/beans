@@ -145,10 +145,6 @@ func toggleCheckbox(body string, idx int) (string, bool) {
 	return body[:it.state] + string(state) + body[it.state+1:], true
 }
 
-// checkboxMarkers are candidate characters marking the current checkbox in
-// the rendered body; the first one not occurring in the body is used.
-var checkboxMarkers = []string{"▶", "►", "➤", "⮞"}
-
 // markCheckbox inserts a marker after the idx-th checkbox of body, so that
 // its rendered line can be found and highlighted. It returns the marked body
 // and the marker, or "" if there is no such checkbox or no free marker.
@@ -157,7 +153,7 @@ func markCheckbox(body string, idx int) (string, string) {
 	if idx < 0 || idx >= len(items) {
 		return body, ""
 	}
-	for _, mk := range checkboxMarkers {
+	for _, mk := range glyphs().CheckboxMarkers {
 		if !strings.Contains(body, mk) {
 			at := items[idx].state + 2 // after "]"
 			return body[:at] + " " + mk + body[at:], mk

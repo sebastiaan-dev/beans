@@ -529,6 +529,12 @@ func (c *Config) toYAMLNode() *yaml.Node {
 		tuiMapping.Content = append(tuiMapping.Content, key, strNode(c.TUI.AgentCommand))
 	}
 
+	if c.TUI.ASCII {
+		key := strNode("ascii")
+		key.HeadComment = "Draw the TUI with ASCII characters only (overridden by $BEANS_TUI_ASCII)"
+		tuiMapping.Content = append(tuiMapping.Content, key, scalar("true", "!!bool"))
+	}
+
 	// Build the top-level mapping
 	topMapping := &yaml.Node{
 		Kind:        yaml.MappingNode,

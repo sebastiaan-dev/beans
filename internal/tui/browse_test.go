@@ -174,12 +174,13 @@ func checkFrame(t *testing.T, screen string, width, height int) {
 		if r := []rune(l); len(r) > 0 {
 			first, last = string(r[0]), string(r[len(r)-1])
 		}
-		want := [2]string{"│", "│"}
+		g := glyphs()
+		want := [2]string{g.Vertical, g.Vertical}
 		switch i {
 		case 0:
-			want = [2]string{"╭", "╮"}
+			want = [2]string{g.TopLeft, g.TopRight}
 		case len(lines) - 1:
-			want = [2]string{"╰", "╯"}
+			want = [2]string{g.BottomLeft, g.BottomRight}
 		}
 		if first != want[0] || last != want[1] {
 			t.Errorf("line %d: frame broken (%q…%q): %q", i, first, last, l)
@@ -241,7 +242,7 @@ func TestBrowseFramesAtManySizes(t *testing.T) {
 		"search": {"/", "x"},
 	}
 	for name, keys := range states {
-		for _, size := range [][2]int{{200, 60}, {160, 40}, {120, 35}, {100, 30}, {99, 27}, {80, 24}, {70, 24}, {50, 16}, {40, 12}, {30, 10}} {
+		for _, size := range [][2]int{{200, 60}, {160, 40}, {120, 35}, {100, 30}, {99, 27}, {80, 24}, {70, 24}, {50, 16}, {40, 12}} {
 			app := newDemoApp(t, size[0], size[1])
 			for _, k := range keys {
 				pressKey(t, app, k)
