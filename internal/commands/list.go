@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -34,6 +35,8 @@ var (
 	listParentID    string
 	listHasBlocking bool
 	listNoBlocking  bool
+	listBlockingID  string
+	listBlockedByID string
 	listIsBlocked   bool
 	listReady       bool
 	listQuiet       bool
@@ -112,56 +115,9 @@ Examples:
 			return err
 		}
 
-		// Build GraphQL filter from CLI flags
-		filter := &model.BeanFilter{
-			Status:          listStatus,
-			ExcludeStatus:   listNoStatus,
-			Type:            listType,
-			ExcludeType:     listNoType,
-			Priority:        listPriority,
-			ExcludePriority: listNoPriority,
-			Tags:            listTag,
-			ExcludeTags:     listNoTag,
-		}
-
-		// Add search filter if provided
-		if listSearch != "" {
-			filter.Search = &listSearch
-		}
-
-		// Add parent/blocks filters
-		if listHasParent {
-			filter.HasParent = &listHasParent
-		}
-		if listNoParent {
-			filter.NoParent = &listNoParent
-		}
-		if listParentID != "" {
-			filter.ParentID = &listParentID
-		}
-		if listHasBlocking {
-			filter.HasBlocking = &listHasBlocking
-		}
-		if listNoBlocking {
-			filter.NoBlocking = &listNoBlocking
-		}
-		// --ready and --is-blocked are mutually exclusive
-		if listReady && listIsBlocked {
-			return fmt.Errorf("--ready and --is-blocked are mutually exclusive")
-		}
-
-		if listIsBlocked {
-			filter.IsBlocked = &listIsBlocked
-		}
-
-		// --ready: beans available to start (not blocked, excludes in-progress/completed/scrapped/draft,
-		// and excludes beans with implicit terminal status from a scrapped/completed ancestor)
-		if listReady {
-			isBlocked := false
-			excludeImplicitTerminal := true
-			filter.IsBlocked = &isBlocked
-			filter.ExcludeStatus = append(filter.ExcludeStatus, "in-progress", "completed", "scrapped", "draft")
-			filter.ExcludeImplicitTerminal = &excludeImplicitTerminal
+		filter, err := listFilterFromFlags()
+		if err != nil {
+			return err
 		}
 
 		// Execute query via core resolver
@@ -419,6 +375,69 @@ func applyListQuery(beans, all []*bean.Bean, query string) ([]*bean.Bean, error)
 	return filterquery.Filter(beans, q, filterquery.NewContext(all)), nil
 }
 
+// listFilterFromFlags builds the GraphQL bean filter from the list flags.
+func listFilterFromFlags() (*model.BeanFilter, error) {
+	filter := &model.BeanFilter{
+		Status:          listStatus,
+		ExcludeStatus:   listNoStatus,
+		Type:            listType,
+		ExcludeType:     listNoType,
+		Priority:        listPriority,
+		ExcludePriority: listNoPriority,
+		Tags:            listTag,
+		ExcludeTags:     listNoTag,
+	}
+
+	// Add search filter if provided
+	if listSearch != "" {
+		filter.Search = &listSearch
+	}
+
+	// Add parent/blocks filters
+	if listHasParent {
+		filter.HasParent = &listHasParent
+	}
+	if listNoParent {
+		filter.NoParent = &listNoParent
+	}
+	if listParentID != "" {
+		filter.ParentID = &listParentID
+	}
+	if listHasBlocking {
+		filter.HasBlocking = &listHasBlocking
+	}
+	if listNoBlocking {
+		filter.NoBlocking = &listNoBlocking
+	}
+	if listBlockingID != "" {
+		filter.BlockingID = &listBlockingID
+	}
+	if listBlockedByID != "" {
+		filter.BlockedByID = &listBlockedByID
+	}
+	// --ready and --is-blocked are mutually exclusive
+	if listReady && listIsBlocked {
+		return nil, fmt.Errorf("--ready and --is-blocked are mutually exclusive")
+	}
+
+	if listIsBlocked {
+		filter.IsBlocked = &listIsBlocked
+	}
+
+	// --ready: beans available to start (not blocked, excludes in-progress/completed/scrapped/draft,
+	// and excludes beans with implicit terminal status from a scrapped/completed ancestor)
+	if listReady {
+		isBlocked := false
+		excludeImplicitTerminal := true
+		filter.IsBlocked = &isBlocked
+		// Clip: ExcludeStatus is the --no-status flag slice, which must not be
+		// modified through append.
+		filter.ExcludeStatus = append(slices.Clip(filter.ExcludeStatus), "in-progress", "completed", "scrapped", "draft")
+		filter.ExcludeImplicitTerminal = &excludeImplicitTerminal
+	}
+	return filter, nil
+}
+
 // limitBeans returns at most limit beans from the front of the slice.
 // A limit of 0 means no limit.
 func limitBeans(beans []*bean.Bean, limit int) []*bean.Bean {
@@ -449,8 +468,10 @@ func RegisterListCmd(root *cobra.Command) {
 	listCmd.Flags().BoolVar(&listHasParent, "has-parent", false, "Filter beans with a parent")
 	listCmd.Flags().BoolVar(&listNoParent, "no-parent", false, "Filter beans without a parent")
 	listCmd.Flags().StringVar(&listParentID, "parent", "", "Filter by parent ID")
-	listCmd.Flags().BoolVar(&listHasBlocking, "has-blocking", false, "Filter beans that are blocking others")
-	listCmd.Flags().BoolVar(&listNoBlocking, "no-blocking", false, "Filter beans that aren't blocking others")
+	listCmd.Flags().BoolVar(&listHasBlocking, "has-blocking", false, "Filter beans that are blocking others (via their blocking or the others' blocked_by field)")
+	listCmd.Flags().BoolVar(&listNoBlocking, "no-blocking", false, "Filter beans that aren't blocking others (inverse of --has-blocking)")
+	listCmd.Flags().StringVar(&listBlockingID, "blocking", "", "Filter beans that are blocking the given bean ID (either direction)")
+	listCmd.Flags().StringVar(&listBlockedByID, "blocked-by", "", "Filter beans that are blocked by the given bean ID (either direction)")
 	listCmd.Flags().BoolVar(&listIsBlocked, "is-blocked", false, "Filter beans that are blocked by others")
 	listCmd.Flags().BoolVar(&listReady, "ready", false, "Filter beans available to start (not blocked, excludes in-progress/completed/scrapped/draft)")
 	listCmd.Flags().BoolVarP(&listQuiet, "quiet", "q", false, "Only output IDs (one per line)")

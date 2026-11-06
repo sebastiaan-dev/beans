@@ -219,7 +219,7 @@ func setTimestampsForTest(core *Core, id string, createdAt, updatedAt *time.Time
 	defer core.mu.Unlock()
 	b := core.beans[id].Clone()
 	b.CreatedAt, b.UpdatedAt = createdAt, updatedAt
-	core.beans[id] = b
+	core.setBeanLocked(b)
 }
 
 func TestAuditDetails(t *testing.T) {

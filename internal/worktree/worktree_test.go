@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -666,6 +667,42 @@ func TestUpdateDescription(t *testing.T) {
 	// The name should still be preserved
 	if wts[0].Name != "desc-test" {
 		t.Errorf("Name = %q, want %q", wts[0].Name, "desc-test")
+	}
+}
+
+// TestGet checks that Get returns one workspace like ListBasic does.
+func TestGet(t *testing.T) {
+	repoDir, _, wtRoot := initTestRepo(t)
+	mgr := NewManager(repoDir, wtRoot, "", "")
+	for _, name := range []string{"get-a", "get-b"} {
+		if _, err := mgr.Create(name); err != nil {
+			t.Fatalf("Create(%s): %v", name, err)
+		}
+	}
+	if err := mgr.UpdateDescription("get-b", "second"); err != nil {
+		t.Fatal(err)
+	}
+
+	listed, err := mgr.ListBasic()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range listed {
+		got, err := mgr.Get(want.ID)
+		if err != nil {
+			t.Fatalf("Get(%s): %v", want.ID, err)
+		}
+		if got == nil || !reflect.DeepEqual(*got, want) {
+			t.Errorf("Get(%s) = %+v, want %+v", want.ID, got, want)
+		}
+	}
+	if got, _ := mgr.Get("get-b"); got == nil || got.Description != "second" || got.BeanIDs != nil {
+		t.Errorf("Get(get-b) = %+v, want description and no bean IDs", got)
+	}
+
+	got, err := mgr.Get("missing")
+	if err != nil || got != nil {
+		t.Errorf("Get(missing) = %+v, %v; want nil, nil", got, err)
 	}
 }
 

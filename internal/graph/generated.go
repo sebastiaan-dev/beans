@@ -223,6 +223,7 @@ type ComplexityRoot struct {
 		MainBranch            func(childComplexity int) int
 		ProjectName           func(childComplexity int) int
 		WorkspacePort         func(childComplexity int, workspaceID string) int
+		Worktree              func(childComplexity int, id string) int
 		WorktreeBackend       func(childComplexity int) int
 		WorktreeBaseRef       func(childComplexity int) int
 		WorktreeIntegrateMode func(childComplexity int) int
@@ -314,6 +315,7 @@ type QueryResolver interface {
 	Bean(ctx context.Context, id string) (*bean.Bean, error)
 	Beans(ctx context.Context, filter *model.BeanFilter) ([]*bean.Bean, error)
 	Worktrees(ctx context.Context) ([]*model.Worktree, error)
+	Worktree(ctx context.Context, id string) (*model.Worktree, error)
 	AgentSession(ctx context.Context, beanID string) (*model.AgentSession, error)
 	FileChanges(ctx context.Context, path *string) ([]*model.FileChange, error)
 	AllFileChanges(ctx context.Context, path *string) ([]*model.FileChange, error)
@@ -343,6 +345,7 @@ type SubscriptionResolver interface {
 	WorkspaceStatuses(ctx context.Context) (<-chan []*model.WorkspaceStatus, error)
 }
 type WorktreeResolver interface {
+	Beans(ctx context.Context, obj *model.Worktree) ([]*bean.Bean, error)
 	HasChanges(ctx context.Context, obj *model.Worktree) (bool, error)
 	HasUnmergedCommits(ctx context.Context, obj *model.Worktree) (bool, error)
 	CommitsBehind(ctx context.Context, obj *model.Worktree) (int, error)
@@ -1338,6 +1341,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Query.WorkspacePort(childComplexity, args["workspaceId"].(string)), true
+	case "Query.worktree":
+		if e.complexity.Query.Worktree == nil {
+			break
+		}
+
+		args, err := ec.field_Query_worktree_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.complexity.Query.Worktree(childComplexity, args["id"].(string)), true
 	case "Query.worktreeBackend":
 		if e.complexity.Query.WorktreeBackend == nil {
 			break
@@ -2303,6 +2317,17 @@ func (ec *executionContext) field_Query_workspacePort_args(ctx context.Context, 
 		return nil, err
 	}
 	args["workspaceId"] = arg0
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_worktree_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "id", ec.unmarshalNID2string)
+	if err != nil {
+		return nil, err
+	}
+	args["id"] = arg0
 	return args, nil
 }
 
@@ -6800,6 +6825,75 @@ func (ec *executionContext) fieldContext_Query_worktrees(_ context.Context, fiel
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_worktree(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_worktree,
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.resolvers.Query().Worktree(ctx, fc.Args["id"].(string))
+		},
+		nil,
+		ec.marshalOWorktree2ᚖgithubᚗcomᚋhmansᚋbeansᚋpkgᚋbeangraphᚋmodelᚐWorktree,
+		true,
+		false,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_worktree(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "id":
+				return ec.fieldContext_Worktree_id(ctx, field)
+			case "name":
+				return ec.fieldContext_Worktree_name(ctx, field)
+			case "description":
+				return ec.fieldContext_Worktree_description(ctx, field)
+			case "branch":
+				return ec.fieldContext_Worktree_branch(ctx, field)
+			case "path":
+				return ec.fieldContext_Worktree_path(ctx, field)
+			case "beans":
+				return ec.fieldContext_Worktree_beans(ctx, field)
+			case "hasChanges":
+				return ec.fieldContext_Worktree_hasChanges(ctx, field)
+			case "hasUnmergedCommits":
+				return ec.fieldContext_Worktree_hasUnmergedCommits(ctx, field)
+			case "commitsBehind":
+				return ec.fieldContext_Worktree_commitsBehind(ctx, field)
+			case "hasConflicts":
+				return ec.fieldContext_Worktree_hasConflicts(ctx, field)
+			case "setupStatus":
+				return ec.fieldContext_Worktree_setupStatus(ctx, field)
+			case "setupError":
+				return ec.fieldContext_Worktree_setupError(ctx, field)
+			case "pullRequest":
+				return ec.fieldContext_Worktree_pullRequest(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type Worktree", field.Name)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_worktree_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query_agentSession(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -8286,7 +8380,7 @@ func (ec *executionContext) _Worktree_beans(ctx context.Context, field graphql.C
 		field,
 		ec.fieldContext_Worktree_beans,
 		func(ctx context.Context) (any, error) {
-			return obj.Beans, nil
+			return ec.resolvers.Worktree().Beans(ctx, obj)
 		},
 		nil,
 		ec.marshalNBean2ᚕᚖgithubᚗcomᚋhmansᚋbeansᚋpkgᚋbeanᚐBeanᚄ,
@@ -8299,8 +8393,8 @@ func (ec *executionContext) fieldContext_Worktree_beans(_ context.Context, field
 	fc = &graphql.FieldContext{
 		Object:     "Worktree",
 		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
+		IsMethod:   true,
+		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			switch field.Name {
 			case "id":
@@ -12150,6 +12244,25 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "worktree":
+			field := field
+
+			innerFunc := func(ctx context.Context, _ *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_worktree(ctx, field)
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "agentSession":
 			field := field
 
@@ -12780,10 +12893,41 @@ func (ec *executionContext) _Worktree(ctx context.Context, sel ast.SelectionSet,
 				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "beans":
-			out.Values[i] = ec._Worktree_beans(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				atomic.AddUint32(&out.Invalids, 1)
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Worktree_beans(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
 			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		case "hasChanges":
 			field := field
 
@@ -14765,6 +14909,13 @@ func (ec *executionContext) marshalOString2ᚖstring(ctx context.Context, sel as
 	_ = ctx
 	res := graphql.MarshalString(*v)
 	return res
+}
+
+func (ec *executionContext) marshalOWorktree2ᚖgithubᚗcomᚋhmansᚋbeansᚋpkgᚋbeangraphᚋmodelᚐWorktree(ctx context.Context, sel ast.SelectionSet, v *model.Worktree) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._Worktree(ctx, sel, v)
 }
 
 func (ec *executionContext) unmarshalOWorktreeSetupStatus2ᚖgithubᚗcomᚋhmansᚋbeansᚋpkgᚋbeangraphᚋmodelᚐWorktreeSetupStatus(ctx context.Context, v any) (*model.WorktreeSetupStatus, error) {

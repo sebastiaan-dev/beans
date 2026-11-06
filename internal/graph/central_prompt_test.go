@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/vektah/gqlparser/v2"
+	"github.com/vektah/gqlparser/v2/validator/rules"
 )
 
 // TestCentralAgentPromptOperationsMatchSchema guards against the prompt
@@ -13,7 +14,7 @@ import (
 func TestCentralAgentPromptOperationsMatchSchema(t *testing.T) {
 	schema := NewExecutableSchema(Config{Resolvers: &Resolver{}}).Schema()
 	for _, op := range []string{centralCreateWorktreeOp, centralStartAgentOp} {
-		if _, errs := gqlparser.LoadQuery(schema, op); len(errs) > 0 {
+		if _, errs := gqlparser.LoadQueryWithRules(schema, op, rules.NewDefaultRules()); len(errs) > 0 {
 			t.Errorf("operation %q is invalid: %v", op, errs)
 		}
 	}

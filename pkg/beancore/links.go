@@ -2,6 +2,7 @@ package beancore
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/hmans/beans/pkg/bean"
@@ -49,38 +50,21 @@ func (r *LinkCheckResult) TotalIssues() int {
 	return len(r.BrokenLinks) + len(r.SelfLinks) + len(r.Cycles)
 }
 
-// FindIncomingLinks returns all beans that link TO the given bean ID. The
+// FindIncomingLinks returns all beans that link TO the given bean ID, ordered
+// by link type (parent, blocking, blocked_by) and then by bean ID. A bean
+// listing the target several times in one field is reported once for it. The
 // beans are shared, read-only snapshots (see the package documentation).
+//
+// The lookup uses Core's link index, so it costs O(links to the bean), not a
+// scan of all beans.
 func (c *Core) FindIncomingLinks(targetID string) []IncomingLink {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	var result []IncomingLink
-	for _, b := range c.beans {
-		// Check parent link
-		if b.Parent == targetID {
-			result = append(result, IncomingLink{
-				FromBean: b,
-				LinkType: "parent",
-			})
-		}
-		// Check blocking links
-		for _, blocked := range b.Blocking {
-			if blocked == targetID {
-				result = append(result, IncomingLink{
-					FromBean: b,
-					LinkType: "blocking",
-				})
-			}
-		}
-		// Check blocked_by links (inverse: if A has blocked_by B, then B links to A)
-		for _, blocker := range b.BlockedBy {
-			if blocker == targetID {
-				result = append(result, IncomingLink{
-					FromBean: b,
-					LinkType: "blocked_by",
-				})
-			}
+	for kind := range numLinkKinds {
+		for _, from := range c.incomingLocked(kind, targetID) {
+			result = append(result, IncomingLink{FromBean: from, LinkType: linkKindNames[kind]})
 		}
 	}
 	return result
@@ -281,9 +265,23 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	// Collect the linking beans first: storing a repaired bean changes the
+	// index.
+	sources := make(map[string]bool)
+	for kind := range numLinkKinds {
+		for _, id := range c.links.sources(kind, targetID) {
+			sources[id] = true
+		}
+	}
+	ids := make([]string, 0, len(sources))
+	for id := range sources {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
 	removed := 0
-	for _, b := range c.beans {
-		nb := b.Clone()
+	for _, id := range ids {
+		nb := c.beans[id].Clone()
 		n := 0
 
 		// Remove parent link
@@ -525,12 +523,10 @@ func (c *Core) findActiveBlockersLocked(beanID string, seen map[string]bool) []*
 	}
 
 	// Check incoming blocking links (other beans that have this bean in their Blocking list)
-	for _, other := range c.beans {
-		for _, blocked := range other.Blocking {
-			if blocked == beanID && !isResolvedStatus(other.Status) && !seen[other.ID] {
-				seen[other.ID] = true
-				blockers = append(blockers, other)
-			}
+	for _, other := range c.incomingLocked(linkBlocking, beanID) {
+		if !isResolvedStatus(other.Status) && !seen[other.ID] {
+			seen[other.ID] = true
+			blockers = append(blockers, other)
 		}
 	}
 

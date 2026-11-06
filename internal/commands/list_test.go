@@ -468,3 +468,59 @@ func TestQueryReadyMatchesReadyFlag(t *testing.T) {
 		t.Errorf("--ready = %v, want %v", set(flagged), want)
 	}
 }
+
+// TestListBlockingFlags checks that --has-blocking, --no-blocking, --blocking
+// and --blocked-by follow the symmetric blocking relation (repos-hi8j): a
+// blocker recorded in the dependent's blocked_by field counts too.
+func TestListBlockingFlags(t *testing.T) {
+	testCore, cleanup := setupQueryTestCore(t)
+	defer cleanup()
+	for _, b := range []*bean.Bean{
+		{ID: "l-fwd", Title: "Forward", Status: "todo", Type: "task", Blocking: []string{"l-a"}},
+		{ID: "l-a", Title: "A", Status: "todo", Type: "task"},
+		{ID: "l-rev", Title: "Reverse", Status: "todo", Type: "task"},
+		{ID: "l-b", Title: "B", Status: "todo", Type: "task", BlockedBy: []string{"l-rev"}},
+	} {
+		if err := testCore.Create(b); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tests := []struct {
+		name string
+		set  func()
+		want []string
+	}{
+		{"--has-blocking", func() { listHasBlocking = true }, []string{"l-fwd", "l-rev"}},
+		{"--no-blocking", func() { listNoBlocking = true }, []string{"l-a", "l-b"}},
+		{"--blocking l-b", func() { listBlockingID = "l-b" }, []string{"l-rev"}},
+		{"--blocking l-a", func() { listBlockingID = "l-a" }, []string{"l-fwd"}},
+		{"--blocked-by l-fwd", func() { listBlockedByID = "l-fwd" }, []string{"l-a"}},
+		{"--blocked-by l-rev", func() { listBlockedByID = "l-rev" }, []string{"l-b"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(func() {
+				listHasBlocking, listNoBlocking, listBlockingID, listBlockedByID = false, false, "", ""
+			})
+			tt.set()
+			filter, err := listFilterFromFlags()
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolver := &beangraph.CoreResolver{Core: testCore}
+			got, err := resolver.Beans(context.Background(), filter)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var ids []string
+			for _, b := range got {
+				ids = append(ids, b.ID)
+			}
+			sort.Strings(ids)
+			if !reflect.DeepEqual(ids, tt.want) {
+				t.Errorf("got %v, want %v", ids, tt.want)
+			}
+		})
+	}
+}

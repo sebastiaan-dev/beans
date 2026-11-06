@@ -175,9 +175,9 @@ type BeanFilter struct {
 	HasParent *bool `json:"hasParent,omitempty"`
 	// Include only beans with this specific parent ID
 	ParentID *string `json:"parentId,omitempty"`
-	// Include only beans that are blocking other beans
+	// Include only beans that are blocking other beans (non-empty blocking field, either direction, regardless of the blocked beans' status)
 	HasBlocking *bool `json:"hasBlocking,omitempty"`
-	// Include only beans that are blocking this specific bean ID
+	// Include only beans that are blocking this bean ID (it is in their blocking field, either direction)
 	BlockingID *string `json:"blockingId,omitempty"`
 	// Include beans that are blocked — explicitly (direct blockers) or implicitly (ancestor is blocked)
 	IsBlocked *bool `json:"isBlocked,omitempty"`
@@ -185,15 +185,15 @@ type BeanFilter struct {
 	IsExplicitlyBlocked *bool `json:"isExplicitlyBlocked,omitempty"`
 	// Filter beans that are implicitly blocked (an ancestor in the parent chain is blocked)
 	IsImplicitlyBlocked *bool `json:"isImplicitlyBlocked,omitempty"`
-	// Include only beans that have explicit blocked-by entries
+	// Include only beans that are blocked by other beans (non-empty blockedBy field, either direction, regardless of the blockers' status)
 	HasBlockedBy *bool `json:"hasBlockedBy,omitempty"`
-	// Include only beans blocked by this specific bean ID (via blocked_by field)
+	// Include only beans blocked by this bean ID (it is in their blockedBy field, either direction)
 	BlockedByID *string `json:"blockedById,omitempty"`
 	// Exclude beans that have a parent
 	NoParent *bool `json:"noParent,omitempty"`
-	// Exclude beans that are blocking other beans
+	// Exclude beans that are blocking other beans (inverse of hasBlocking)
 	NoBlocking *bool `json:"noBlocking,omitempty"`
-	// Exclude beans that have explicit blocked-by entries
+	// Exclude beans that are blocked by other beans (inverse of hasBlockedBy)
 	NoBlockedBy *bool `json:"noBlockedBy,omitempty"`
 	// Exclude beans that inherit a terminal status (scrapped or completed) from an ancestor
 	ExcludeImplicitTerminal *bool `json:"excludeImplicitTerminal,omitempty"`

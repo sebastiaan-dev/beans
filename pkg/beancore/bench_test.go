@@ -81,3 +81,30 @@ func BenchmarkMutate(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkRelationsAll measures resolving every bean's relations (incoming
+// links and blockers), as a list query selecting children/blocking/blockedBy
+// and isBlocked does.
+func BenchmarkRelationsAll(b *testing.B) {
+	core := benchCore(b)
+	all := core.All()
+	b.ReportAllocs()
+	for b.Loop() {
+		for _, bn := range all {
+			_ = core.FindIncomingLinks(bn.ID)
+			_ = core.IsBlocked(bn.ID)
+		}
+	}
+}
+
+// BenchmarkLoad measures loading the store from disk (including building
+// the link index).
+func BenchmarkLoad(b *testing.B) {
+	core := benchCore(b)
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := core.Load(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

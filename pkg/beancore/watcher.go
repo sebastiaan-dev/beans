@@ -292,7 +292,7 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 						continue
 					}
 
-					delete(c.beans, id)
+					c.deleteBeanLocked(id)
 
 					// Update search index
 					if c.searchIndex != nil {
@@ -338,7 +338,7 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 				continue
 			}
 
-			c.beans[newBean.ID] = newBean
+			c.setBeanLocked(newBean)
 			delete(c.dirty, newBean.ID) // Disk is now up-to-date
 
 			// Update search index

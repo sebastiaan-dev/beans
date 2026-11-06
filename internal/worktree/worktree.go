@@ -264,30 +264,54 @@ func (m *Manager) ListBasic() ([]Worktree, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	for i := range worktrees {
-		wt := &worktrees[i]
-		if meta := m.loadMetaFor(wt.ID, wt.Path); meta != nil {
-			wt.Name = meta.Name
-			wt.Description = meta.Description
-			if meta.LastActiveAt != nil {
-				wt.LastActiveAt = *meta.LastActiveAt
-			}
-		}
-		if wt.Name == "" && m.backend.Kind() == BackendWorktrunk {
-			// Worktrees adopted from worktrunk (or plain git) are named
-			// after their branch, or their directory when detached.
-			wt.Name = wt.Branch
-			if wt.Name == "" {
-				wt.Name = filepath.Base(wt.Path)
-			}
-		}
-		if st, ok := m.setupStatuses[wt.ID]; ok {
-			wt.Setup = st.status
-			wt.SetupError = st.err
-		}
+		m.fillLocked(&worktrees[i])
 	}
 	return worktrees, nil
+}
+
+// Get returns the workspace with the given ID like ListBasic does (without
+// BeanIDs, see DetectBeanIDs), or nil if there is none.
+func (m *Manager) Get(id string) (*Worktree, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	worktrees, err := m.listLocked()
+	if err != nil {
+		return nil, err
+	}
+	for i := range worktrees {
+		if worktrees[i].ID == id {
+			wt := worktrees[i]
+			m.fillLocked(&wt)
+			return &wt, nil
+		}
+	}
+	return nil, nil
+}
+
+// fillLocked sets the fields of a listed workspace that come from its
+// metadata and setup state. Must be called with m.mu held.
+func (m *Manager) fillLocked(wt *Worktree) {
+	if meta := m.loadMetaFor(wt.ID, wt.Path); meta != nil {
+		wt.Name = meta.Name
+		wt.Description = meta.Description
+		if meta.LastActiveAt != nil {
+			wt.LastActiveAt = *meta.LastActiveAt
+		}
+	}
+	if wt.Name == "" && m.backend.Kind() == BackendWorktrunk {
+		// Worktrees adopted from worktrunk (or plain git) are named
+		// after their branch, or their directory when detached.
+		wt.Name = wt.Branch
+		if wt.Name == "" {
+			wt.Name = filepath.Base(wt.Path)
+		}
+	}
+	if st, ok := m.setupStatuses[wt.ID]; ok {
+		wt.Setup = st.status
+		wt.SetupError = st.err
+	}
 }
 
 // listLocked lists the workspaces (IDs, branches and paths only) from

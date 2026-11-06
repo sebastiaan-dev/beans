@@ -5,39 +5,37 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/hmans/beans/internal/gitutil"
 	"github.com/hmans/beans/internal/worktree"
-	"github.com/hmans/beans/pkg/bean"
-	"github.com/hmans/beans/pkg/beancore"
 	"github.com/hmans/beans/pkg/beangraph/model"
 )
 
 // worktreeToModel converts an internal worktree to a GraphQL model.
-// It takes an optional beancore.Core to resolve BeanIDs into full Bean objects.
 //
-// The git status fields are not computed here: the model gets a lazy
-// worktreeGitStatus, which the Worktree field resolvers only consult when a
-// query selects those fields.
-func worktreeToModel(wt *worktree.Worktree, core *beancore.Core, baseRef string) *model.Worktree {
+// Neither the git status fields nor the beans are computed here: the model
+// gets a lazy worktreeGitStatus and, unless wt.BeanIDs is already known, a
+// lazy bean detection using detectBeanIDs (nil: no beans), which the Worktree
+// field resolvers only consult when a query selects those fields.
+func worktreeToModel(wt *worktree.Worktree, detectBeanIDs func(path string) []string, baseRef string) *model.Worktree {
 	m := &model.Worktree{
 		ID:        wt.ID,
 		Branch:    wt.Branch,
 		Path:      wt.Path,
-		Beans:     []*bean.Bean{},
 		GitStatus: newWorktreeGitStatus(wt.Path, baseRef),
+	}
+	switch {
+	case wt.BeanIDs != nil:
+		m.BeanIDs = knownBeanIDs(wt.BeanIDs)
+	case detectBeanIDs != nil:
+		path := wt.Path
+		m.BeanIDs = &lazyBeanIDs{detect: func() []string { return detectBeanIDs(path) }}
 	}
 	if wt.Name != "" {
 		m.Name = &wt.Name
 	}
 	if wt.Description != "" {
 		m.Description = &wt.Description
-	}
-	if core != nil {
-		for _, id := range wt.BeanIDs {
-			if b, err := core.Get(id); err == nil {
-				m.Beans = append(m.Beans, b)
-			}
-		}
 	}
 	// Map setup status
 	switch wt.Setup {
@@ -57,9 +55,53 @@ func worktreeToModel(wt *worktree.Worktree, core *beancore.Core, baseRef string)
 	return m
 }
 
-// gitStatusOps are the git commands behind worktree status. Tests replace
-// worktreeGitOps to count or fake them.
+// worktreeModel converts a worktree to its GraphQL model, detecting its
+// beans lazily with the worktree manager.
+func (r *Resolver) worktreeModel(wt *worktree.Worktree) *model.Worktree {
+	mgr, detect := r.WorktreeMgr, worktreeGitOps.detectBeanIDs
+	return worktreeToModel(wt, func(path string) []string { return detect(mgr, path) }, mgr.BaseRef())
+}
+
+// selectsField reports whether the selection set of the field being resolved
+// (e.g. worktrees) contains a field with the given name. Without a field
+// context (direct resolver calls) it returns true, so nothing is skipped.
+func selectsField(ctx context.Context, name string) bool {
+	if graphql.GetFieldContext(ctx) == nil || graphql.GetOperationContext(ctx) == nil {
+		return true
+	}
+	for _, f := range graphql.CollectFieldsCtx(ctx, nil) {
+		if f.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// knownBeanIDs implements model.WorktreeBeanIDs for already detected IDs.
+type knownBeanIDs []string
+
+func (ids knownBeanIDs) BeanIDs(context.Context) []string { return ids }
+
+// lazyBeanIDs implements model.WorktreeBeanIDs by detecting the bean IDs on
+// first use (holding one of the gitStatusSlots, like the git status fields).
+type lazyBeanIDs struct {
+	detect func() []string
+
+	once sync.Once
+	ids  []string
+}
+
+func (l *lazyBeanIDs) BeanIDs(context.Context) []string {
+	l.once.Do(func() {
+		withGitSlot(func() { l.ids = l.detect() })
+	})
+	return l.ids
+}
+
+// gitStatusOps are the git commands behind worktree status and bean
+// detection. Tests replace worktreeGitOps to count or fake them.
 type gitStatusOps struct {
+	detectBeanIDs  func(mgr *worktree.Manager, dir string) []string
 	hasChanges     func(dir string) bool
 	defaultBase    func(dir string) (string, bool)
 	resolveCommits func(dir string, revs ...string) ([]string, error)
@@ -68,7 +110,8 @@ type gitStatusOps struct {
 }
 
 var worktreeGitOps = gitStatusOps{
-	hasChanges: gitutil.HasChanges,
+	detectBeanIDs: (*worktree.Manager).DetectBeanIDs,
+	hasChanges:    gitutil.HasChanges,
 	defaultBase: func(dir string) (string, bool) {
 		return gitutil.DefaultRemoteBranch(dir, "origin")
 	},

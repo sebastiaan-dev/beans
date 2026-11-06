@@ -11,9 +11,18 @@
 //   - Methods returning a single bean (Get, Mutate, LoadAndUnarchive,
 //     GetFromArchive) return a copy owned by the caller.
 //   - Methods returning many beans (All, Search, FindIncomingLinks,
-//     FindActiveBlockers, FindAllBlockers) and BeanEvent.Bean return the shared
+//     FindActiveBlockers, FindAllBlockers), the relation lookups (Parent,
+//     Children, Blocking, BlockedBy) and BeanEvent.Bean return the shared
 //     snapshots, so listing a large store doesn't copy it. Callers must treat
 //     them as read-only and Clone them before modifying.
+//
+// # Link index
+//
+// Core maintains a reverse index of the beans' links (see linkIndex), so
+// relation lookups (FindIncomingLinks, Children, Blocking, BlockedBy,
+// FindActiveBlockers, IsBlocked, ...) cost O(links of the bean) instead of a
+// scan of all beans. It is updated under the write lock whenever the stored
+// beans change (writes, Load, file and worktree watcher events).
 //   - All changes go through Core: Mutate applies a change to a copy of the
 //     current version, validating ifMatch and anything else (see Tx) under the
 //     same lock as the write; Update and Create store a copy of the given bean.
@@ -86,7 +95,8 @@ type Core struct {
 
 	// In-memory state
 	mu            sync.RWMutex
-	beans         map[string]*bean.Bean // ID -> Bean
+	beans         map[string]*bean.Bean // ID -> Bean; change only via setBeanLocked/deleteBeanLocked/resetBeansLocked
+	links         linkIndex             // reverse index of the beans' links, kept in sync with beans
 	dirty         map[string]bool       // IDs of beans modified in runtime but not yet persisted to disk
 	worktreeLinks map[string]string     // bean ID -> worktree path (beans linked to a worktree)
 
@@ -115,6 +125,7 @@ func New(root string, cfg *config.Config) *Core {
 		root:          root,
 		config:        cfg,
 		beans:         make(map[string]*bean.Bean),
+		links:         newLinkIndex(),
 		dirty:         make(map[string]bool),
 		worktreeLinks: make(map[string]string),
 		subscribers:   make(map[uint64]*subscription),
@@ -175,7 +186,7 @@ func (c *Core) loadFromDisk() error {
 	c.migrateLegacyDirs()
 
 	// Clear existing beans and dirty state
-	c.beans = make(map[string]*bean.Bean)
+	c.resetBeansLocked()
 	c.dirty = make(map[string]bool)
 
 	// Walk the .beans directory tree, loading all .md files
@@ -203,7 +214,7 @@ func (c *Core) loadFromDisk() error {
 			return fmt.Errorf("loading %s: %w", path, loadErr)
 		}
 
-		c.beans[b.ID] = b
+		c.setBeanLocked(b)
 		return nil
 	})
 	if err != nil {
@@ -573,7 +584,7 @@ func (c *Core) persistLocked(b *bean.Bean) error {
 	if err := c.saveToDisk(nb); err != nil {
 		return err
 	}
-	c.beans[nb.ID] = nb
+	c.setBeanLocked(nb)
 	return nil
 }
 
@@ -902,7 +913,7 @@ func (c *Core) storeLocked(nb *bean.Bean, wtPath string, persist bool) error {
 		c.dirty[nb.ID] = true
 	}
 
-	c.beans[nb.ID] = nb
+	c.setBeanLocked(nb)
 
 	// Update search index if active (best-effort, don't fail the write)
 	if c.searchIndex != nil {
@@ -1016,7 +1027,7 @@ func (c *Core) Delete(id string) error {
 	}
 
 	// Remove from in-memory map
-	delete(c.beans, targetID)
+	c.deleteBeanLocked(targetID)
 
 	// Update search index if active (best-effort, don't fail delete)
 	if c.searchIndex != nil {
@@ -1066,7 +1077,7 @@ func (c *Core) Archive(id string) error {
 	// Store the bean with its new path and notify subscribers
 	archived := targetBean.Clone()
 	archived.Path = newRelPath
-	c.beans[targetID] = archived
+	c.setBeanLocked(archived)
 	c.mu.Unlock()
 
 	c.fanOut([]BeanEvent{{
@@ -1085,7 +1096,7 @@ func (c *Core) Unarchive(id string) error {
 	defer c.mu.Unlock()
 
 	// Find the bean
-	targetBean, targetID, err := c.findBeanLocked(id)
+	targetBean, _, err := c.findBeanLocked(id)
 	if err != nil {
 		return err
 	}
@@ -1107,7 +1118,7 @@ func (c *Core) Unarchive(id string) error {
 	// Store the bean with its new path
 	unarchived := targetBean.Clone()
 	unarchived.Path = newRelPath
-	c.beans[targetID] = unarchived
+	c.setBeanLocked(unarchived)
 
 	return nil
 }
@@ -1199,7 +1210,7 @@ func (c *Core) LoadAndUnarchive(id string) (*bean.Bean, error) {
 	defer c.mu.Unlock()
 
 	// Find the bean (always loaded since we now include archived beans)
-	b, targetID, err := c.findBeanLocked(id)
+	b, _, err := c.findBeanLocked(id)
 	if err != nil {
 		return nil, ErrNotFound
 	}
@@ -1221,7 +1232,7 @@ func (c *Core) LoadAndUnarchive(id string) (*bean.Bean, error) {
 	// Store the bean with its new path
 	unarchived := b.Clone()
 	unarchived.Path = newRelPath
-	c.beans[targetID] = unarchived
+	c.setBeanLocked(unarchived)
 
 	return unarchived.Clone(), nil
 }
