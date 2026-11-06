@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Bean } from '$lib/beans.svelte';
 import {
+  FIELD_HELP,
+  FILTER_FIELDS,
   blockedSelection,
   clearClauses,
   compileFilter,
@@ -8,7 +10,9 @@ import {
   filterTree,
   formatFilter,
   invalidValues,
+  isArchived,
   isEmptyFilter,
+  knownValues,
   matchesText,
   parseFilter,
   removeTerm,
@@ -102,7 +106,21 @@ describe('parseFilter', () => {
       terms: [{ kind: 'clause', field: 'status', negate: false, op: '=', values: [] }]
     },
     { query: 'http://x', terms: [{ kind: 'text', value: 'http://x' }] },
-    { query: '"two words"', terms: [{ kind: 'text', value: 'two words' }] }
+    { query: '"two words"', terms: [{ kind: 'text', value: 'two words' }] },
+    { query: '""', terms: [] },
+    {
+      query: 'Ready:Yes -done:no archived:no',
+      terms: [
+        { kind: 'clause', field: 'ready', negate: false, op: '=', values: ['yes'] },
+        { kind: 'clause', field: 'done', negate: true, op: '=', values: ['no'] },
+        { kind: 'clause', field: 'archived', negate: false, op: '=', values: ['no'] }
+      ]
+    },
+    // Comparisons are only parsed for priority.
+    {
+      query: 'status:>=todo',
+      terms: [{ kind: 'clause', field: 'status', negate: false, op: '=', values: ['>=todo'] }]
+    }
   ];
   for (const { query, terms } of cases) {
     it(`parses ${JSON.stringify(query)}`, () => {
@@ -121,7 +139,8 @@ describe('formatFilter', () => {
     for (const q of [
       'status:todo,draft priority:>=high auth',
       '-tag:ui milestone:"Version 0.2" "two words"',
-      'blocked:no'
+      'blocked:no',
+      'ready:yes done:no archived:yes'
     ]) {
       expect(formatFilter(parseFilter(q))).toBe(q);
     }
@@ -134,6 +153,9 @@ describe('invalidValues', () => {
     expect(invalidValues(clause('status:todo,nope'))).toEqual(['nope']);
     expect(invalidValues(clause('priority:>=urgent'))).toEqual(['urgent']);
     expect(invalidValues(clause('blocked:maybe'))).toEqual(['maybe']);
+    expect(invalidValues(clause('ready:sometimes'))).toEqual(['sometimes']);
+    expect(invalidValues(clause('done:yes,1,n'))).toEqual([]);
+    expect(invalidValues(clause('archived:maybe'))).toEqual(['maybe']);
     expect(invalidValues(clause('tag:anything'))).toEqual([]);
   });
 });
@@ -234,6 +256,98 @@ describe('compileFilter', () => {
     const cyclic = [bean('a', { parentId: 'b' }), bean('b', { parentId: 'a' })];
     expect(run(cyclic, 'parent:a')).toEqual(['b']);
     expect(run(cyclic, 'blocked:no')).toEqual(['a', 'b']);
+    expect(run(cyclic, 'done:no ready:yes')).toEqual(['a', 'b']);
+  });
+});
+
+// Mirrors TestCompileExtensions in pkg/beangraph/filterquery: the fields the
+// TUI and CLI added to the syntax.
+describe('compileFilter ready/done/archived', () => {
+  const archived = (id: string) => ({ path: `archive/${id}.md` });
+  const beans = [
+    bean('todo'),
+    bean('draft', { status: 'draft' }),
+    bean('wip', { status: 'in-progress' }),
+    bean('done', { status: 'completed', type: 'epic' }),
+    bean('scrapped', { status: 'scrapped' }),
+    bean('child-of-done', { parentId: 'done' }),
+    bean('grandchild-of-done', { parentId: 'child-of-done' }),
+    bean('blocker', { blockingIds: ['blocked'] }),
+    bean('blocked'),
+    bean('child-of-blocked', { parentId: 'blocked' }),
+    bean('blocked-by-done', { blockedByIds: ['done'] }),
+    bean('old', { status: 'completed', ...archived('old') }),
+    bean('old-open', archived('old-open'))
+  ];
+  const cases: { query: string; want: string[] }[] = [
+    { query: 'ready:yes', want: ['todo', 'blocker', 'blocked-by-done', 'old-open'] },
+    {
+      query: 'ready:no',
+      want: [
+        'draft',
+        'wip',
+        'done',
+        'scrapped',
+        'child-of-done',
+        'grandchild-of-done',
+        'blocked',
+        'child-of-blocked',
+        'old'
+      ]
+    },
+    {
+      query: '-ready:yes archived:no',
+      want: [
+        'draft',
+        'wip',
+        'done',
+        'scrapped',
+        'child-of-done',
+        'grandchild-of-done',
+        'blocked',
+        'child-of-blocked'
+      ]
+    },
+    { query: 'done:yes', want: ['done', 'scrapped', 'child-of-done', 'grandchild-of-done', 'old'] },
+    {
+      query: 'done:no',
+      want: [
+        'todo',
+        'draft',
+        'wip',
+        'blocker',
+        'blocked',
+        'child-of-blocked',
+        'blocked-by-done',
+        'old-open'
+      ]
+    },
+    { query: 'archived:yes', want: ['old', 'old-open'] },
+    { query: 'archived:no done:no ready:yes', want: ['todo', 'blocker', 'blocked-by-done'] },
+    { query: 'archived:maybe', want: [] }
+  ];
+  for (const { query, want } of cases) {
+    it(`matches ${JSON.stringify(query)}`, () => {
+      expect(run(beans, query)).toEqual(want);
+    });
+  }
+
+  it('detects archived beans by path', () => {
+    expect(isArchived({ path: 'archive/x.md' })).toBe(true);
+    expect(isArchived({ path: 'x.md' })).toBe(false);
+    expect(isArchived({ path: 'archived-notes/x.md' })).toBe(false);
+  });
+});
+
+describe('fields', () => {
+  it('has help for every field', () => {
+    for (const f of FILTER_FIELDS) expect(FIELD_HELP[f].trim()).not.toBe('');
+  });
+
+  it('accepts yes/no for boolean fields', () => {
+    for (const f of ['blocked', 'ready', 'done', 'archived'] as const) {
+      expect(knownValues(f)).toEqual(['yes', 'no']);
+    }
   });
 });
 
@@ -279,6 +393,10 @@ describe('suggest', () => {
     expect(labels('-ty')).toEqual(['-type:']);
     expect(labels('auth p')).toEqual(['priority:', 'parent:']);
     expect(apply('foo sta')).toBe('foo status:');
+    expect(labels('re')).toEqual(['ready:']);
+    expect(labels('d')).toEqual(['done:']);
+    expect(labels('-ar')).toEqual(['-archived:']);
+    expect(labels('b')).toEqual(['blocked:']);
   });
 
   it('suggests values for the last comma part', () => {
@@ -289,6 +407,9 @@ describe('suggest', () => {
     expect(apply('priority:>=h')).toBe('priority:>=high ');
     expect(labels('tag:u')).toEqual(['ui', 'urgent']);
     expect(labels('blocked:')).toEqual(['yes', 'no']);
+    expect(labels('ready:')).toEqual(['yes', 'no']);
+    expect(labels('done:y')).toEqual(['yes']);
+    expect(apply('-archived:n')).toBe('-archived:no ');
   });
 
   it('suggests beans for parent references', () => {

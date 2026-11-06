@@ -55,7 +55,7 @@ func (d statusItemDelegate) Render(w io.Writer, m list.Model, index int, listIte
 
 	var cursor string
 	if index == m.Index() {
-		cursor = lipgloss.NewStyle().Foreground(ui.ColorPrimary).Bold(true).Render("▌") + " "
+		cursor = lipgloss.NewStyle().Foreground(ui.ColorPrimary).Bold(true).Render(glyphs().Cursor) + " "
 	} else {
 		cursor = "  "
 	}

@@ -105,7 +105,13 @@ var helpSections = []helpSection{
 
 // renderHelpSections renders sections as one column of the given width.
 func renderHelpSections(sections []helpSection, width int) []string {
-	const keyW = 10
+	g := glyphs()
+	keyW := 10
+	for _, sec := range sections {
+		for _, k := range sec.keys {
+			keyW = max(keyW, lipgloss.Width(g.localize(k[0]))+1)
+		}
+	}
 	var lines []string
 	for i, sec := range sections {
 		if i > 0 {
@@ -113,10 +119,10 @@ func renderHelpSections(sections []helpSection, width int) []string {
 		}
 		lines = append(lines, listTitleStyle().Render(sec.title))
 		for _, k := range sec.keys {
-			key := keyStyle().Width(keyW).Render(k[0])
+			key := keyStyle().Width(keyW).Render(g.localize(k[0]))
 			// Descriptions use the terminal's default foreground so they stay
 			// readable on both dark and light themes.
-			lines = append(lines, clampWidth(key+k[1], width))
+			lines = append(lines, clampWidth(key+g.localize(k[1]), width))
 		}
 	}
 	return lines
@@ -149,7 +155,7 @@ func (m helpOverlayModel) View() string {
 	content := title + "\n" + strings.Join(body, "\n") + "\n" + footer
 
 	border := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
+		Border(glyphs().border()).
 		BorderForeground(colAccent()).
 		Padding(0, 1).
 		Width(modalWidth - 2)

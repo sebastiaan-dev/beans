@@ -101,9 +101,9 @@ func wrapTokens(toks []token, width, maxLines int, space lipgloss.Style) []strin
 			end.text = clampWidth(end.text, tw-excess)
 		}
 		if len(last) > 0 {
-			last[len(last)-1].text += "…"
+			last[len(last)-1].text += glyphs().Ellipsis
 		} else {
-			last = []token{{text: "…", style: space}}
+			last = []token{{text: glyphs().Ellipsis, style: space}}
 		}
 		lines[maxLines-1] = last
 	}

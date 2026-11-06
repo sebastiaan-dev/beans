@@ -58,4 +58,25 @@ func applyListTheme(l *list.Model) {
 	l.Help.Styles.FullKey = accentStyle()
 	l.Help.Styles.FullDesc = mutedStyle()
 	l.Help.Styles.FullSeparator = mutedStyle()
+	applyListGlyphs(l)
+}
+
+// applyListGlyphs replaces the bubbles list's Unicode bullets, ellipses and
+// arrow key names when the ASCII glyph set is in use.
+func applyListGlyphs(l *list.Model) {
+	if !asciiMode() {
+		return
+	}
+	g := glyphs()
+	l.Styles.ActivePaginationDot = l.Styles.ActivePaginationDot.SetString(g.PageActive)
+	l.Styles.InactivePaginationDot = l.Styles.InactivePaginationDot.SetString(g.PageInactive)
+	l.Styles.DividerDot = l.Styles.DividerDot.SetString(g.sep())
+	l.Paginator.ActiveDot = l.Styles.ActivePaginationDot.String()
+	l.Paginator.InactiveDot = l.Styles.InactivePaginationDot.String()
+	l.Help.ShortSeparator = g.sep()
+	l.Help.Ellipsis = g.Loading
+	l.KeyMap.CursorUp.SetHelp(g.KeyUp+"/k", "up")
+	l.KeyMap.CursorDown.SetHelp(g.KeyDown+"/j", "down")
+	l.KeyMap.PrevPage.SetHelp("h/pgup", "prev page")
+	l.KeyMap.NextPage.SetHelp("l/pgdn", "next page")
 }

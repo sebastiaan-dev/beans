@@ -593,9 +593,9 @@ func (a *App) barFieldValue(f barField, q filterquery.Query) string {
 		return mutedStyle().Render("shown")
 	case barClear:
 		if q.IsEmpty() {
-			return mutedStyle().Render("✕")
+			return mutedStyle().Render(glyphs().Clear)
 		}
-		return fg(colDanger()).Render("✕")
+		return fg(colDanger()).Render(glyphs().Clear)
 	}
 
 	field := f.queryField()
@@ -636,9 +636,9 @@ func (a *App) barFieldValue(f barField, q filterquery.Query) string {
 func opSymbol(op filterquery.Op) string {
 	switch op {
 	case filterquery.OpGE:
-		return "≥"
+		return glyphs().AtLeast
 	case filterquery.OpLE:
-		return "≤"
+		return glyphs().AtMost
 	case filterquery.OpGT:
 		return ">"
 	case filterquery.OpLT:
@@ -739,8 +739,8 @@ func (a *App) barFieldX(width int, f barField) int {
 // column of each field shown.
 func (a *App) filterSummaryLine(width int) (string, map[barField]int) {
 	q := a.list.filter()
-	sep := mutedStyle().Render(" · ")
-	sepW := lipgloss.Width(" · ")
+	sep := mutedStyle().Render(glyphs().sep())
+	sepW := lipgloss.Width(glyphs().sep())
 	xs := map[barField]int{}
 	focused := a.filterBarFocused()
 
@@ -753,7 +753,7 @@ func (a *App) filterSummaryLine(width int) (string, map[barField]int) {
 		ls := mutedStyle()
 		if focused && a.bar.field == f {
 			ls = accentStyle().Bold(true).Underline(true)
-			label = "▸" + label
+			label = glyphs().ActiveField + label
 		}
 		if label == "" {
 			return value
@@ -818,8 +818,8 @@ func (a *App) filterSummaryLine(width int) (string, map[barField]int) {
 	var b strings.Builder
 	x := 0
 	if start > 0 {
-		b.WriteString(mutedStyle().Render("‹ "))
-		x += 2
+		b.WriteString(mutedStyle().Render(glyphs().ScrollLeft + " "))
+		x += lipgloss.Width(glyphs().ScrollLeft) + 1
 	}
 	for i := start; i < end; i++ {
 		if i > start {
@@ -831,7 +831,7 @@ func (a *App) filterSummaryLine(width int) (string, map[barField]int) {
 		x += ws[i]
 	}
 	if end < int(barFieldCount) {
-		b.WriteString(mutedStyle().Render(" ›"))
+		b.WriteString(mutedStyle().Render(" " + glyphs().ScrollRight))
 	}
 	return clampWidth(b.String(), width), xs
 }
@@ -871,9 +871,9 @@ func (a *App) dropdownLines(maxWidth int) []string {
 
 	var lines []string
 	if f == barTags {
-		input := accentStyle().Render("› ") + a.bar.typed + accentStyle().Render("▏")
+		input := accentStyle().Render(glyphs().Prompt+" ") + a.bar.typed + accentStyle().Render(glyphs().TextCursor)
 		if a.bar.typed == "" {
-			input = accentStyle().Render("› ") + mutedStyle().Render("type to filter")
+			input = accentStyle().Render(glyphs().Prompt+" ") + mutedStyle().Render("type to filter")
 		}
 		lines = append(lines, input)
 	}
@@ -889,12 +889,12 @@ func (a *App) dropdownLines(maxWidth int) []string {
 		o := opts[i]
 		cursor := "  "
 		if i == a.bar.cursor {
-			cursor = accentStyle().Bold(true).Render("▌ ")
+			cursor = accentStyle().Bold(true).Render(glyphs().Cursor + " ")
 		}
 		mark := mutedStyle().Render("[ ]")
 		switch {
 		case f == barArchived && o.state == optionIncluded:
-			mark = keyStyle().Render("(•)")
+			mark = keyStyle().Render("(" + glyphs().Radio + ")")
 		case f == barArchived:
 			mark = mutedStyle().Render("( )")
 		case o.state == optionIncluded:
@@ -1004,16 +1004,16 @@ func dropCells(s string, n int) string {
 func (a *App) filterBarHints() []keyHint {
 	f := a.bar.field
 	if a.bar.open {
-		hints := []keyHint{{"space", "toggle"}, {"enter", "apply"}, {"esc", "cancel"}, {"↑↓", "move"}}
+		hints := []keyHint{{"space", "toggle"}, {"enter", "apply"}, {"esc", "cancel"}, {glyphs().KeyUpDown, "move"}}
 		switch f {
 		case barArchived:
-			hints = []keyHint{{"enter", "choose"}, {"esc", "cancel"}, {"↑↓", "move"}}
+			hints = []keyHint{{"enter", "choose"}, {"esc", "cancel"}, {glyphs().KeyUpDown, "move"}}
 		case barPriority:
 			hints = append(hints, keyHint{">", "at least"}, keyHint{"<", "at most"})
 		case barTags:
 			hints = append(hints, keyHint{"type", "filter tags"})
 		}
-		return append(hints, keyHint{"←→", "field"}, keyHint{"del", "clear field"})
+		return append(hints, keyHint{glyphs().KeyLeftRight, "field"}, keyHint{"del", "clear field"})
 	}
 	action := keyHint{"enter", "open"}
 	switch {
@@ -1024,7 +1024,7 @@ func (a *App) filterBarHints() []keyHint {
 	}
 	return []keyHint{
 		action,
-		{"←→", "field"},
+		{glyphs().KeyLeftRight, "field"},
 		{"bksp", "clear field"},
 		{"esc", "tree"},
 		{"tab", "next pane"},

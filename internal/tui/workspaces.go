@@ -36,12 +36,6 @@ import (
 //
 // Outside a git repository the feature is off.
 
-// workspaceGlyph prefixes workspace names in badges.
-const workspaceGlyph = "⎇"
-
-// dirtyGlyph marks workspaces with uncommitted changes.
-const dirtyGlyph = "●"
-
 // WorkspaceStart describes a bean started in a workspace.
 type WorkspaceStart struct {
 	BeanID   string
@@ -176,9 +170,9 @@ func workspaceBadge(core *beancore.Core, ws *workspaces, id string, bg lipgloss.
 	if !ok {
 		return ""
 	}
-	badge := withBackground(accentStyle(), bg).Render(workspaceGlyph + " " + info.displayName())
+	badge := withBackground(accentStyle(), bg).Render(glyphs().Workspace + " " + info.displayName())
 	if info.dirty {
-		badge += withBackground(fg(colWarning()), bg).Render(dirtyGlyph)
+		badge += withBackground(fg(colWarning()), bg).Render(glyphs().Dirty)
 	}
 	return badge
 }
@@ -189,9 +183,9 @@ func workspaceTokens(core *beancore.Core, ws *workspaces, id string, st func(lip
 	if !ok {
 		return nil
 	}
-	toks := []token{{text: workspaceGlyph + " " + info.displayName(), style: st(accentStyle())}}
+	toks := []token{{text: glyphs().Workspace + " " + info.displayName(), style: st(accentStyle())}}
 	if info.dirty {
-		toks = append(toks, token{text: dirtyGlyph, style: st(fg(colWarning()))})
+		toks = append(toks, token{text: glyphs().Dirty, style: st(fg(colWarning()))})
 	}
 	return toks
 }
@@ -381,12 +375,12 @@ func (a *App) startWorkspace(b *bean.Bean, withAgent bool) tea.Cmd {
 
 	job := &workspaceJob{core: a.core, cfg: a.config, mgr: ws.mgr, start: ws.start, bean: b, agent: withAgent}
 	if ws.starting != "" {
-		a.list.statusMessage = fmt.Sprintf("Still starting %s in a workspace…", ws.starting)
+		a.list.statusMessage = fmt.Sprintf("Still starting %s in a workspace%s", ws.starting, glyphs().Loading)
 		return nil
 	}
 	if !withAgent && ws.mgr.Backend() != worktree.BackendWorktrunk {
 		ws.starting = b.ID
-		a.list.statusMessage = fmt.Sprintf("Starting %s in a workspace…", b.ID)
+		a.list.statusMessage = fmt.Sprintf("Starting %s in a workspace%s", b.ID, glyphs().Loading)
 		return func() tea.Msg {
 			var out strings.Builder
 			job.SetStdin(strings.NewReader(""))
@@ -442,7 +436,7 @@ func (j *workspaceJob) Run() error {
 	}
 	if j.interactive {
 		// Clear what earlier suspended commands left on the main screen.
-		fmt.Fprintf(j.stdout, "\x1b[H\x1b[2Jbeans: starting %s in its workspace…\n", j.bean.ID)
+		fmt.Fprintf(j.stdout, "\x1b[H\x1b[2Jbeans: starting %s in its workspace%s\n", j.bean.ID, glyphs().Loading)
 	}
 	tio := worktree.TerminalIO{Stdin: j.stdin, Stdout: j.stdout, Stderr: j.stderr}
 	j.res, j.err = j.start(context.Background(), j.core, j.mgr, j.bean.ID, tio)
@@ -486,7 +480,7 @@ func (j *workspaceJob) pause(err error) {
 	if !j.interactive {
 		return
 	}
-	fmt.Fprintf(j.stderr, "\nbeans: %v\n\nPress enter to return to beans…", err)
+	fmt.Fprintf(j.stderr, "\nbeans: %v\n\nPress enter to return to beans%s", err, glyphs().Loading)
 	_, _ = bufio.NewReader(j.stdin).ReadString('\n')
 }
 
@@ -506,13 +500,13 @@ func (a *App) handleWorkspaceStarted(msg workspaceStartedMsg) tea.Cmd {
 	case msg.err != nil:
 		a.list.statusMessage = fmt.Sprintf("Could not start %s in a workspace: %v", msg.beanID, msg.err)
 	case msg.agentErr != nil:
-		a.list.statusMessage = fmt.Sprintf("%s · agent: %v", startedText(msg.res), msg.agentErr)
+		a.list.statusMessage = fmt.Sprintf("%s%sagent: %v", startedText(msg.res), glyphs().sep(), msg.agentErr)
 	case msg.program != "":
-		a.list.statusMessage = fmt.Sprintf("%s · %s finished", startedText(msg.res), msg.program)
+		a.list.statusMessage = fmt.Sprintf("%s%s%s finished", startedText(msg.res), glyphs().sep(), msg.program)
 	default:
 		a.list.statusMessage = startedText(msg.res)
 		if n := len(msg.res.Warnings); n > 0 {
-			a.list.statusMessage += " · " + msg.res.Warnings[0]
+			a.list.statusMessage += glyphs().sep() + msg.res.Warnings[0]
 		}
 	}
 	return tea.Batch(a.ws.refreshCmd(a.core), a.list.loadBeans)
@@ -527,7 +521,7 @@ func startedText(res *WorkspaceStart) string {
 	if msg == "" {
 		msg = fmt.Sprintf("Started %s in %s", res.BeanID, res.Branch)
 	}
-	return msg + " · " + res.Path
+	return msg + glyphs().sep() + res.Path
 }
 
 // Workspaces overlay (g w) -----------------------------------------------------
@@ -575,12 +569,12 @@ func (a *App) updateWorkspacesOverlay(msg tea.Msg) tea.Cmd {
 		}
 		a.state = viewList
 		if len(info.beanIDs) == 0 {
-			a.list.statusMessage = fmt.Sprintf("%s %s has no changed beans · %s", workspaceGlyph, info.displayName(), info.Path)
+			a.list.statusMessage = fmt.Sprintf("%s %s has no changed beans%s%s", glyphs().Workspace, info.displayName(), glyphs().sep(), info.Path)
 			break
 		}
 		a.focusTree()
 		a.showBean(info.beanIDs[0], false)
-		a.list.statusMessage = fmt.Sprintf("%s %s · %s", workspaceGlyph, info.displayName(), info.Path)
+		a.list.statusMessage = fmt.Sprintf("%s %s%s%s", glyphs().Workspace, info.displayName(), glyphs().sep(), info.Path)
 	}
 	return nil
 }
@@ -601,7 +595,7 @@ func (a *App) workspacesOverlayView() string {
 	case a.ws.err != nil && len(a.ws.list) == 0:
 		body = append(body, fg(colDanger()).Render(truncateText(a.ws.err.Error(), inner)))
 	case len(a.ws.list) == 0 && a.ws.refreshing:
-		body = append(body, mutedStyle().Render("Loading…"))
+		body = append(body, mutedStyle().Render("Loading"+glyphs().Loading))
 	case len(a.ws.list) == 0:
 		body = append(body, mutedStyle().Render(truncateText("No workspaces. Press w on a bean to start one.", inner)))
 	}
@@ -616,11 +610,11 @@ func (a *App) workspacesOverlayView() string {
 		backend = "worktrunk"
 	}
 	title := lipgloss.NewStyle().Bold(true).Foreground(colAccent()).Render("Workspaces") +
-		mutedStyle().Render(fmt.Sprintf(" · %d · %s", len(a.ws.list), backend))
+		mutedStyle().Render(fmt.Sprintf("%s%d%s%s", glyphs().sep(), len(a.ws.list), glyphs().sep(), backend))
 	footer := renderHints([]keyHint{{"enter", "jump to bean"}, {"y", "copy path"}, {"esc", "close"}}, nil, inner)
 	content := title + "\n\n" + strings.Join(body, "\n") + "\n\n" + footer
 	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
+		Border(glyphs().border()).
 		BorderForeground(colAccent()).
 		Padding(0, 1).
 		Width(modalWidth - 2).
@@ -633,10 +627,10 @@ func (a *App) workspaceLines(info workspaceInfo, selected bool, width int) []str
 	cursor := "  "
 	nameStyle := lipgloss.NewStyle().Bold(true)
 	if selected {
-		cursor = accentStyle().Render("▌ ")
+		cursor = accentStyle().Render(glyphs().Cursor + " ")
 		nameStyle = accentStyle().Bold(true)
 	}
-	line := cursor + nameStyle.Render(workspaceGlyph+" "+info.displayName())
+	line := cursor + nameStyle.Render(glyphs().Workspace+" "+info.displayName())
 	if info.Branch != "" && info.Branch != info.displayName() {
 		line += mutedStyle().Render("  " + info.Branch)
 	} else if info.Detached {
@@ -644,13 +638,13 @@ func (a *App) workspaceLines(info workspaceInfo, selected bool, width int) []str
 	}
 	var status []string
 	if info.dirty {
-		status = append(status, fg(colWarning()).Render(dirtyGlyph+" uncommitted"))
+		status = append(status, fg(colWarning()).Render(glyphs().Dirty+" uncommitted"))
 	}
 	if info.ahead > 0 {
-		status = append(status, fmt.Sprintf("↑%d", info.ahead))
+		status = append(status, fmt.Sprintf("%s%d", glyphs().Ahead, info.ahead))
 	}
 	if info.behind > 0 {
-		status = append(status, mutedStyle().Render(fmt.Sprintf("↓%d", info.behind)))
+		status = append(status, mutedStyle().Render(fmt.Sprintf("%s%d", glyphs().Behind, info.behind)))
 	}
 	if len(status) > 0 {
 		line += "  " + strings.Join(status, " ")
@@ -678,7 +672,7 @@ func truncatePathLeft(p string, w int) string {
 	for len(r) > 0 && lipgloss.Width(string(r))+1 > w {
 		r = r[1:]
 	}
-	return "…" + string(r)
+	return glyphs().Ellipsis + string(r)
 }
 
 // Run integration ----------------------------------------------------------------

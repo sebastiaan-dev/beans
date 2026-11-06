@@ -98,7 +98,7 @@ type listModel struct {
 func newListModel(resolver *beangraph.CoreResolver, cfg *config.Config) listModel {
 	ti := textinput.New()
 	ti.Prompt = ""
-	ti.Placeholder = "text or status:todo type:bug tag:ui -priority:low …"
+	ti.Placeholder = "text or status:todo type:bug tag:ui -priority:low " + glyphs().Loading
 	// A static cursor avoids redrawing the whole view for blink ticks.
 	ti.Cursor.SetMode(cursor.CursorStatic)
 	return listModel{
@@ -239,7 +239,7 @@ func (m listModel) title() string {
 		return "Beans"
 	}
 	parts := append([]string{fmt.Sprintf("Beans %d/%d", m.shownCount, m.totalCount)}, filterSummary(q)...)
-	return strings.Join(parts, " · ")
+	return strings.Join(parts, glyphs().sep())
 }
 
 // foldsSuspended reports whether a filter is active that looks for
@@ -888,15 +888,15 @@ func (m listModel) renderRow(i, width int) []string {
 	bar := plain.Render(" ")
 	switch {
 	case selected:
-		bar = st(accentStyle()).Render("▌")
+		bar = st(accentStyle()).Render(glyphs().Cursor)
 	case marked:
-		bar = st(fg(colWarning())).Render("•")
+		bar = st(fg(colWarning())).Render(glyphs().Marked)
 	}
 	chevron := "  "
 	if r.hasChildren {
-		chevron = "▾ "
+		chevron = glyphs().FoldOpen + " "
 		if r.collapsed {
-			chevron = "▸ "
+			chevron = glyphs().FoldClosed + " "
 		}
 	}
 	id := shortID(b.ID, m.config.Beans.Prefix)
@@ -911,7 +911,7 @@ func (m listModel) renderRow(i, width int) []string {
 	}
 
 	var toks []token
-	if sym := ui.GetPrioritySymbol(b.Priority); sym != "" && !dim {
+	if sym := glyphs().prioritySymbol(b.Priority); sym != "" && !dim {
 		ps := st(fg(colNamed(colors.PriorityColor)))
 		if b.Priority == "critical" || b.Priority == "high" {
 			ps = ps.Bold(true)
@@ -923,7 +923,7 @@ func (m listModel) renderRow(i, width int) []string {
 		toks = append(toks, token{text: "(untitled)", style: muted})
 	}
 	if r.implicitStatus != "" && r.matched {
-		toks = append(toks, token{text: "↑" + r.implicitStatus, style: muted})
+		toks = append(toks, token{text: glyphs().Implicit + r.implicitStatus, style: muted})
 	}
 	toks = append(toks, workspaceTokens(m.resolver.Core, m.ws, b.ID, st)...)
 	if r.archived {
@@ -959,7 +959,7 @@ func (m listModel) viewLines() []string {
 	case m.err != nil:
 		lines = append(lines, fg(colDanger()).Render(clampWidth(fmt.Sprintf("Error: %v", m.err), w)))
 	case !m.loaded:
-		lines = append(lines, mutedStyle().Render(" Loading…"))
+		lines = append(lines, mutedStyle().Render(" Loading"+glyphs().Loading))
 	case len(m.rows) == 0 && m.creating():
 		lines = append(lines, m.inlineCreateLine(w))
 	case len(m.rows) == 0:
@@ -1005,7 +1005,7 @@ func (m listModel) searchLine(width int) string {
 		note = "  " + fg(colDanger()).Render("unknown: "+strings.Join(bad, ", "))
 	}
 	if !m.searching {
-		return fitWidth(prompt+m.search.Value()+note+mutedStyle().Render("  (/ edit · esc clear)"), width, lipgloss.NewStyle())
+		return fitWidth(prompt+m.search.Value()+note+mutedStyle().Render("  (/ edit"+glyphs().sep()+"esc clear)"), width, lipgloss.NewStyle())
 	}
 	m.search.Width = max(width-lipgloss.Width(prompt)-lipgloss.Width(note)-1, 1)
 	return fitWidth(prompt+m.search.View()+note, width, lipgloss.NewStyle())
@@ -1030,7 +1030,7 @@ func (m listModel) treeHints(wide bool) []keyHint {
 		return m.inlineHints()
 	}
 	if m.searching {
-		return []keyHint{{"enter", "apply"}, {"esc", "cancel"}, {"↑↓", "move"}}
+		return []keyHint{{"enter", "apply"}, {"esc", "cancel"}, {glyphs().KeyUpDown, "move"}}
 	}
 	hideLabel := "hide done"
 	if m.doneHidden() {
@@ -1069,7 +1069,7 @@ func (m listModel) treeHints(wide bool) []keyHint {
 		keyHint{"n", "next"},
 		keyHint{"u", "undo"},
 		keyHint{"K J", "move"},
-		keyHint{"←→", "fold"},
+		keyHint{glyphs().KeyLeftRight, "fold"},
 		keyHint{"space", "select"},
 		keyHint{"H", hideLabel},
 		keyHint{"y", "copy id"},

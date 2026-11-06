@@ -1,0 +1,30 @@
++--------------------------------------------------------------------------------------------------+
+| beans: demo                                                / query - F filters - ? help - q quit |
+| ------------------------------------------------------------------------------------------------ |
+| +- Status --+ +- Type --+ +- Priority -+ +- Tags --+ +- Archived -+ +- Ready -+ +- Done -+ +---+ |
+| | any       | | any     | | any        | | any     | | shown      | | any     | | shown  | | x | |
+| +----- (F) -+ +---------+ +------------+ +- (g t) -+ +------------+ +---------+ +-- (H) -+ +---+ |
+| +- Beans ----------------------------+ +-------------------------------------------------------+ |
+| | - T M m001 Release 1.0             | | +- Title - demo-t001 -------------------------------+ | |
+| |   - I E e001 Login overhaul        | | | Two-factor authentication for the login form      | | |
+| |>      I F t001 ! Two-factor        | | +--------------------------------------------- (e) -+ | |
+| |>               authentication for  | | +- Status ------+ +- Type --------+ +- Priority ----+ | |
+| |>               the login form      | | | in-progress   | | feature       | | high          | | |
+| |       T T t002 Check the error     | | +--------- (s) -+ +--------- (t) -+ +--------- (P) -+ | |
+| |                texts of the login  | | +- Parent ---------------+ +- Tags -----------------+ | |
+| |                mask                | | | e001 Login overhaul    | | #auth #security        | | |
+| |       T T t003 - Password reset via| | +------------------ (p) -+ +------------------------+ | |
+| |                e-mail with a very  | | +- Body - 1-3/9 ------------------------------------+ | |
+| |                long title that wil~| | | Collection of improvements to the login flow      | | |
+| |       C B t004 Session timeout bug | | | based on the security review and the user         | | |
+| |                [archived]          | | | research analysis. Covers 2FA, error messages and | | |
+| |   - T E e002 Export                | | +--------------------------------------------- (e) -+ | |
+| |       T T t005 !! Export as CSV    | | +- Relations ---------------------------------------+ | |
+| |       D T t006 _ Export as JSON    | | |   parent    I E e001 Login overhaul               | | |
+| |   T T t008 Loose task without      | | |   blocking  T T t003 Password reset via e-mail w~ | | |
+| |            parent                  | | +--------------------------------------------- (b) -+ | |
+| +----------------------------- 3/12 -+ +-------------------------------------------------------+ |
+| ------------------------------------------------------------------------------------------------ |
+| enter details - e edit - c create - C child - r rename - s status - t type - P priority          |
+| p parent - b blocking - n next - u undo - K J move - lt/rt fold - space select - H hide done     |
++--------------------------------------------------------------------------------------------------+

@@ -61,7 +61,7 @@ func (d blockingItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 
 	var cursor string
 	if index == m.Index() {
-		cursor = lipgloss.NewStyle().Foreground(ui.ColorPrimary).Bold(true).Render("▌") + " "
+		cursor = lipgloss.NewStyle().Foreground(ui.ColorPrimary).Bold(true).Render(glyphs().Cursor) + " "
 	} else {
 		cursor = "  "
 	}
@@ -70,9 +70,9 @@ func (d blockingItemDelegate) Render(w io.Writer, m list.Model, index int, listI
 	isBlocking := (*d.pendingBlocking)[item.bean.ID]
 	var blockingIndicator string
 	if isBlocking {
-		blockingIndicator = lipgloss.NewStyle().Foreground(ui.ColorDanger).Bold(true).Render("● ") // Red dot for blocking
+		blockingIndicator = lipgloss.NewStyle().Foreground(ui.ColorDanger).Bold(true).Render(glyphs().Blocking + " ") // Red dot for blocking
 	} else {
-		blockingIndicator = lipgloss.NewStyle().Foreground(ui.ColorMuted).Render("○ ") // Empty circle for not blocking
+		blockingIndicator = lipgloss.NewStyle().Foreground(ui.ColorMuted).Render(glyphs().NotBlocking + " ") // Empty circle for not blocking
 	}
 
 	// Get colors from config

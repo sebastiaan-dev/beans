@@ -54,7 +54,7 @@ func (a *App) handleQuickActionMsg(msg tea.Msg) bool {
 		if err != nil {
 			a.list.statusMessage = fmt.Sprintf("Failed to rename: %v", err)
 		} else {
-			a.list.statusMessage = "Renamed " + a.shortID(msg.id) + " · u to undo"
+			a.list.statusMessage = "Renamed " + a.shortID(msg.id) + glyphs().sep() + "u to undo"
 		}
 		a.reload()
 	case toggleCheckboxMsg:
@@ -95,9 +95,9 @@ func (a *App) createInline(msg inlineCreateMsg) {
 	a.recordCreate(created.ID)
 	a.reload()
 	if a.list.reveal(created.ID) {
-		a.list.statusMessage = fmt.Sprintf("Created %s · e to edit · u to undo", a.shortID(created.ID))
+		a.list.statusMessage = fmt.Sprintf("Created %s%se to edit%su to undo", a.shortID(created.ID), glyphs().sep(), glyphs().sep())
 	} else {
-		a.list.statusMessage = fmt.Sprintf("Created %s (hidden by the filters) · u to undo", a.shortID(created.ID))
+		a.list.statusMessage = fmt.Sprintf("Created %s (hidden by the filters)%su to undo", a.shortID(created.ID), glyphs().sep())
 	}
 }
 
@@ -252,7 +252,7 @@ func (a *App) moveBean(msg moveBeanMsg) {
 	if failed != nil {
 		a.list.statusMessage = fmt.Sprintf("Failed to move: %v", failed)
 	} else {
-		a.list.statusMessage = fmt.Sprintf("Moved %s %s · u to undo", a.shortID(b.ID), dir)
+		a.list.statusMessage = fmt.Sprintf("Moved %s %s%su to undo", a.shortID(b.ID), dir, glyphs().sep())
 	}
 	a.reload()
 	a.list.reveal(b.ID)

@@ -38,7 +38,8 @@ var checkCmd = &cobra.Command{
 	Use:   "check",
 	Short: "Validate configuration and bean integrity",
 	Long: `Checks configuration and bean integrity, including:
-- Configuration settings (colors, default type, theme)
+- Configuration settings (colors, default type, theme, TUI agent command
+  and ASCII mode)
 - Duplicate bean IDs (multiple files claiming the same ID)
 - Broken links (links to non-existent beans)
 - Self-references (beans linking to themselves)
@@ -113,6 +114,17 @@ Note: Cycles cannot be auto-fixed and require manual intervention.`,
 			}
 		} else if !checkJSON {
 			fmt.Printf("  %s %s\n", ui.Success.Render("✓"), themeOK)
+		}
+
+		// 2f. Check the TUI's agent command ($BEANS_AGENT_COMMAND /
+		// tui.agent_command) and ASCII mode ($BEANS_TUI_ASCII / tui.ascii).
+		for _, check := range []func(*config.Config) (string, string){checkAgentCommand, checkASCII} {
+			ok, errMsg := check(cfg)
+			if errMsg != "" {
+				configErrors = append(configErrors, errMsg)
+			} else if ok != "" && !checkJSON {
+				fmt.Printf("  %s %s\n", ui.Success.Render("✓"), ok)
+			}
 		}
 
 		// 3. Check all status colors are valid (hardcoded statuses)
@@ -320,6 +332,36 @@ func checkTheme(c *config.Config, nvimAvailable bool, load func(config.ThemeSpec
 		return fmt.Sprintf("Theme '%s' is valid (%d role override(s))", spec, len(overrides)), "", ""
 	}
 	return fmt.Sprintf("Theme '%s' is valid", spec), "", ""
+}
+
+// checkAgentCommand validates the TUI's agent command in effect (quoting and
+// placeholders). It returns a success message ("" when no agent command is
+// configured) or an error.
+func checkAgentCommand(c *config.Config) (ok, errMsg string) {
+	if err := c.ValidateAgentCommand(); err != nil {
+		return "", err.Error()
+	}
+	if _, source := c.AgentCommandSetting(); source != "" {
+		return fmt.Sprintf("Agent command (%s) is valid", source), ""
+	}
+	return "", ""
+}
+
+// checkASCII validates the TUI's ASCII mode setting. It returns a success
+// message ("" when it is not set) or an error (invalid $BEANS_TUI_ASCII).
+func checkASCII(c *config.Config) (ok, errMsg string) {
+	ascii, source, err := c.ASCIISetting()
+	if err != nil {
+		return "", err.Error()
+	}
+	if source == "default" {
+		return "", ""
+	}
+	state := "off"
+	if ascii {
+		state = "on"
+	}
+	return fmt.Sprintf("ASCII mode is %s (%s)", state, source), ""
 }
 
 // loadThemeForCheck loads a theme to verify that it exists.

@@ -89,3 +89,67 @@ func TestCheckTheme(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckAgentCommand(t *testing.T) {
+	tests := []struct {
+		name, command, env string
+		wantOK, wantErr    string
+	}{
+		{name: "unset"},
+		{name: "valid", command: `claude "Work on {{bean_id}}: {{bean_title}}"`, wantOK: "Agent command (tui.agent_command) is valid"},
+		{name: "unknown placeholder", command: "claude {{bean}}", wantErr: "tui.agent_command: unknown placeholder {{bean}}"},
+		{name: "bad quoting", command: `claude "oops`, wantErr: "tui.agent_command: unterminated"},
+		{name: "env overrides", command: "claude {{bean}}", env: "pi {{path}}", wantOK: "($BEANS_AGENT_COMMAND)"},
+		{name: "invalid env", env: "pi {{nope}}", wantErr: "$BEANS_AGENT_COMMAND: unknown placeholder"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(config.AgentCommandEnvVar, tt.env)
+			c := config.Default()
+			c.TUI.AgentCommand = tt.command
+			ok, errMsg := checkAgentCommand(c)
+			if tt.wantErr != "" {
+				if !strings.Contains(errMsg, tt.wantErr) || ok != "" {
+					t.Errorf("checkAgentCommand() = %q, %q; want error %q", ok, errMsg, tt.wantErr)
+				}
+				return
+			}
+			if errMsg != "" || (tt.wantOK == "" && ok != "") || !strings.Contains(ok, tt.wantOK) {
+				t.Errorf("checkAgentCommand() = %q, %q; want ok %q", ok, errMsg, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestCheckASCII(t *testing.T) {
+	tests := []struct {
+		name    string
+		ascii   bool
+		env     string
+		wantOK  string
+		wantErr string
+	}{
+		{name: "unset"},
+		{name: "config", ascii: true, wantOK: "ASCII mode is on (tui.ascii)"},
+		{name: "env on", env: "1", wantOK: "ASCII mode is on ($BEANS_TUI_ASCII)"},
+		{name: "env off", ascii: true, env: "false", wantOK: "ASCII mode is off ($BEANS_TUI_ASCII)"},
+		{name: "invalid env", ascii: true, env: "sometimes", wantErr: `$BEANS_TUI_ASCII: invalid boolean "sometimes"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(config.ASCIIEnvVar, tt.env)
+			c := config.Default()
+			c.TUI.ASCII = tt.ascii
+			ok, errMsg := checkASCII(c)
+			if tt.wantErr != "" {
+				if !strings.Contains(errMsg, tt.wantErr) || ok != "" {
+					t.Errorf("checkASCII() = %q, %q; want error %q", ok, errMsg, tt.wantErr)
+				}
+				return
+			}
+			if errMsg != "" || ok != tt.wantOK {
+				t.Errorf("checkASCII() = %q, %q; want ok %q", ok, errMsg, tt.wantOK)
+			}
+		})
+	}
+}
