@@ -151,15 +151,22 @@
   let confirmingRemoveId = $state<string | null>(null);
   let confirmingStatus = $state<WorktreeStatus | null>(null);
 
+  // True while the fresh status for the destroy dialog is loading. Destroy stays
+  // disabled meanwhile so uncommitted work can't be deleted without a warning.
+  let checkingStatus = $state(false);
+  let statusCheckFailed = $state(false);
+
   function promptDestroy(id: string) {
-    // Show modal immediately with cached status, then refresh in background
+    // Show modal immediately with cached status, then confirm with a fresh check
     confirmingStatus = worktreeStatuses.get(id) ?? null;
     confirmingRemoveId = id;
-    // Fetch fresh status so warnings update if cache was stale
+    checkingStatus = true;
+    statusCheckFailed = false;
     worktreeStore.getWorktreeStatus(id).then((fresh) => {
-      if (confirmingRemoveId === id) {
-        confirmingStatus = fresh;
-      }
+      if (confirmingRemoveId !== id) return;
+      if (fresh) confirmingStatus = fresh;
+      else statusCheckFailed = true;
+      checkingStatus = false;
     });
   }
 
@@ -515,12 +522,18 @@
     {@const hooksNote = configStore.isWorktrunk
       ? " Worktrunk's pre-remove/post-remove hooks run, and the branch is deleted only if it is merged."
       : ''}
+    {@const statusNote = checkingStatus
+      ? ' Checking the worktree status…'
+      : statusCheckFailed
+        ? ' Could not check the worktree status.'
+        : ''}
     <ConfirmModal
       title="Destroy Worktree"
       message={warnings.length > 0
-        ? `This worktree has ${warnings.join(' and ')}. Are you sure you want to destroy the worktree for "${label}"?${hooksNote} This cannot be undone.`
-        : `Are you sure you want to destroy the worktree for "${label}"?${hooksNote} This cannot be undone.`}
-      confirmLabel="Destroy"
+        ? `This worktree has ${warnings.join(' and ')}. Are you sure you want to destroy the worktree for "${label}"?${hooksNote} This cannot be undone.${statusNote}`
+        : `Are you sure you want to destroy the worktree for "${label}"?${hooksNote} This cannot be undone.${statusNote}`}
+      confirmLabel={checkingStatus ? 'Checking…' : 'Destroy'}
+      confirmDisabled={checkingStatus}
       danger
       onConfirm={() => handleRemoveWorktree(confirmingRemoveId!)}
       onCancel={() => { confirmingRemoveId = null; confirmingStatus = null; }}

@@ -193,7 +193,7 @@ func resolveTerminalWorkDir(sessionID string, wtMgr *worktree.Manager, projectRo
 		return projectRoot, nil
 	}
 
-	worktrees, err := wtMgr.List()
+	worktrees, err := wtMgr.ListBasic()
 	if err != nil {
 		return "", fmt.Errorf("failed to list worktrees: %w", err)
 	}

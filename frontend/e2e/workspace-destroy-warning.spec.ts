@@ -37,6 +37,10 @@ test.describe('Workspace destroy warnings', () => {
 
     // Modal should show the standard message without warnings
     const modal = page.locator('.fixed');
+    // Wait for the fresh status check to finish (Destroy is disabled meanwhile)
+    await expect(page.getByRole('button', { name: 'Destroy', exact: true })).toBeEnabled({
+      timeout: 15_000
+    });
     await expect(modal.locator('p')).toContainText('Are you sure you want to destroy');
     await expect(modal.locator('p')).not.toContainText('uncommitted changes');
     await expect(modal.locator('p')).not.toContainText('unmerged commits');
@@ -61,6 +65,10 @@ test.describe('Workspace destroy warnings', () => {
 
     // Modal should warn about uncommitted changes
     const modal = page.locator('.fixed');
+    // Wait for the fresh status check to finish (Destroy is disabled meanwhile)
+    await expect(page.getByRole('button', { name: 'Destroy', exact: true })).toBeEnabled({
+      timeout: 15_000
+    });
     await expect(modal.locator('p')).toContainText('uncommitted changes');
 
     await page.getByRole('button', { name: 'Cancel' }).click();
@@ -82,6 +90,10 @@ test.describe('Workspace destroy warnings', () => {
 
     // Modal should warn about unmerged commits
     const modal = page.locator('.fixed');
+    // Wait for the fresh status check to finish (Destroy is disabled meanwhile)
+    await expect(page.getByRole('button', { name: 'Destroy', exact: true })).toBeEnabled({
+      timeout: 15_000
+    });
     await expect(modal.locator('p')).toContainText('unmerged commits');
 
     await page.getByRole('button', { name: 'Cancel' }).click();
@@ -109,9 +121,47 @@ test.describe('Workspace destroy warnings', () => {
 
     // Modal should warn about both
     const modal = page.locator('.fixed');
+    // Wait for the fresh status check to finish (Destroy is disabled meanwhile)
+    await expect(page.getByRole('button', { name: 'Destroy', exact: true })).toBeEnabled({
+      timeout: 15_000
+    });
     await expect(modal.locator('p')).toContainText('uncommitted changes');
     await expect(modal.locator('p')).toContainText('unmerged commits');
 
+    await page.getByRole('button', { name: 'Cancel' }).click();
+  });
+
+  test('keeps Destroy disabled until the fresh status check finishes', async ({ beans, page }) => {
+    await page.goto(beans.baseURL + '/');
+    await expect(page.getByText('Workspaces')).toBeVisible({ timeout: 10_000 });
+    const wsName = await createWorkspace(page);
+
+    const worktrees = await beans.getWorktrees();
+    const wt = worktrees.find((w) => w.branch.includes(wsName));
+    expect(wt).toBeTruthy();
+    beans.createFileInWorktree(wt!.path, 'dirty-file.txt', 'uncommitted content');
+
+    // Hold back the status query the dialog sends when it opens.
+    let releaseStatus!: () => void;
+    const statusHeld = new Promise<void>((resolve) => (releaseStatus = resolve));
+    await page.route('**/api/graphql**', async (route) => {
+      const request = route.request();
+      const query =
+        new URL(request.url()).searchParams.get('query') ?? request.postDataJSON()?.query ?? '';
+      if (query.includes('query Worktrees')) {
+        await statusHeld;
+      }
+      await route.fallback();
+    });
+
+    await openDestroyModal(page, wsName);
+    const confirm = page.getByRole('button', { name: 'Checking…', exact: true });
+    await expect(confirm).toBeDisabled();
+
+    releaseStatus();
+    const destroy = page.getByRole('button', { name: 'Destroy', exact: true });
+    await expect(destroy).toBeEnabled({ timeout: 15_000 });
+    await expect(page.locator('.fixed').locator('p')).toContainText('uncommitted changes');
     await page.getByRole('button', { name: 'Cancel' }).click();
   });
 });
