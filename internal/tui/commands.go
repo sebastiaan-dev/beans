@@ -256,11 +256,15 @@ func cmdPairHint(desc, first, second string) keyHint {
 // runCommand runs a command from the palette in the browse view.
 func (a *App) runCommand(c *command) tea.Cmd {
 	a.state = viewList
-	if a.focus == focusFilter && c.scope != scopeFilter {
-		a.focusTree()
-	}
-	if c.scope == scopeTree && a.focus != focusTree {
-		a.focusTree()
+	switch c.scope {
+	case scopeTree:
+		if a.focus != focusTree {
+			a.focusTree()
+		}
+	case scopeGlobal, scopeDetail:
+		if a.focus == focusFilter {
+			a.focusTree()
+		}
 	}
 	return c.run(a, c)
 }

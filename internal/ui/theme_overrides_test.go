@@ -101,7 +101,7 @@ func TestApplyThemeOverrides(t *testing.T) {
 	if NamedColors["gray"] != "#888888" {
 		t.Errorf("gray = %q, want the overridden muted color", NamedColors["gray"])
 	}
-	if out := PaintBackground("x", 1, 1); !strings.Contains(out, termenv.TrueColor.Color("#101010").Sequence(true)) {
+	if out := PaintBackground("x", 1, 1); !strings.Contains(out, "48;2;16;16;16") {
 		t.Errorf("PaintBackground = %q, want the overridden bg", out)
 	}
 }

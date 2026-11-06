@@ -441,7 +441,7 @@ func (j *workspaceJob) Run() error {
 
 	args, err := j.cfg.GetAgentCommand(config.AgentCommandVars{BeanID: j.bean.ID, BeanTitle: j.bean.Title, Path: j.res.Path})
 	if err == nil && len(args) == 0 {
-		err = errors.New(agentCommandHint)
+		err = fmt.Errorf("no agent command configured (%s)", agentCommandHint)
 	}
 	if err != nil {
 		j.agentErr = err

@@ -123,13 +123,20 @@ func runs(t *testing.T, counter string) int {
 	return strings.Count(string(data), "run")
 }
 
+// testNvimTimeout replaces DefaultNvimTimeout in the tests that don't test
+// the timeout. The default is meant for a warm nvim; in tests the first exec
+// of a freshly written script or of nvim can take seconds under load (on
+// macOS the executable is assessed on first launch, queued behind the test
+// binaries `go test ./...` links meanwhile).
+const testNvimTimeout = time.Minute
+
 const fakeExport = `printf 'noise<<<BEANS-THEME-BEGIN>>>{"colors_name":"fake","background":"dark","highlights":{"Normal":{"fg":"#c5c9c7","bg":"#22262d"}},"terminal_colors":{"1":"#ff0000"}}<<<BEANS-THEME-END>>>'`
 
 func TestExportNvimCaching(t *testing.T) {
 	bin, counter := fakeNvim(t, fakeExport)
 	cfgDir := t.TempDir()
 	writeFile(t, filepath.Join(cfgDir, "init.lua"), "")
-	opts := NvimOptions{Binary: bin, CacheDir: filepath.Join(t.TempDir(), "themes"), ConfigDir: cfgDir}
+	opts := NvimOptions{Binary: bin, CacheDir: filepath.Join(t.TempDir(), "themes"), ConfigDir: cfgDir, Timeout: testNvimTimeout}
 
 	load := func() *Theme {
 		t.Helper()
@@ -181,7 +188,7 @@ func TestExportNvimCaching(t *testing.T) {
 func TestExportNvimErrors(t *testing.T) {
 	t.Run("unknown colorscheme is not cached", func(t *testing.T) {
 		bin, counter := fakeNvim(t, `printf '<<<BEANS-THEME-BEGIN>>>{"error":"Vim:E185: Cannot find color scheme"}<<<BEANS-THEME-END>>>'`)
-		opts := NvimOptions{Binary: bin, CacheDir: t.TempDir(), ConfigDir: t.TempDir()}
+		opts := NvimOptions{Binary: bin, CacheDir: t.TempDir(), ConfigDir: t.TempDir(), Timeout: testNvimTimeout}
 		for i := 0; i < 2; i++ {
 			_, err := LoadNvim(context.Background(), "nope", opts)
 			if err == nil || !strings.Contains(err.Error(), `"nope"`) || !strings.Contains(err.Error(), "E185") {
@@ -194,14 +201,14 @@ func TestExportNvimErrors(t *testing.T) {
 	})
 	t.Run("no export", func(t *testing.T) {
 		bin, _ := fakeNvim(t, "echo hello")
-		_, err := LoadNvim(context.Background(), "", NvimOptions{Binary: bin, ConfigDir: t.TempDir()})
+		_, err := LoadNvim(context.Background(), "", NvimOptions{Binary: bin, ConfigDir: t.TempDir(), Timeout: testNvimTimeout})
 		if err == nil || !strings.Contains(err.Error(), "no theme export") {
 			t.Errorf("err = %v", err)
 		}
 	})
 	t.Run("nvim fails", func(t *testing.T) {
 		bin, _ := fakeNvim(t, "exit 3")
-		_, err := LoadNvim(context.Background(), "", NvimOptions{Binary: bin, ConfigDir: t.TempDir()})
+		_, err := LoadNvim(context.Background(), "", NvimOptions{Binary: bin, ConfigDir: t.TempDir(), Timeout: testNvimTimeout})
 		if err == nil || !strings.Contains(err.Error(), "exit status 3") {
 			t.Errorf("err = %v", err)
 		}
@@ -213,14 +220,16 @@ func TestExportNvimErrors(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "within") {
 			t.Errorf("err = %v, want timeout", err)
 		}
-		if d := time.Since(start); d > 3*time.Second {
+		// Well below the 30s the script and its child would take; the
+		// slack covers a slow first exec under load (see testNvimTimeout).
+		if d := time.Since(start); d > 10*time.Second {
 			t.Errorf("timeout took %s", d)
 		}
 	})
 	t.Run("stdin is not inherited", func(t *testing.T) {
 		// A config waiting for input must not block: stdin is /dev/null.
 		bin, _ := fakeNvim(t, "read line\n"+fakeExport)
-		if _, err := LoadNvim(context.Background(), "", NvimOptions{Binary: bin, ConfigDir: t.TempDir(), Timeout: 2 * time.Second}); err != nil {
+		if _, err := LoadNvim(context.Background(), "", NvimOptions{Binary: bin, ConfigDir: t.TempDir(), Timeout: testNvimTimeout}); err != nil {
 			t.Error(err)
 		}
 	})
@@ -291,7 +300,7 @@ vim.api.nvim_set_hl(0, "String", { fg = "#228822" })
 // TestLoadNvimHeadless runs the real nvim against an isolated config.
 func TestLoadNvimHeadless(t *testing.T) {
 	cfgDir := isolatedNvim(t)
-	opts := NvimOptions{CacheDir: filepath.Join(t.TempDir(), "cache"), Timeout: 10 * time.Second}
+	opts := NvimOptions{CacheDir: filepath.Join(t.TempDir(), "cache"), Timeout: testNvimTimeout}
 
 	th, err := LoadNvim(context.Background(), "", opts)
 	if err != nil {
@@ -334,5 +343,17 @@ func TestLoadNvimHeadless(t *testing.T) {
 	}
 	if th.Fg != "#000001" {
 		t.Errorf("changed colorscheme not picked up: fg = %q", th.Fg)
+	}
+}
+
+// TestNvimOptionsDefaultTimeout checks that exports are bounded by
+// DefaultNvimTimeout unless a timeout is given (the tests pass their own,
+// see testNvimTimeout).
+func TestNvimOptionsDefaultTimeout(t *testing.T) {
+	if got := (NvimOptions{}).withDefaults().Timeout; got != DefaultNvimTimeout {
+		t.Errorf("default timeout = %s, want %s", got, DefaultNvimTimeout)
+	}
+	if got := (NvimOptions{Timeout: time.Second}).withDefaults().Timeout; got != time.Second {
+		t.Errorf("timeout = %s, want 1s", got)
 	}
 }

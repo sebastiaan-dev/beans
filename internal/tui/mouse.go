@@ -366,14 +366,6 @@ func (m *listModel) scrollBy(delta int) {
 	m.cursor = max(m.offset, min(m.cursor, last))
 }
 
-// scrollBody scrolls the body by delta lines.
-func (m *detailModel) scrollBody(delta int) {
-	if m.bean == nil {
-		return
-	}
-	m.bodyOffset = max(0, min(m.bodyOffset+delta, len(m.body)-m.layout().bodyRows))
-}
-
 // Recording ------------------------------------------------------------------
 
 // recordRow records tree row i, rendered as n lines at line y of the rows

@@ -69,9 +69,6 @@ func (f barField) queryField() filterquery.Field {
 // a dropdown.
 func (f barField) isToggle() bool { return f == barReady || f == barDone }
 
-// isMulti reports whether several values of the field can be selected.
-func (f barField) isMulti() bool { return f <= barTags }
-
 // filterBarModel is the state of the filter bar. The filter values
 // themselves live in the query (listModel.search).
 type filterBarModel struct {

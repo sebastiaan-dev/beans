@@ -52,10 +52,6 @@ func isResolved(status string) bool {
 // buildBlocked rebuilds the Blocked view's rows.
 func (a *App) buildBlocked() {
 	l := &a.views.blocked
-	type blocked struct {
-		bean     *bean.Bean
-		blockers []blockerInfo
-	}
 	var all []*bean.Bean
 	blockers := make(map[string][]blockerInfo)
 	for _, b := range a.list.beans {

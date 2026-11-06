@@ -401,11 +401,11 @@ func PaintBackground(view string, width, height int) string {
 		return view
 	}
 	params := []string{}
-	if seq := profile.Color(string(ColorBg)).Sequence(true); seq != "" {
+	if seq := colorSequence(profile, string(ColorBg), true); seq != "" {
 		params = append(params, seq)
 	}
 	if ColorFg != "" {
-		if seq := profile.Color(string(ColorFg)).Sequence(false); seq != "" {
+		if seq := colorSequence(profile, string(ColorFg), false); seq != "" {
 			params = append(params, seq)
 		}
 	}
@@ -436,4 +436,28 @@ func PaintBackground(view string, width, height int) string {
 		b.WriteString(reset)
 	}
 	return b.String()
+}
+
+// colorSequence returns the SGR parameters selecting color c (a hex color or
+// an ANSI color number) as foreground or background under profile. Hex
+// colors under TrueColor are emitted with their exact components: termenv
+// converts them through floats and truncates, so e.g. #22262d would become
+// 34;38;44 instead of 34;38;45. Other colors and profiles (which map hex
+// colors to the nearest palette color) go through termenv.
+func colorSequence(profile termenv.Profile, c string, bg bool) string {
+	if profile == termenv.TrueColor && strings.HasPrefix(c, "#") {
+		if hex, err := theme.NormalizeHex(c); err == nil {
+			if v, err := strconv.ParseUint(hex[1:], 16, 32); err == nil {
+				prefix := termenv.Foreground
+				if bg {
+					prefix = termenv.Background
+				}
+				return fmt.Sprintf("%s;2;%d;%d;%d", prefix, v>>16, v>>8&0xff, v&0xff)
+			}
+		}
+	}
+	if col := profile.Color(c); col != nil { // nil: invalid color
+		return col.Sequence(bg)
+	}
+	return ""
 }
