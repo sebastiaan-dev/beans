@@ -85,7 +85,6 @@ func TestTUIViewsUseANSIPalette(t *testing.T) {
 				"priority": newPriorityPickerModel(ids, "t", "high", cfg, w, h).ModalView("bg", w, h),
 				"parent":   newParentPickerModel(ids, "t", []string{"task"}, beans[0].ID, resolver, cfg, w, h).ModalView("bg", w, h),
 				"blocking": newBlockingPickerModel(beans[1].ID, "t", beans[1].Blocking, resolver, cfg, w, h).ModalView("bg", w, h),
-				"tags":     newTagPickerModel([]tagWithCount{{tag: "a", count: 1}, {tag: "b", count: 2}}, w, h).View(),
 			}
 
 			// The browse view: wide (tree and detail side by side, with the
@@ -99,11 +98,18 @@ func TestTUIViewsUseANSIPalette(t *testing.T) {
 			views["browse-narrow-detail"] = sizedView(t, app, 70, 24)
 			pressKey(t, app, "esc")
 			views["browse-narrow"] = sizedView(t, app, 70, 24)
-			app.list.setFilters(listFilters{statuses: []string{"todo"}, tags: []string{"tag-todo"}, hideResolved: true})
-			runCmd(t, app, app.list.loadBeans)
+			setQuery(app, "status:todo tag:tag-todo done:no priority:>=high -type:bug")
 			pressKey(t, app, "/")
 			pressKey(t, app, "b")
 			views["browse-filtered"] = sizedView(t, app, w, h)
+			pressKey(t, app, "enter")
+			// The focused filter bar with an open dropdown, full and collapsed.
+			pressKey(t, app, "F")
+			pressKey(t, app, "enter")
+			views["browse-dropdown"] = sizedView(t, app, w, h)
+			views["browse-dropdown-short"] = sizedView(t, app, 70, 24)
+			pressKey(t, app, "esc")
+			pressKey(t, app, "esc")
 
 			// The filter input is styled from the list theme; render it too.
 			sp := newStatusPickerModel(ids, "t", "todo", cfg, w, h)

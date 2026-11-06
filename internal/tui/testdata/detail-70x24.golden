@@ -1,6 +1,7 @@
 ╭────────────────────────────────────────────────────────────────────╮
-│ beans: demo                 / search · F filters · ? help · q quit │
+│ beans: demo                  / query · F filters · ? help · q quit │
 │ ────────────────────────────────────────────────────────────────── │
+│ Filters none                                                   (F) │
 │ ╭─ Title · demo-t001 ────────────────────────────────────────────╮ │
 │ │ Two-factor authentication for the login form                   │ │
 │ ╰────────────────────────────────────────────────────────── (e) ─╯ │
@@ -10,15 +11,14 @@
 │ ╭─ Parent ──────────────────────╮ ╭─ Tags ───────────────────────╮ │
 │ │ e001 Login overhaul           │ │ #auth #security              │ │
 │ ╰───────────────────────── (p) ─╯ ╰──────────────────────────────╯ │
-│ ╭─ Body · 1–2/8 ─────────────────────────────────────────────────╮ │
+│ ╭─ Body · 1–1/8 ─────────────────────────────────────────────────╮ │
 │ │ Collection of improvements to the login flow based on the      │ │
-│ │ security review and the user research analysis. Covers 2FA,    │ │
 │ ╰────────────────────────────────────────────────────────── (e) ─╯ │
 │ ╭─ Relations ────────────────────────────────────────────────────╮ │
 │ │ ▌ parent    I E e001 Login overhaul                            │ │
 │ │   blocking  T T t003 Password reset via e-mail with a very lo… │ │
 │ ╰────────────────────────────────────────────────────────── (b) ─╯ │
 │ ────────────────────────────────────────────────────────────────── │
-│ esc back · enter open · ↑↓ move · tab relations/body · e edit      │
-│ s status · t type · P priority · p parent · b blocking · y copy id │
+│ esc back · enter open · ↑↓ move · tab body · e edit · s status     │
+│ t type · P priority · p parent · b blocking · y copy id            │
 ╰────────────────────────────────────────────────────────────────────╯

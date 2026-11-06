@@ -24,7 +24,6 @@ type viewState int
 
 const (
 	viewList viewState = iota
-	viewTagPicker
 	viewParentPicker
 	viewStatusPicker
 	viewTypePicker
@@ -32,22 +31,10 @@ const (
 	viewPriorityPicker
 	viewCreateModal
 	viewHelpOverlay
-	viewFilterPicker
 )
 
 // beansChangedMsg is sent when beans change on disk (via file watcher)
 type beansChangedMsg struct{}
-
-// openTagPickerMsg requests opening the tag picker
-type openTagPickerMsg struct{}
-
-// tagSelectedMsg is sent when a tag is selected from the picker
-type tagSelectedMsg struct {
-	tag string
-}
-
-// backToListMsg returns from a full-screen picker to the browse view
-type backToListMsg struct{}
 
 // clearFilterMsg is sent to clear any active filter
 type clearFilterMsg struct{}
@@ -81,7 +68,7 @@ type App struct {
 	state          viewState
 	list           listModel
 	detail         detailModel
-	tagPicker      tagPickerModel
+	bar            filterBarModel
 	parentPicker   parentPickerModel
 	statusPicker   statusPickerModel
 	typePicker     typePickerModel
@@ -89,7 +76,6 @@ type App struct {
 	priorityPicker priorityPickerModel
 	createModal    createModalModel
 	helpOverlay    helpOverlayModel
-	filterPicker   filterPickerModel
 	core           *beancore.Core
 	resolver       *beangraph.CoreResolver
 	config         *config.Config
@@ -167,7 +153,7 @@ func (a *App) closePicker(clearSelection bool) tea.Cmd {
 func (a *App) handleChord(first string, msg tea.KeyMsg) tea.Cmd {
 	switch first + " " + msg.String() {
 	case "g t":
-		return func() tea.Msg { return openTagPickerMsg{} }
+		a.openFilterField(barTags)
 	case "g g":
 		if a.focus == focusTree {
 			a.list.moveCursor(-len(a.list.rows))
@@ -217,7 +203,7 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		}
 
 		// Handle key chord sequences
-		if a.state == viewList && !a.list.searching {
+		if a.state == viewList && !a.typing() {
 			if first := a.pendingKey; first != "" {
 				a.pendingKey = ""
 				return a.handleChord(first, msg)
@@ -241,15 +227,22 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		// handled here, synchronously, so that the keys that follow already
 		// go to the right pane.
 		if a.state == viewList && !a.list.searching {
-			if handled := a.handleFocusKey(msg.String()); handled {
-				return nil
+			if a.focus == focusFilter {
+				if cmd, handled := a.updateFilterBar(msg); handled {
+					return cmd
+				}
+			}
+			if !a.typing() {
+				if handled := a.handleFocusKey(msg.String()); handled {
+					return nil
+				}
 			}
 		}
 
 		switch msg.String() {
 		case "?":
 			// Open help overlay from the browse view
-			if a.state == viewList && !a.list.searching {
+			if a.state == viewList && !a.typing() {
 				a.previousState = a.state
 				a.helpOverlay = newHelpOverlayModel(a.width, a.height)
 				a.state = viewHelpOverlay
@@ -257,11 +250,11 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 			}
 		case "q":
 			switch a.state {
-			case viewTagPicker, viewParentPicker, viewStatusPicker, viewTypePicker, viewBlockingPicker, viewPriorityPicker, viewHelpOverlay:
+			case viewParentPicker, viewStatusPicker, viewTypePicker, viewBlockingPicker, viewPriorityPicker, viewHelpOverlay:
 				return tea.Quit
 			case viewList:
-				// Only quit if not typing a search
-				if !a.list.searching {
+				// Only quit if not typing a query or tag
+				if !a.typing() {
 					return tea.Quit
 				}
 			}
@@ -288,26 +281,6 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 
 	case themeReloadedMsg:
 		return a.applyThemeReload(msg)
-
-	case openTagPickerMsg:
-		// Collect all tags with their counts
-		tags := a.collectTagsWithCounts()
-		if len(tags) == 0 {
-			// No tags in system, don't open picker
-			return nil
-		}
-		a.tagPicker = newTagPickerModel(tags, a.width, a.height)
-		a.state = viewTagPicker
-		return a.tagPicker.Init()
-
-	case tagSelectedMsg:
-		a.state = viewList
-		a.list.setTagFilter(msg.tag)
-		return a.list.loadBeans
-
-	case backToListMsg:
-		a.state = viewList
-		return nil
 
 	case openParentPickerMsg:
 		// Check if all bean types can have parents
@@ -467,22 +440,7 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 
 	case clearFilterMsg:
 		a.list.clearFilter()
-		return a.list.loadBeans
-
-	case openFilterPickerMsg:
-		a.previousState = a.state
-		a.filterPicker = newFilterPickerModel(a.list.filters, a.collectTagsWithCounts(), a.width, a.height)
-		a.state = viewFilterPicker
-		return a.filterPicker.Init()
-
-	case closeFilterPickerMsg:
-		a.state = a.previousState
 		return nil
-
-	case filtersAppliedMsg:
-		a.state = a.previousState
-		a.list.setFilters(msg.filters)
-		return a.list.loadBeans
 
 	case copyBeanIDMsg:
 		text := strings.Join(msg.ids, ", ")
@@ -499,13 +457,17 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 	// Forward all messages to the current view
 	switch a.state {
 	case viewList:
-		if a.focus == focusDetail {
+		switch a.focus {
+		case focusDetail:
 			a.detail, cmd = a.detail.Update(msg)
-		} else {
+		case focusFilter:
+			// Keys not handled by the filter bar must not act on the tree.
+			if _, isKey := msg.(tea.KeyMsg); !isKey {
+				a.list, cmd = a.list.Update(msg)
+			}
+		default:
 			a.list, cmd = a.list.Update(msg)
 		}
-	case viewTagPicker:
-		a.tagPicker, cmd = a.tagPicker.Update(msg)
 	case viewParentPicker:
 		a.parentPicker, cmd = a.parentPicker.Update(msg)
 	case viewStatusPicker:
@@ -520,31 +482,63 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		a.createModal, cmd = a.createModal.Update(msg)
 	case viewHelpOverlay:
 		a.helpOverlay, cmd = a.helpOverlay.Update(msg)
-	case viewFilterPicker:
-		a.filterPicker, cmd = a.filterPicker.Update(msg)
 	}
 
 	return cmd
 }
 
-// handleFocusKey handles the keys moving between the tree and the detail
-// pane and reports whether key was one of them.
+// handleFocusKey handles the keys moving the focus between the filter bar,
+// the tree and the detail pane, and reports whether key was one of them.
+//
+// tab and shift+tab cycle filter bar → tree → detail (relations, body) →
+// filter bar; F focuses the filter bar from anywhere.
 func (a *App) handleFocusKey(key string) bool {
-	if a.focus == focusTree {
-		if key != "enter" && key != "tab" {
+	if key == "F" {
+		a.focusFilterBar()
+		return true
+	}
+	switch a.focus {
+	case focusFilter:
+		switch key {
+		case "tab":
+			a.focusTree()
+		case "shift+tab":
+			if !a.focusDetailPane(false) {
+				a.focusTree()
+			}
+		default:
 			return false
 		}
-		if a.list.currentBean() != nil {
-			a.focus = focusDetail
-			a.syncDetail()
-			a.detail.focus()
+		return true
+	case focusTree:
+		switch key {
+		case "enter", "tab":
+			if !a.focusDetailPane(true) && key == "tab" {
+				a.focusFilterBar()
+			}
+		case "shift+tab":
+			a.focusFilterBar()
+		default:
+			return false
 		}
 		return true
 	}
 	switch key {
+	case "tab":
+		if a.detail.section == sectionRelations {
+			a.detail.section = sectionBody
+		} else {
+			a.focusFilterBar()
+		}
+	case "shift+tab":
+		if a.detail.section == sectionBody && len(a.detail.links) > 0 {
+			a.detail.section = sectionRelations
+		} else {
+			a.focusTree()
+		}
 	case "esc":
 		a.focusTree()
-	case "/", "F", "H", "c":
+	case "/", "H", "c":
 		// Tree-wide actions return to the tree and are handled there.
 		a.focusTree()
 		return false
@@ -562,6 +556,28 @@ func (a *App) handleFocusKey(key string) bool {
 		return false
 	}
 	return true
+}
+
+// focusDetailPane moves the focus to the detail pane, on its first section
+// (relations, if any) or its last one (body), and reports whether there is a
+// bean to show.
+func (a *App) focusDetailPane(first bool) bool {
+	if a.list.currentBean() == nil {
+		return false
+	}
+	a.focus = focusDetail
+	a.syncDetail()
+	a.detail.focus()
+	if !first {
+		a.detail.section = sectionBody
+	}
+	return true
+}
+
+// typing reports whether the browse view routes typed characters into a
+// text field (the query input or the tag type-ahead).
+func (a *App) typing() bool {
+	return a.list.searching || (a.focus == focusFilter && a.bar.typing())
 }
 
 // showBean shows a bean in the detail pane, moving the tree cursor to it if
@@ -607,9 +623,7 @@ func (a *App) touchEditedBean() {
 func (a *App) acceptsTextInput() bool {
 	switch a.state {
 	case viewList:
-		return a.list.searching
-	case viewTagPicker:
-		return a.tagPicker.list.FilterState() == list.Filtering
+		return a.typing()
 	case viewParentPicker:
 		return a.parentPicker.list.FilterState() == list.Filtering
 	case viewStatusPicker:
@@ -621,9 +635,6 @@ func (a *App) acceptsTextInput() bool {
 	case viewBlockingPicker:
 		return a.blockingPicker.list.FilterState() == list.Filtering
 	case viewCreateModal:
-		return true
-	case viewFilterPicker:
-		// The filter modal splits batched runes itself outside its tag search.
 		return true
 	}
 	return false
@@ -668,24 +679,6 @@ func (a *App) handleKeys(keys []tea.KeyMsg) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// collectTagsWithCounts returns all tags with their usage counts
-func (a *App) collectTagsWithCounts() []tagWithCount {
-	beans, _ := a.resolver.Beans(context.Background(), nil)
-	tagCounts := make(map[string]int)
-	for _, b := range beans {
-		for _, tag := range b.Tags {
-			tagCounts[tag]++
-		}
-	}
-
-	tags := make([]tagWithCount, 0, len(tagCounts))
-	for tag, count := range tagCounts {
-		tags = append(tags, tagWithCount{tag: tag, count: count})
-	}
-
-	return tags
-}
-
 // View renders the current view, painted with the theme's background (see
 // ui.PaintBackground; a no-op with the terminal theme).
 func (a *App) View() string {
@@ -697,8 +690,6 @@ func (a *App) view() string {
 	switch a.state {
 	case viewList:
 		return a.browseView()
-	case viewTagPicker:
-		return a.tagPicker.View()
 	case viewParentPicker:
 		return a.parentPicker.ModalView(a.browseView(), a.width, a.height)
 	case viewStatusPicker:
@@ -713,8 +704,6 @@ func (a *App) view() string {
 		return a.createModal.ModalView(a.browseView(), a.width, a.height)
 	case viewHelpOverlay:
 		return a.helpOverlay.ModalView(a.browseView(), a.width, a.height)
-	case viewFilterPicker:
-		return a.filterPicker.ModalView(a.browseView(), a.width, a.height)
 	}
 	return ""
 }

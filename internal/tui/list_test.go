@@ -428,8 +428,7 @@ func TestListFiltersSurviveReload(t *testing.T) {
 	app, core := setupListTestModel(t)
 	runCmd(t, app, app.Init())
 
-	app.list.setFilters(listFilters{tags: []string{"frontend"}, hideResolved: true})
-	runCmd(t, app, app.list.loadBeans)
+	setQuery(app, "tag:frontend done:no")
 	if got := matchedIDs(app.list); !reflect.DeepEqual(got, []string{"t-open"}) {
 		t.Fatalf("filtered: got %v", got)
 	}
@@ -453,8 +452,7 @@ func TestListEscClearsFilters(t *testing.T) {
 	app, _ := setupListTestModel(t)
 	runCmd(t, app, app.Init())
 
-	app.list.setFilters(listFilters{types: []string{"bug"}, hideResolved: true})
-	runCmd(t, app, app.list.loadBeans)
+	setQuery(app, "type:bug done:no")
 	if got := matchedIDs(app.list); !reflect.DeepEqual(got, []string{"t-open"}) {
 		t.Fatalf("filtered: got %v", got)
 	}
@@ -468,43 +466,52 @@ func TestListEscClearsFilters(t *testing.T) {
 	}
 }
 
-func TestListTagChordReplacesTagFilter(t *testing.T) {
+func TestListTagChordOpensTagsDropdown(t *testing.T) {
 	app, _ := setupListTestModel(t)
-	app.list.setFilters(listFilters{tags: []string{"a", "b"}, types: []string{"bug"}})
-	_, cmd := app.Update(tagSelectedMsg{tag: "frontend"})
-	runCmd(t, app, cmd)
-	if !reflect.DeepEqual(app.list.filters, listFilters{tags: []string{"frontend"}, types: []string{"bug"}}) {
-		t.Errorf("filters = %+v", app.list.filters)
+	runCmd(t, app, app.Init())
+	setQuery(app, "tag:backend type:bug")
+
+	pressKey(t, app, "g")
+	pressKey(t, app, "t")
+	if app.focus != focusFilter || !app.bar.open || app.bar.field != barTags {
+		t.Fatalf("g t should open the tags dropdown: focus=%v bar=%+v", app.focus, app.bar)
+	}
+	// Typing narrows the tags; q is text, not quit.
+	for _, k := range []string{"f", "r", "o", "q"} {
+		if pressKeyQuits(t, app, keyRunes(k)) {
+			t.Fatal("q in the tag type-ahead must not quit")
+		}
+	}
+	pressKey(t, app, "backspace")
+	pressKey(t, app, " ")
+	pressKey(t, app, "enter")
+	if got := app.list.query(); got != "tag:backend,frontend type:bug" {
+		t.Errorf("query = %q", got)
 	}
 	if got := matchedIDs(app.list); !reflect.DeepEqual(got, []string{"t-open"}) {
 		t.Errorf("got %v", got)
 	}
 }
 
-func TestListFilterModalFlow(t *testing.T) {
+func TestListFilterBarFlow(t *testing.T) {
 	app, _ := setupListTestModel(t)
 	runCmd(t, app, app.Init())
 
 	pressKey(t, app, "F")
-	if app.state != viewFilterPicker {
-		t.Fatalf("F should open the filter modal, state = %v", app.state)
+	if app.focus != focusFilter || app.state != viewList {
+		t.Fatalf("F should focus the filter bar: focus=%v state=%v", app.focus, app.state)
 	}
-	pressKey(t, app, "tab")
-	pressKey(t, app, "tab")
-	// q must not quit while typing a tag search
-	if _, cmd := app.Update(keyRunes("q")); cmd != nil {
-		if _, quit := cmd().(tea.QuitMsg); quit {
-			t.Fatal("q in the tag search must not quit")
-		}
-	}
-	app.Update(keyType(tea.KeyBackspace))
+	// Tags: open, type a search, toggle and apply.
+	pressKey(t, app, "l")
+	pressKey(t, app, "l")
+	pressKey(t, app, "l")
+	pressKey(t, app, "enter")
 	for _, k := range []string{"b", "a", "c", "k", " "} {
 		pressKey(t, app, k)
 	}
 	pressKey(t, app, "enter")
-
-	if app.state != viewList {
-		t.Fatalf("enter should return to the list, state = %v", app.state)
+	if app.bar.open {
+		t.Fatal("enter should close the dropdown")
 	}
 	if got := matchedIDs(app.list); !reflect.DeepEqual(got, []string{"t-wip"}) {
 		t.Errorf("tag backend: got %v", got)
@@ -513,11 +520,26 @@ func TestListFilterModalFlow(t *testing.T) {
 		t.Errorf("title = %q", got)
 	}
 
-	// Cancelling keeps the applied filters
-	pressKey(t, app, "F")
+	// esc in a dropdown restores the filters from before it was opened.
+	pressKey(t, app, "enter")
+	pressKey(t, app, "down")
+	pressKey(t, app, " ")
+	if app.list.query() == "tag:backend" {
+		t.Fatal("space should apply the toggle live")
+	}
 	pressKey(t, app, "esc")
-	if app.state != viewList || !reflect.DeepEqual(app.list.filters.tags, []string{"backend"}) {
-		t.Errorf("cancel: state=%v filters=%+v", app.state, app.list.filters)
+	if app.list.query() != "tag:backend" || app.bar.open {
+		t.Errorf("esc should restore the filters: query=%q open=%v", app.list.query(), app.bar.open)
+	}
+
+	// backspace clears the focused field; esc returns to the tree.
+	pressKey(t, app, "backspace")
+	if app.list.hasActiveFilter() {
+		t.Errorf("backspace should clear the field, query = %q", app.list.query())
+	}
+	pressKey(t, app, "esc")
+	if app.focus != focusTree {
+		t.Errorf("esc should return to the tree, focus = %v", app.focus)
 	}
 }
 
@@ -610,8 +632,7 @@ func TestListEscDoesNotQuit(t *testing.T) {
 	t.Run("clears selection then filters, never quits", func(t *testing.T) {
 		app, _ := setupListTestModel(t)
 		runCmd(t, app, app.Init())
-		app.list.setFilters(listFilters{types: []string{"bug"}})
-		runCmd(t, app, app.list.loadBeans)
+		setQuery(app, "type:bug")
 		app.list.selectedBeans["t-open"] = true
 
 		if pressKeyQuits(t, app, esc) {

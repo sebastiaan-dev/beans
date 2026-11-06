@@ -12,6 +12,7 @@ import (
 	"github.com/hmans/beans/internal/ui"
 	"github.com/hmans/beans/pkg/bean"
 	"github.com/hmans/beans/pkg/beangraph"
+	"github.com/hmans/beans/pkg/beangraph/filterquery"
 	"github.com/hmans/beans/pkg/config"
 )
 
@@ -34,7 +35,7 @@ type treeRow struct {
 }
 
 // listModel is the bean tree of the browse view: it owns the loaded beans,
-// the filters and search, folding, the cursor and multi-selection.
+// the filter query, folding, the cursor and multi-selection.
 type listModel struct {
 	resolver *beangraph.CoreResolver
 	config   *config.Config
@@ -51,6 +52,7 @@ type listModel struct {
 	byID     map[string]*bean.Bean
 	implicit map[string]string // implicit terminal statuses by bean ID
 	archived map[string]bool   // IDs of beans stored in the archive directory
+	qctx     *filterquery.Context
 
 	// Visible rows and the IDs of all beans with children in the tree.
 	rows    []treeRow
@@ -62,15 +64,16 @@ type listModel struct {
 	heights      []int
 	heightsWidth int
 
-	// Active filters (status/type/tag selections and the hide-resolved toggle)
-	filters listFilters
-
-	// Search ("/"): typed into search while searching, kept afterwards.
-	search    textinput.Model
-	searching bool
+	// The filter query (see filterquery): the single source of truth for
+	// all filters. It is edited as text with "/" (while searching) and by
+	// the filter bar; searchBefore is the query from before the current
+	// edit, restored by esc.
+	search       textinput.Model
+	searching    bool
+	searchBefore string
 
 	// Folding. folds holds the collapsed bean IDs for the session. While a
-	// filter or search is active, matches inside folded parents must stay
+	// filter is active, matches inside folded parents must stay
 	// visible, so folding then uses filterFolds instead, a temporary set that
 	// starts out expanded and is reset whenever the filters change.
 	folds          map[string]bool
@@ -91,7 +94,7 @@ type listModel struct {
 func newListModel(resolver *beangraph.CoreResolver, cfg *config.Config) listModel {
 	ti := textinput.New()
 	ti.Prompt = ""
-	ti.Placeholder = "search title or id"
+	ti.Placeholder = "text or status:todo type:bug tag:ui -priority:low …"
 	// A static cursor avoids redrawing the whole view for blink ticks.
 	ti.Cursor.SetMode(cursor.CursorStatic)
 	return listModel{
@@ -142,71 +145,114 @@ func (m listModel) loadBeans() tea.Msg {
 	return beansLoadedMsg{beans: allBeans, implicit: implicit, archived: archived}
 }
 
-// setTagFilter restricts the list to beans with the given tag, replacing any
-// previously selected tags. Other filters are kept.
-func (m *listModel) setTagFilter(tag string) {
-	m.filters.tags = []string{tag}
-}
-
-// setFilters replaces the status/type/tag filters and the hide-resolved toggle.
-func (m *listModel) setFilters(f listFilters) {
-	m.filters = f
-}
-
-// toggleHideResolved toggles hiding of completed and scrapped beans.
-func (m *listModel) toggleHideResolved() {
-	m.filters.hideResolved = !m.filters.hideResolved
-}
-
-// clearFilter clears all active filters, including the hide-resolved toggle
-func (m *listModel) clearFilter() {
-	m.filters = listFilters{}
-}
-
-// hasActiveFilter returns true if any filter is active
-func (m *listModel) hasActiveFilter() bool {
-	return !m.filters.isEmpty()
-}
-
-// query returns the current search query.
+// query returns the current filter query text.
 func (m listModel) query() string {
 	return strings.TrimSpace(m.search.Value())
 }
 
-// searchMatches reports whether a bean matches all search terms (case
-// insensitive, in its title or ID).
-func searchMatches(b *bean.Bean, terms []string) bool {
-	hay := strings.ToLower(b.Title + " " + b.ID)
-	for _, t := range terms {
-		if !strings.Contains(hay, t) {
-			return false
-		}
-	}
-	return true
+// filter returns the parsed filter query.
+func (m listModel) filter() filterquery.Query {
+	return filterquery.Parse(m.search.Value())
 }
 
-// title returns the tree title including active filter indicators.
-func (m listModel) title() string {
+// setFilter replaces the filter query (in canonical form) and rebuilds the
+// tree.
+func (m *listModel) setFilter(q filterquery.Query) {
+	m.search.SetValue(q.String())
+	m.search.CursorEnd()
+	m.rebuild()
+}
+
+// toggleHideDone toggles hiding of completed and scrapped beans, including
+// beans that inherit such a status from an ancestor (done:no).
+func (m *listModel) toggleHideDone() {
+	q := m.filter()
+	if v, ok := q.BoolSelection(filterquery.FieldDone); ok && !v {
+		m.setFilter(q.SetValues(filterquery.FieldDone))
+		return
+	}
+	m.setFilter(q.SetValues(filterquery.FieldDone, "no"))
+}
+
+// doneHidden reports whether completed and scrapped beans are hidden (H).
+func (m listModel) doneHidden() bool {
+	v, ok := m.filter().BoolSelection(filterquery.FieldDone)
+	return ok && !v
+}
+
+// clearFilter clears the filter query.
+func (m *listModel) clearFilter() {
+	m.search.SetValue("")
+	m.rebuild()
+}
+
+// hasActiveFilter reports whether the filter query constrains the tree.
+func (m listModel) hasActiveFilter() bool {
+	return !m.filter().IsEmpty()
+}
+
+// filterSummary returns short descriptions of the active filter terms.
+func filterSummary(q filterquery.Query) []string {
 	var parts []string
-	if !m.filters.isEmpty() || m.query() != "" {
-		parts = append(parts, fmt.Sprintf("Beans %d/%d", m.shownCount, m.totalCount))
-	} else {
-		parts = append(parts, "Beans")
+	for _, t := range q.Terms {
+		if !t.IsText() && len(t.Values) == 0 {
+			continue
+		}
+		parts = append(parts, termSummary(t))
 	}
-	parts = append(parts, m.filters.summary()...)
-	if q := m.query(); q != "" {
-		parts = append(parts, fmt.Sprintf("%q", q))
+	return parts
+}
+
+// termSummary describes a filter term; the toggles of the filter bar read as
+// words ("done hidden"), everything else in query syntax.
+func termSummary(t filterquery.Term) string {
+	if t.IsText() || !t.Field.IsBoolField() || t.Negate || len(t.Values) != 1 {
+		return t.String()
 	}
+	v, ok := filterquery.ParseBool(t.Values[0])
+	if !ok {
+		return t.String()
+	}
+	switch t.Field {
+	case filterquery.FieldDone, filterquery.FieldArchived:
+		if v {
+			return string(t.Field) + " only"
+		}
+		return string(t.Field) + " hidden"
+	case filterquery.FieldReady:
+		if v {
+			return "ready"
+		}
+		return "not ready"
+	}
+	return t.String()
+}
+
+// title returns the tree title: the match count and the active filters.
+func (m listModel) title() string {
+	q := m.filter()
+	if q.IsEmpty() {
+		return "Beans"
+	}
+	parts := append([]string{fmt.Sprintf("Beans %d/%d", m.shownCount, m.totalCount)}, filterSummary(q)...)
 	return strings.Join(parts, " · ")
 }
 
-// foldsSuspended reports whether a filter or search is active, in which case
-// matches inside folded parents are shown (see listModel.folds). Hiding
-// completed beans does not count: it narrows the tree rather than looking
-// for something.
+// foldsSuspended reports whether a filter is active that looks for
+// something, in which case matches inside folded parents are shown (see
+// listModel.folds). Hiding completed or archived beans does not count: it
+// narrows the tree rather than looking for something.
 func (m listModel) foldsSuspended() bool {
-	f := m.filters
-	return len(f.statuses) > 0 || len(f.types) > 0 || len(f.tags) > 0 || m.query() != ""
+	q := m.filter()
+	if len(q.Texts()) > 0 {
+		return true
+	}
+	for _, t := range q.ActiveClauses() {
+		if t.Field != filterquery.FieldDone && t.Field != filterquery.FieldArchived {
+			return true
+		}
+	}
+	return false
 }
 
 // activeFolds returns the collapsed-ID set currently in effect.
@@ -214,8 +260,7 @@ func (m *listModel) activeFolds() map[string]bool {
 	if !m.foldsSuspended() {
 		return m.folds
 	}
-	f := m.filters
-	key := fmt.Sprintf("%q|%q|%q|%v|%q", f.statuses, f.types, f.tags, f.hideResolved, strings.ToLower(m.query()))
+	key := strings.ToLower(m.filter().String())
 	if m.filterFolds == nil || key != m.filterFoldsKey {
 		m.filterFolds = make(map[string]bool)
 		m.filterFoldsKey = key
@@ -259,17 +304,10 @@ func (m *listModel) rebuild() {
 	}
 	prevCursor := m.cursor
 
-	matched := m.filters.apply(m.beans, m.implicit)
-	if q := strings.ToLower(m.query()); q != "" {
-		terms := strings.Fields(q)
-		var found []*bean.Bean
-		for _, b := range matched {
-			if searchMatches(b, terms) {
-				found = append(found, b)
-			}
-		}
-		matched = found
+	if m.qctx == nil {
+		m.qctx = filterquery.NewContext(m.beans)
 	}
+	matched := filterquery.Filter(m.beans, m.filter(), m.qctx)
 	m.shownCount = len(matched)
 	m.totalCount = len(m.beans)
 
@@ -570,6 +608,7 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 		m.beans = msg.beans
 		m.implicit = msg.implicit
 		m.archived = msg.archived
+		m.qctx = filterquery.NewContext(msg.beans)
 		m.byID = make(map[string]*bean.Bean, len(msg.beans))
 		for _, b := range msg.beans {
 			m.byID[b.ID] = b
@@ -598,18 +637,32 @@ func (m listModel) Update(msg tea.Msg) (listModel, tea.Cmd) {
 	return m, nil
 }
 
-// updateSearch handles keys while the search input has focus.
+// startSearch focuses the query input, ready to append a term.
+func (m *listModel) startSearch() tea.Cmd {
+	m.searching = true
+	m.searchBefore = m.search.Value()
+	if v := m.search.Value(); v != "" && !strings.HasSuffix(v, " ") {
+		m.search.SetValue(v + " ")
+	}
+	m.search.CursorEnd()
+	return m.search.Focus()
+}
+
+// updateSearch handles keys while the query input has focus. The tree
+// follows the query as it is typed.
 func (m listModel) updateSearch(msg tea.KeyMsg) (listModel, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
+		// Cancel the edit: back to the query from before.
 		m.searching = false
 		m.search.Blur()
-		m.search.SetValue("")
+		m.search.SetValue(m.searchBefore)
 		m.rebuild()
 		return m, nil
 	case "enter":
 		m.searching = false
 		m.search.Blur()
+		m.search.SetValue(m.query())
 		return m, nil
 	case "up", "ctrl+p":
 		m.moveCursor(-1)
@@ -659,8 +712,7 @@ func (m listModel) updateKey(msg tea.KeyMsg) (listModel, tea.Cmd) {
 	case "right", "l":
 		m.expandOrChild()
 	case "/":
-		m.searching = true
-		return m, m.search.Focus()
+		return m, m.startSearch()
 	case " ":
 		// Toggle selection for multi-select, then move to next item
 		if b := m.currentBean(); b != nil {
@@ -724,10 +776,7 @@ func (m listModel) updateKey(msg tea.KeyMsg) (listModel, tea.Cmd) {
 		}
 	case "H":
 		// Toggle hiding of completed/scrapped beans
-		m.toggleHideResolved()
-		return m, m.loadBeans
-	case "F":
-		return m, func() tea.Msg { return openFilterPickerMsg{} }
+		m.toggleHideDone()
 	case "c":
 		return m, func() tea.Msg { return openCreateModalMsg{} }
 	case "e":
@@ -740,17 +789,12 @@ func (m listModel) updateKey(msg tea.KeyMsg) (listModel, tea.Cmd) {
 			return m, func() tea.Msg { return copyBeanIDMsg{ids: ids} }
 		}
 	case "esc", "backspace":
-		// Clear the selection, then the search, then the filters.
+		// Clear the selection, then the filters.
 		if len(m.selectedBeans) > 0 {
 			clear(m.selectedBeans)
 			return m, nil
 		}
 		if m.search.Value() != "" {
-			m.search.SetValue("")
-			m.rebuild()
-			return m, nil
-		}
-		if m.hasActiveFilter() {
 			return m, func() tea.Msg { return clearFilterMsg{} }
 		}
 	}
@@ -888,7 +932,7 @@ func (m listModel) viewLines() []string {
 		lines = append(lines, mutedStyle().Render(" Loading…"))
 	case len(m.rows) == 0:
 		msg := " No beans yet. Press c to create one."
-		if !m.filters.isEmpty() || m.query() != "" {
+		if m.hasActiveFilter() {
 			msg = " No beans match. Press esc to clear."
 		}
 		lines = append(lines, mutedStyle().Render(truncateText(msg, w)))
@@ -909,16 +953,26 @@ func (m listModel) viewLines() []string {
 	return lines
 }
 
-// searchLine renders the search input line shown above the rows.
+// searchLine renders the query line shown above the rows, flagging values
+// that cannot match anything (e.g. a misspelled status).
 func (m listModel) searchLine(width int) string {
 	prompt := accentStyle().Render("/ ")
-	if !m.searching {
-		return fitWidth(prompt+m.search.Value()+mutedStyle().Render("  (/ edit · esc clear)"), width, lipgloss.NewStyle())
+	var bad []string
+	for _, t := range m.filter().ActiveClauses() {
+		bad = append(bad, filterquery.InvalidValues(t)...)
 	}
-	return fitWidth(prompt+m.search.View(), width, lipgloss.NewStyle())
+	note := ""
+	if len(bad) > 0 {
+		note = "  " + fg(colDanger()).Render("unknown: "+strings.Join(bad, ", "))
+	}
+	if !m.searching {
+		return fitWidth(prompt+m.search.Value()+note+mutedStyle().Render("  (/ edit · esc clear)"), width, lipgloss.NewStyle())
+	}
+	m.search.Width = max(width-lipgloss.Width(prompt)-lipgloss.Width(note)-1, 1)
+	return fitWidth(prompt+m.search.View()+note, width, lipgloss.NewStyle())
 }
 
-// showSearchLine reports whether the search line is shown.
+// showSearchLine reports whether the query line is shown.
 func (m listModel) showSearchLine() bool {
 	return m.searching || m.search.Value() != ""
 }
@@ -937,7 +991,7 @@ func (m listModel) treeHints(wide bool) []keyHint {
 		return []keyHint{{"enter", "apply"}, {"esc", "cancel"}, {"↑↓", "move"}}
 	}
 	hideLabel := "hide done"
-	if m.filters.hideResolved {
+	if m.doneHidden() {
 		hideLabel = "show done"
 	}
 	if len(m.selectedBeans) > 0 {
@@ -957,8 +1011,6 @@ func (m listModel) treeHints(wide bool) []keyHint {
 	}
 	var hints []keyHint
 	if m.search.Value() != "" {
-		hints = append(hints, keyHint{"esc", "clear search"})
-	} else if m.hasActiveFilter() {
 		hints = append(hints, keyHint{"esc", "clear filter"})
 	}
 	return append(hints,
@@ -974,6 +1026,8 @@ func (m listModel) treeHints(wide bool) []keyHint {
 		keyHint{"space", "select"},
 		keyHint{"H", hideLabel},
 		keyHint{"y", "copy id"},
+		keyHint{"F", "filters"},
+		keyHint{"/", "query"},
 		keyHint{"zR zM", "open/close all"},
 		keyHint{"g t", "tag"},
 	)

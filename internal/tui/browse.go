@@ -12,9 +12,9 @@ import (
 // tree and detail panes and a footer with context-sensitive key hints.
 //
 //	╭──────────────────────────────────────────────╮
-//	│ beans: project      / search · F filters · … │
+//	│ beans: project       / query · F filters · … │
 //	│ ──────────────────────────────────────────── │
-//	│ ╭─ Status ─╮ ╭─ Type ─╮ ╭─ Tags ─╮ ╭─ Done ─╮ │  filter bar (tall terminals)
+//	│ ╭─ Status ─╮ ╭─ Type ─╮ ╭─ Tags ─╮ ╭─ Done ─╮ │  filter bar (one line on short terminals)
 //	│ ╭─ Beans ──────╮ ╭──────────────────────────╮ │
 //	│ │ tree         │ │ detail boxes             │ │  side by side (wide terminals)
 //	│ ╰──────────────╯ ╰──────────────────────────╯ │
@@ -27,7 +27,8 @@ import (
 const (
 	// wideMinWidth is the minimum terminal width for side-by-side panes.
 	wideMinWidth = 100
-	// filterBarMinHeight is the minimum terminal height showing the filter bar.
+	// filterBarMinHeight is the minimum terminal height showing the full
+	// filter bar; shorter terminals show it as a single line.
 	filterBarMinHeight = 28
 	// twoLineFooterMinHeight is the minimum terminal height for a two-line footer.
 	twoLineFooterMinHeight = 20
@@ -42,6 +43,7 @@ type focusArea int
 const (
 	focusTree focusArea = iota
 	focusDetail
+	focusFilter
 )
 
 // browseLayout is the arrangement of the browse view for a terminal size.
@@ -63,6 +65,8 @@ func (a *App) layout() browseLayout {
 	fixed := 2 + 1 + 1 + 1 + len(l.footer) // frame, header, two rules, footer
 	if l.showBar {
 		fixed += 3
+	} else {
+		fixed++ // one-line filter bar
 	}
 	l.paneH = max(a.height-fixed, 3)
 	l.treeW = l.inner
@@ -240,9 +244,12 @@ func (a *App) footerLines(width int, wide bool) []string {
 		maxLines = 1
 	}
 	var hints []keyHint
-	if a.focus == focusDetail && a.detail.bean != nil {
+	switch {
+	case a.focus == focusFilter:
+		hints = a.filterBarHints()
+	case a.focus == focusDetail && a.detail.bean != nil:
 		hints = a.detail.hints()
-	} else {
+	default:
 		hints = a.list.treeHints(wide)
 	}
 
@@ -292,8 +299,12 @@ func (a *App) browseView() string {
 	content = append(content, borderStyle().Render(strings.Repeat("─", l.inner)))
 	if l.showBar {
 		content = append(content, a.filterBar(l.inner)...)
+	} else {
+		line, _ := a.filterSummaryLine(l.inner)
+		content = append(content, line)
 	}
 	content = append(content, a.paneLines(l)...)
+	content = a.overlayDropdown(content, len(content)-l.paneH, l.inner, !l.showBar)
 	content = append(content, borderStyle().Render(strings.Repeat("─", l.inner)))
 	content = append(content, l.footer...)
 	return strings.Join(frameLines(content, a.width, a.height), "\n")
@@ -328,7 +339,7 @@ func (a *App) headerLine(width int) string {
 	right := ""
 	if room > 0 {
 		right = renderHints(
-			[]keyHint{{"/", "search"}, {"F", "filters"}},
+			[]keyHint{{"/", "query"}, {"F", "filters"}},
 			[]keyHint{{"?", "help"}, {"q", "quit"}},
 			room,
 		)
@@ -338,64 +349,6 @@ func (a *App) headerLine(width int) string {
 	}
 	gap := max(width-lipgloss.Width(left)-lipgloss.Width(right), 0)
 	return left + strings.Repeat(" ", gap) + right
-}
-
-// filterValue renders the selected values of a filter category.
-func filterValue(values []string, color func(string) lipgloss.Color) string {
-	if len(values) == 0 {
-		return mutedStyle().Render("(any)")
-	}
-	parts := make([]string, len(values))
-	for i, v := range values {
-		parts[i] = fg(color(v)).Render(v)
-	}
-	return strings.Join(parts, ", ")
-}
-
-// filterBar renders the current filters as a row of labelled boxes.
-func (a *App) filterBar(width int) []string {
-	f := a.list.filters
-	statusColor := func(v string) lipgloss.Color {
-		if s := a.config.GetStatus(v); s != nil {
-			return colNamed(s.Color)
-		}
-		return colFg()
-	}
-	typeColor := func(v string) lipgloss.Color {
-		if t := a.config.GetType(v); t != nil {
-			return colNamed(t.Color)
-		}
-		return colFg()
-	}
-	done := mutedStyle().Render("shown")
-	if f.hideResolved {
-		done = fg(colWarning()).Render("hidden")
-	}
-	type field struct{ label, value, hotkey string }
-	fields := []field{
-		{"Status", filterValue(f.statuses, statusColor), "F"},
-		{"Type", filterValue(f.types, typeColor), "F"},
-		{"Tags", filterValue(f.tags, func(string) lipgloss.Color { return colFg() }), "g t"},
-		{"Completed", done, "H"},
-	}
-	if q := a.list.query(); q != "" {
-		fields = append(fields, field{"Search", q, "/"})
-	}
-	ws := splitWidths(width, len(fields), 1)
-	blocks := make([][]string, len(fields))
-	for i, fl := range fields {
-		blocks[i] = box{label: fl.label, hotkey: fl.hotkey, lines: []string{fl.value}, width: ws[i], padding: 1}.render()
-	}
-	return joinColumns(1, blocks...)
-}
-
-// treeLabel returns the label of the tree pane. Without the filter bar it
-// carries the filter summary.
-func (a *App) treeLabel(showBar bool) string {
-	if !showBar {
-		return a.list.title()
-	}
-	return strings.SplitN(a.list.title(), " · ", 2)[0]
 }
 
 // paneLines renders the tree and detail panes.
@@ -409,7 +362,7 @@ func (a *App) paneLines(l browseLayout) []string {
 	}
 	rows = append(rows, a.list.viewLines()...)
 	tree := box{
-		label:    a.treeLabel(l.showBar),
+		label:    a.list.title(),
 		botRight: mutedStyle().Render(a.list.position()),
 		lines:    rows,
 		width:    l.treeW,

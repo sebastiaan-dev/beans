@@ -424,9 +424,10 @@ func (m *detailModel) popHistory() (string, bool) {
 	return id, true
 }
 
-// Update handles keys while the pane has the focus. Leaving the pane and
-// opening relations (esc, enter, backspace) are handled by the App, because
-// they change what the tree shows.
+// Update handles keys while the pane has the focus. Leaving the pane,
+// moving between its sections (tab, shift+tab) and opening relations (esc,
+// enter, backspace) are handled by the App, because they change what the
+// tree shows or where the focus goes.
 func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok || m.bean == nil {
@@ -438,14 +439,6 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 		m.bodyOffset = max(0, min(m.bodyOffset+delta, len(m.body)-l.bodyRows))
 	}
 	switch key.String() {
-	case "tab", "shift+tab":
-		if len(m.links) > 0 {
-			if m.section == sectionBody {
-				m.section = sectionRelations
-			} else {
-				m.section = sectionBody
-			}
-		}
 	case "up", "k":
 		if m.section == sectionRelations {
 			m.relCursor = max(0, m.relCursor-1)
@@ -503,8 +496,10 @@ func (m detailModel) hints() []keyHint {
 	} else {
 		hints = append(hints, keyHint{"↑↓", "scroll"})
 	}
-	if len(m.links) > 0 {
-		hints = append(hints, keyHint{"tab", "relations/body"})
+	if m.section == sectionRelations {
+		hints = append(hints, keyHint{"tab", "body"})
+	} else {
+		hints = append(hints, keyHint{"tab", "filters"})
 	}
 	if len(m.history) > 0 {
 		hints = append(hints, keyHint{"bksp", "previous"})
