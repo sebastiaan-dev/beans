@@ -34,9 +34,6 @@ func colFocusBorder() lipgloss.Color { return ui.ColorFocusBorder }
 // provide one (their Visual/CursorLine background).
 func colSelection() lipgloss.Color { return ui.ColorSelection }
 
-// colFg is the default foreground: the theme's text color, or the terminal's
-// own when empty.
-func colFg() lipgloss.Color { return ui.ColorFg }
 
 // colMuted is used for labels, hints and secondary information.
 func colMuted() lipgloss.Color { return ui.ColorMuted }
