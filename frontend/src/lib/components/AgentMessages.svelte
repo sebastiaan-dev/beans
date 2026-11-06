@@ -15,7 +15,14 @@
     scrollToBottomTrigger?: number;
   }
 
-  let { messages, isRunning, activityLabel, subagentActivities, setupRunning = false, scrollToBottomTrigger = 0 }: Props = $props();
+  let {
+    messages,
+    isRunning,
+    activityLabel,
+    subagentActivities,
+    setupRunning = false,
+    scrollToBottomTrigger = 0
+  }: Props = $props();
 
   // Track how many messages existed after the initial load so only
   // genuinely new messages get the decrypt animation.  The prop may be
@@ -143,7 +150,9 @@
     onscroll={handleMessagesScroll}
   >
     {#if setupRunning}
-      <div class="rounded-lg border border-border bg-surface px-3 py-2 text-text-muted animate-pulse">
+      <div
+        class="animate-pulse rounded-lg border border-border bg-surface px-3 py-2 text-text-muted"
+      >
         <p>Workspace setup is running...</p>
       </div>
     {/if}
@@ -178,13 +187,23 @@
             </div>
           </div>
         {:else if msg.role === 'INFO'}
-          <div class="rounded-lg border border-border bg-surface px-3 py-2 text-text-muted" data-testid="agent-info-message">
+          <div
+            class="rounded-lg border border-border bg-surface px-3 py-2 text-text-muted"
+            data-testid="agent-info-message"
+          >
             {#if getRenderedContent(i)}
               <div class="agent-prose prose max-w-none min-w-0 text-text-muted">
                 {@html getRenderedContent(i)}
               </div>
             {:else}
-              <p class="whitespace-pre-wrap" use:decryptText={{ text: msg.content, immediate: settledMessageCount === -1 || i < settledMessageCount, html: linkifyBeanIds(msg.content) }}></p>
+              <p
+                class="whitespace-pre-wrap"
+                use:decryptText={{
+                  text: msg.content,
+                  immediate: settledMessageCount === -1 || i < settledMessageCount,
+                  html: linkifyBeanIds(msg.content)
+                }}
+              ></p>
             {/if}
           </div>
         {:else if msg.role === 'TOOL'}
@@ -197,13 +216,28 @@
                   onclick={() => toggleDiff(i)}
                 >
                   <span class="shrink-0 select-none">{expandedDiffs.has(i) ? '▾' : '▸'}</span>
-                  <span use:decryptText={{ text: msg.content, immediate: settledMessageCount === -1 || i < settledMessageCount, html: linkifyBeanIds(msg.content) }}></span>
+                  <span
+                    use:decryptText={{
+                      text: msg.content,
+                      immediate: settledMessageCount === -1 || i < settledMessageCount,
+                      html: linkifyBeanIds(msg.content)
+                    }}
+                  ></span>
                 </button>
               {:else}
-                <span use:decryptText={{ text: msg.content, immediate: settledMessageCount === -1 || i < settledMessageCount, html: linkifyBeanIds(msg.content) }}></span>
+                <span
+                  use:decryptText={{
+                    text: msg.content,
+                    immediate: settledMessageCount === -1 || i < settledMessageCount,
+                    html: linkifyBeanIds(msg.content)
+                  }}
+                ></span>
               {/if}
               {#if msg.diff && expandedDiffs.has(i)}
-                <pre class="mt-1 max-h-64 overflow-auto rounded border border-border bg-surface-alt p-2 font-mono leading-relaxed">{#each msg.diff.split('\n') as line}<span class={diffLineClass(line)}>{line}
+                <pre
+                  class="mt-1 max-h-64 overflow-auto rounded border border-border bg-surface-alt p-2 font-mono leading-relaxed">{#each msg.diff.split('\n') as line}<span
+                      class={diffLineClass(line)}
+                      >{line}
 </span>{/each}</pre>
               {/if}
             </div>

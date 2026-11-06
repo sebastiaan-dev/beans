@@ -33,12 +33,12 @@ func TestBuildRoadmap(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name                  string
-		beans                 []*bean.Bean
-		includeDone           bool
-		wantMilestones        int
-		wantUnscheduledEpics  int
-		wantUnscheduledOther  int
+		name                 string
+		beans                []*bean.Bean
+		includeDone          bool
+		wantMilestones       int
+		wantUnscheduledEpics int
+		wantUnscheduledOther int
 	}{
 		{
 			name:           "empty beans",
@@ -126,9 +126,9 @@ func TestBuildRoadmap(t *testing.T) {
 
 func TestFirstParagraph(t *testing.T) {
 	tests := []struct {
-		name  string
-		body  string
-		want  string
+		name string
+		body string
+		want string
 	}{
 		{
 			name: "empty body",

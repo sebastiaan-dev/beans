@@ -3,7 +3,12 @@
   import { beansStore } from '$lib/beans.svelte';
   import { configStore } from '$lib/config.svelte';
   import { client } from '$lib/graphqlClient';
-  import { CreateBeanDocument, UpdateBeanDocument, type CreateBeanInput, type UpdateBeanInput } from '$lib/graphql/generated';
+  import {
+    CreateBeanDocument,
+    UpdateBeanDocument,
+    type CreateBeanInput,
+    type UpdateBeanInput
+  } from '$lib/graphql/generated';
 
   interface Props {
     bean?: Bean | null;
@@ -91,7 +96,10 @@
       const input: UpdateBeanInput = fields;
       const result = await client.mutation(UpdateBeanDocument, { id: bean.id, input }).toPromise();
       submitting = false;
-      if (result.error) { error = result.error.message; return; }
+      if (result.error) {
+        error = result.error.message;
+        return;
+      }
       saved = result.data?.updateBean ?? null;
     } else {
       // Leave untouched type/status to the server, which applies the
@@ -104,7 +112,10 @@
       };
       const result = await client.mutation(CreateBeanDocument, { input }).toPromise();
       submitting = false;
-      if (result.error) { error = result.error.message; return; }
+      if (result.error) {
+        error = result.error.message;
+        return;
+      }
       saved = result.data?.createBean ?? null;
     }
     if (saved) {

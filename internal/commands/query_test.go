@@ -224,10 +224,10 @@ func TestExecuteQueryWithRelationships(t *testing.T) {
 
 	// Create blocker bean
 	blocker := &bean.Bean{
-		ID:     "blocker-1",
-		Slug:   "blocker-bean",
-		Title:  "Blocker Bean",
-		Status: "todo",
+		ID:       "blocker-1",
+		Slug:     "blocker-bean",
+		Title:    "Blocker Bean",
+		Status:   "todo",
 		Blocking: []string{"child-1"},
 	}
 	if err := testCore.Create(blocker); err != nil {

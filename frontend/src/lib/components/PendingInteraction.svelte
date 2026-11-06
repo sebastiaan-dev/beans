@@ -108,9 +108,7 @@
 
 {#if interaction.type === 'EXIT_PLAN'}
   <div class="border-t border-status-in-progress-text/20 bg-status-in-progress-bg/50 p-3">
-    <p class="mb-2 text-text-muted">
-      Agent wants to leave plan mode and start working.
-    </p>
+    <p class="mb-2 text-text-muted">Agent wants to leave plan mode and start working.</p>
 
     {#if renderedPlanContent}
       <div class="mb-3 max-h-96 overflow-y-auto rounded border border-border bg-surface p-3">
@@ -146,7 +144,9 @@
           <fieldset class="space-y-2" disabled={submitting} data-testid="agent-question">
             <legend class="contents">
               {#if q.header}
-                <span class="inline-block rounded bg-accent/15 px-1.5 py-0.5 text-xs font-bold text-accent">
+                <span
+                  class="inline-block rounded bg-accent/15 px-1.5 py-0.5 text-xs font-bold text-accent"
+                >
                   {q.header}
                 </span>
               {/if}
@@ -206,13 +206,9 @@
           </div>
         {/if}
       </form>
-      <p class="mt-3 text-xs text-text-faint">
-        Or type a custom reply below.
-      </p>
+      <p class="mt-3 text-xs text-text-faint">Or type a custom reply below.</p>
     {:else}
-      <p class="text-xs text-accent">
-        Agent is waiting for your answer — type your reply below.
-      </p>
+      <p class="text-xs text-accent">Agent is waiting for your answer — type your reply below.</p>
     {/if}
   </div>
 {/if}

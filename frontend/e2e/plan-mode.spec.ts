@@ -55,10 +55,7 @@ test.describe('Plan mode approval flow', () => {
   });
 
   test('Plan/Act mode toggle reflects session state', async ({ page, beans }) => {
-    await agentSession('__central__', beans)
-      .withMessages(planMessages)
-      .inPlanMode()
-      .open(page);
+    await agentSession('__central__', beans).withMessages(planMessages).inPlanMode().open(page);
 
     // The mode toggle should show "Plan" is active
     const planButton = page.getByRole('button', { name: 'Plan', exact: true });

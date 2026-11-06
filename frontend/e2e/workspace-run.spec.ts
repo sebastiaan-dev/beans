@@ -49,7 +49,9 @@ test.describe('Workspace run experience', () => {
     await expect(runButton).not.toBeVisible();
 
     // Run pane should be visible (only Run, not Terminal)
-    await expect(page.getByRole('textbox', { name: 'Terminal input' })).toHaveCount(1, { timeout: 5_000 });
+    await expect(page.getByRole('textbox', { name: 'Terminal input' })).toHaveCount(1, {
+      timeout: 5_000
+    });
   });
 
   test('clicking Stop kills the process and reverts to Run button', async ({
@@ -81,10 +83,7 @@ test.describe('Workspace run experience', () => {
     await expect(stopButton).not.toBeVisible();
   });
 
-  test('Open button appears when running and has correct port', async ({
-    beansWithRun,
-    page
-  }) => {
+  test('Open button appears when running and has correct port', async ({ beansWithRun, page }) => {
     await page.goto(beansWithRun.baseURL + '/');
 
     // Create a workspace and start run

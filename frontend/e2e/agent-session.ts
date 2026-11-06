@@ -37,7 +37,10 @@ function streamEvent(event: StreamEvent): StreamEvent {
  * Fake-agent turn in which Claude streams some text and then calls the
  * AskUserQuestion tool with the given questions (input arrives in chunks).
  */
-export function askUserQuestionTurn(text: string, questions: AskUserQuestionConfig[]): StreamEvent[] {
+export function askUserQuestionTurn(
+  text: string,
+  questions: AskUserQuestionConfig[]
+): StreamEvent[] {
   const input = JSON.stringify({
     questions: questions.map((q) => ({
       header: q.header,
@@ -51,9 +54,18 @@ export function askUserQuestionTurn(text: string, questions: AskUserQuestionConf
     streamEvent({ type: 'content_block_start', content_block: { type: 'text', text: '' } }),
     streamEvent({ type: 'content_block_delta', delta: { type: 'text_delta', text } }),
     streamEvent({ type: 'content_block_stop' }),
-    streamEvent({ type: 'content_block_start', content_block: { type: 'tool_use', name: 'AskUserQuestion' } }),
-    streamEvent({ type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: input.slice(0, mid) } }),
-    streamEvent({ type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: input.slice(mid) } }),
+    streamEvent({
+      type: 'content_block_start',
+      content_block: { type: 'tool_use', name: 'AskUserQuestion' }
+    }),
+    streamEvent({
+      type: 'content_block_delta',
+      delta: { type: 'input_json_delta', partial_json: input.slice(0, mid) }
+    }),
+    streamEvent({
+      type: 'content_block_delta',
+      delta: { type: 'input_json_delta', partial_json: input.slice(mid) }
+    }),
     streamEvent({ type: 'content_block_stop' })
   ];
 }
@@ -172,7 +184,11 @@ class AgentSessionBuilder {
       const convDir = join(this.beansPath, '.conversations');
       mkdirSync(convDir, { recursive: true });
       const lines = this.messages.map((m) => {
-        const entry: Record<string, unknown> = { type: 'message', role: m.role, content: m.content };
+        const entry: Record<string, unknown> = {
+          type: 'message',
+          role: m.role,
+          content: m.content
+        };
         if (m.images && m.images.length > 0) entry.images = m.images;
         if (m.diff) entry.diff = m.diff;
         return JSON.stringify(entry);

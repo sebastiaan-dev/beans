@@ -2,7 +2,7 @@ import { client } from '$lib/graphqlClient';
 import {
   AgentActionsDocument,
   ExecuteAgentActionDocument,
-  type AgentActionFieldsFragment,
+  type AgentActionFieldsFragment
 } from './graphql/generated';
 
 export type AgentAction = AgentActionFieldsFragment;

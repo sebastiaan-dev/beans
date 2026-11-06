@@ -54,8 +54,13 @@
     <button
       class={['btn-toggle btn-toggle-inactive']}
       disabled={agentBusy || !!store.executingAction || action.disabled}
-      title={action.disabled ? (action.disabledReason ?? undefined) : (action.description ?? undefined)}
-      onclick={() => { store.execute(beanId, action.id); onExecute?.(); }}
+      title={action.disabled
+        ? (action.disabledReason ?? undefined)
+        : (action.description ?? undefined)}
+      onclick={() => {
+        store.execute(beanId, action.id);
+        onExecute?.();
+      }}
     >
       {action.label}
     </button>
@@ -73,8 +78,13 @@
             : prActionStyle(action.label)
         ]}
         disabled={agentBusy || !!store.executingAction || action.disabled}
-        title={action.disabled ? (action.disabledReason ?? undefined) : (action.description ?? undefined)}
-        onclick={() => { store.execute(beanId, action.id); onExecute?.(); }}
+        title={action.disabled
+          ? (action.disabledReason ?? undefined)
+          : (action.description ?? undefined)}
+        onclick={() => {
+          store.execute(beanId, action.id);
+          onExecute?.();
+        }}
       >
         {#if action.id === 'integrate'}
           <span class="icon-[uil--check] size-4"></span>

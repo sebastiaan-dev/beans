@@ -29,7 +29,9 @@ test.describe('Agent chat info messages', () => {
     await dialog.getByRole('button', { name: 'Create' }).click();
     await expect(page).toHaveURL(/\/workspace\/hooked/, { timeout: 20_000 });
 
-    const info = page.getByTestId('agent-info-message').filter({ hasText: 'Workspace setup failed' });
+    const info = page
+      .getByTestId('agent-info-message')
+      .filter({ hasText: 'Workspace setup failed' });
     await expect(info).toBeVisible({ timeout: 15_000 });
     const code = info.locator('pre code');
     await expect(code).toContainText('worktrunk project hooks need your approval');

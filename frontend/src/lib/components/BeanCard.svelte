@@ -19,7 +19,9 @@
 
   const linkedWorktreeId = $derived(worktreeStore.worktreeForBean(bean.id));
   const hasWorktree = $derived(variant !== 'compact' && !!linkedWorktreeId);
-  const agentRunning = $derived(hasWorktree && linkedWorktreeId != null && agentStatusesStore.isRunning(linkedWorktreeId));
+  const agentRunning = $derived(
+    hasWorktree && linkedWorktreeId != null && agentStatusesStore.isRunning(linkedWorktreeId)
+  );
 
   const worktreeLabel = $derived(
     linkedWorktreeId ? (worktreeStore.labelFor(linkedWorktreeId) ?? linkedWorktreeId) : ''
@@ -80,12 +82,7 @@
     </div>
     <div class="mt-1 flex items-center gap-2">
       <code class="text-[10px] text-text-faint">{bean.id.slice(-4)}</code>
-      <span
-        class={[
-          'badge-sm',
-          typeColors[bean.type] ?? 'bg-type-task-bg text-type-task-text'
-        ]}
-      >
+      <span class={['badge-sm', typeColors[bean.type] ?? 'bg-type-task-bg text-type-task-text']}>
         {bean.type}
       </span>
       {#each bean.tags as tag}
@@ -105,7 +102,10 @@
       {/if}
       {#if isArchivable}
         <button
-          class={['cursor-pointer icon-[uil--archive] size-3.5 text-text-faint transition-colors hover:text-text-muted disabled:opacity-50', !hasWorktree && 'ml-auto']}
+          class={[
+            'icon-[uil--archive] size-3.5 cursor-pointer text-text-faint transition-colors hover:text-text-muted disabled:opacity-50',
+            !hasWorktree && 'ml-auto'
+          ]}
           title="Archive"
           onclick={handleArchive}
           disabled={archiving}
@@ -123,7 +123,7 @@
         >{bean.title}</span
       >
       {#each bean.tags as tag}
-        <span class="shrink-0 badge-sm bg-surface-alt text-text-muted">{tag}</span>
+        <span class="badge-sm shrink-0 bg-surface-alt text-text-muted">{tag}</span>
       {/each}
       {#if hasWorktree}
         <button
@@ -139,7 +139,7 @@
       {/if}
       <span
         class={[
-          'shrink-0 badge-sm',
+          'badge-sm shrink-0',
           statusColors[bean.status] ?? 'bg-status-todo-bg text-status-todo-text'
         ]}
       >
@@ -147,7 +147,7 @@
       </span>
       {#if isArchivable}
         <button
-          class="cursor-pointer icon-[uil--archive] size-3.5 shrink-0 text-text-faint transition-colors hover:text-text-muted disabled:opacity-50"
+          class="icon-[uil--archive] size-3.5 shrink-0 cursor-pointer text-text-faint transition-colors hover:text-text-muted disabled:opacity-50"
           title="Archive"
           onclick={handleArchive}
           disabled={archiving}
@@ -156,4 +156,3 @@
     </div>
   {/if}
 </div>
-

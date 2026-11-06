@@ -6,7 +6,11 @@
   import { ui } from '$lib/uiState.svelte';
   import { statusColors, typeColors, priorityColors } from '$lib/styles';
   import { client } from '$lib/graphqlClient';
-  import { SendAgentMessageDocument, UpdateBeanStatusDocument, ArchiveBeanDocument } from '$lib/graphql/generated';
+  import {
+    SendAgentMessageDocument,
+    UpdateBeanStatusDocument,
+    ArchiveBeanDocument
+  } from '$lib/graphql/generated';
   import BeanCard from './BeanCard.svelte';
   import RenderedMarkdown from './RenderedMarkdown.svelte';
   import CommandMessage from './CommandMessage.svelte';
@@ -58,15 +62,42 @@
     switch (bean.status) {
       case 'draft':
         return [
-          { label: 'Todo', status: 'todo', icon: 'icon-[uil--clipboard-notes]', iconColor: 'text-sky-400' },
-          { label: 'Scrap', status: 'scrapped', icon: 'icon-[uil--trash-alt]', iconColor: 'text-danger' }
+          {
+            label: 'Todo',
+            status: 'todo',
+            icon: 'icon-[uil--clipboard-notes]',
+            iconColor: 'text-sky-400'
+          },
+          {
+            label: 'Scrap',
+            status: 'scrapped',
+            icon: 'icon-[uil--trash-alt]',
+            iconColor: 'text-danger'
+          }
         ];
       case 'todo':
-        return [{ label: 'Scrap', status: 'scrapped', icon: 'icon-[uil--trash-alt]', iconColor: 'text-danger' }];
+        return [
+          {
+            label: 'Scrap',
+            status: 'scrapped',
+            icon: 'icon-[uil--trash-alt]',
+            iconColor: 'text-danger'
+          }
+        ];
       case 'in-progress':
         return [
-          { label: 'Complete', status: 'completed', icon: 'icon-[uil--check-circle]', iconColor: 'text-success' },
-          { label: 'Scrap', status: 'scrapped', icon: 'icon-[uil--trash-alt]', iconColor: 'text-danger' }
+          {
+            label: 'Complete',
+            status: 'completed',
+            icon: 'icon-[uil--check-circle]',
+            iconColor: 'text-success'
+          },
+          {
+            label: 'Scrap',
+            status: 'scrapped',
+            icon: 'icon-[uil--trash-alt]',
+            iconColor: 'text-danger'
+          }
         ];
       default:
         return [];
@@ -113,7 +144,6 @@
     ui.navigateTo(wt.id);
     startingWork = false;
   }
-
 </script>
 
 <div class="h-full overflow-auto p-6">
@@ -139,25 +169,15 @@
           </svg>
         {/if}
       </button>
-      <span
-        class={[
-          'badge',
-          typeColors[bean.type] ?? 'bg-type-task-bg text-type-task-text'
-        ]}>{bean.type}</span
+      <span class={['badge', typeColors[bean.type] ?? 'bg-type-task-bg text-type-task-text']}
+        >{bean.type}</span
       >
       <span
-        class={[
-          'badge',
-          statusColors[bean.status] ?? 'bg-status-todo-bg text-status-todo-text'
-        ]}>{bean.status}</span
+        class={['badge', statusColors[bean.status] ?? 'bg-status-todo-bg text-status-todo-text']}
+        >{bean.status}</span
       >
       {#if bean.priority && bean.priority !== 'normal'}
-        <span
-          class={[
-            'badge border',
-            priorityColors[bean.priority]
-          ]}
-        >
+        <span class={['badge border', priorityColors[bean.priority]]}>
           {bean.priority}
         </span>
       {/if}
@@ -167,11 +187,7 @@
     <!-- Action buttons -->
     <div class="mt-2 flex flex-wrap items-center gap-2">
       {#if canStartWork && bean.status === 'todo'}
-        <button
-          class="btn-toggle btn-toggle-inactive"
-          onclick={startWork}
-          disabled={startingWork}
-        >
+        <button class="btn-toggle btn-toggle-inactive" onclick={startWork} disabled={startingWork}>
           {#if startingWork}
             <span
               class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current/30 border-t-current"
@@ -205,10 +221,7 @@
         </button>
       {/if}
       {#if onEdit}
-        <button
-          class="btn-toggle btn-toggle-inactive"
-          onclick={() => onEdit(bean)}
-        >
+        <button class="btn-toggle btn-toggle-inactive" onclick={() => onEdit(bean)}>
           <span class="icon-[uil--edit] size-4 text-sky-400"></span>
           Edit
         </button>
@@ -240,9 +253,7 @@
       <h2 class="mb-2 text-xs font-semibold text-text-muted uppercase">Tags</h2>
       <div class="flex flex-wrap gap-1">
         {#each bean.tags as tag}
-          <span class="badge border border-border text-text-muted"
-            >{tag}</span
-          >
+          <span class="badge border border-border text-text-muted">{tag}</span>
         {/each}
       </div>
     </div>

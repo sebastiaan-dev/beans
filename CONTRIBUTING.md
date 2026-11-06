@@ -25,12 +25,10 @@ manually (`workflow_dispatch`). Every job must pass:
   vitest, `prettier --check`, `vite build`.
 - **e2e**: the Playwright suite against the embedded frontend.
 
-Two checks are deliberately limited while the code base is cleaned up:
-
-- `gofmt` and `prettier` only check files changed compared to the base commit
-  (locally: the merge base with `main`, plus uncommitted files), because many
-  existing files aren't formatted yet. `mise run fmt` formats everything.
+- `gofmt` and `prettier` check every file; run `mise run fmt` before committing
+  (`--changed` checks only files changed since the base commit).
 - `staticcheck` fails only on findings that aren't listed in
-  `.github/staticcheck-baseline.txt`. Fix new findings instead of adding them.
+  `.github/staticcheck-baseline.txt` (pre-existing ones). Fix new findings
+  instead of adding them.
 
 `release.yml` (GoReleaser + Homebrew tap) only runs in `hmans/beans`.

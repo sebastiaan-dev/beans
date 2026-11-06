@@ -20,7 +20,7 @@ import {
   type InteractionType,
   type ImageInput,
   type FileAttachmentInput,
-  type AgentQuestionAnswerInput,
+  type AgentQuestionAnswerInput
 } from './graphql/generated';
 
 export type AgentMessageImage = GqlAgentMessageImage;
@@ -125,7 +125,7 @@ export class AgentChatStore {
             role: AgentMessageRole.User,
             content: message,
             images: [],
-            attachments: attachments?.map(a => a.path) ?? [],
+            attachments: attachments?.map((a) => a.path) ?? [],
             diff: null
           }
         ]
@@ -186,7 +186,9 @@ export class AgentChatStore {
   }
 
   async setPlanMode(beanId: string, planMode: boolean): Promise<boolean> {
-    const result = await client.mutation(SetAgentPlanModeDocument, { beanId, planMode }).toPromise();
+    const result = await client
+      .mutation(SetAgentPlanModeDocument, { beanId, planMode })
+      .toPromise();
 
     if (result.error) {
       this.error = result.error.message;
@@ -208,9 +210,7 @@ export class AgentChatStore {
   }
 
   async setEffort(beanId: string, effort: string): Promise<boolean> {
-    const result = await client
-      .mutation(SetAgentEffortDocument, { beanId, effort })
-      .toPromise();
+    const result = await client.mutation(SetAgentEffortDocument, { beanId, effort }).toPromise();
 
     if (result.error) {
       this.error = result.error.message;

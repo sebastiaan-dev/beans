@@ -9,10 +9,10 @@ import (
 	"github.com/charmbracelet/glamour"
 	glamourstyles "github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/hmans/beans/pkg/bean"
-	"github.com/hmans/beans/pkg/beangraph"
 	"github.com/hmans/beans/internal/output"
 	"github.com/hmans/beans/internal/ui"
+	"github.com/hmans/beans/pkg/bean"
+	"github.com/hmans/beans/pkg/beangraph"
 	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -159,11 +159,11 @@ func showStyledBean(b *bean.Bean) {
 	}
 	if b.CreatedAt != nil {
 		header.WriteString("  ")
-		header.WriteString(ui.Muted.Render("created "+b.CreatedAt.Format("2006-01-02 15:04 UTC")))
+		header.WriteString(ui.Muted.Render("created " + b.CreatedAt.Format("2006-01-02 15:04 UTC")))
 	}
 	if b.UpdatedAt != nil {
 		header.WriteString("  ")
-		header.WriteString(ui.Muted.Render("updated "+b.UpdatedAt.Format("2006-01-02 15:04 UTC")))
+		header.WriteString(ui.Muted.Render("updated " + b.UpdatedAt.Format("2006-01-02 15:04 UTC")))
 	}
 	header.WriteString("\n")
 	header.WriteString(ui.Title.Render(b.Title))

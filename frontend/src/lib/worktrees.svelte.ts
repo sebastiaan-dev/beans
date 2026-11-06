@@ -7,7 +7,7 @@ import {
   CreateWorktreeDocument,
   RemoveWorktreeDocument,
   WorktreesDocument,
-  type WorktreeFieldsFragment,
+  type WorktreeFieldsFragment
 } from './graphql/generated';
 
 export const MAIN_WORKSPACE_ID = '__central__';
@@ -190,7 +190,9 @@ class WorktreeStore {
 
   /** Fetch fresh git status for a specific worktree (on-demand, not cached). */
   async getWorktreeStatus(id: string): Promise<WorktreeStatus | null> {
-    const result = await client.query(WorktreesDocument, {}, { requestPolicy: 'network-only' }).toPromise();
+    const result = await client
+      .query(WorktreesDocument, {}, { requestPolicy: 'network-only' })
+      .toPromise();
     if (result.error) return null;
     const wt = result.data?.worktrees?.find((w) => w.id === id);
     return wt ? { hasChanges: wt.hasChanges, hasUnmergedCommits: wt.hasUnmergedCommits } : null;

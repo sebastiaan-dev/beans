@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/hmans/beans/internal/output"
 	"github.com/hmans/beans/pkg/bean"
 	"github.com/hmans/beans/pkg/beancore"
 	"github.com/hmans/beans/pkg/beangraph"
-	"github.com/hmans/beans/internal/output"
 	"github.com/spf13/cobra"
 )
 

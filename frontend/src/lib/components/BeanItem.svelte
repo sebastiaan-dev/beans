@@ -99,10 +99,7 @@
         onclick={handleFoldClick}
       >
         <span
-          class={[
-            'icon-[uil--angle-right] size-4 transition-transform',
-            !collapsed && 'rotate-90'
-          ]}
+          class={['icon-[uil--angle-right] size-4 transition-transform', !collapsed && 'rotate-90']}
         ></span>
         {#if collapsed}
           <span class="text-[9px] leading-none font-medium tabular-nums" data-child-count
@@ -164,9 +161,7 @@
       <div
         class={[
           'mx-1 rounded-full transition-colors',
-          backlogDrag.showEndIndicator(bean.id, filteredChildren.length)
-            ? 'h-0.5 bg-accent'
-            : 'h-0'
+          backlogDrag.showEndIndicator(bean.id, filteredChildren.length) ? 'h-0.5 bg-accent' : 'h-0'
         ]}
       ></div>
     </div>

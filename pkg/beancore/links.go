@@ -587,4 +587,3 @@ func (c *Core) implicitStatusLocked(beanID string) (status, fromID string) {
 
 	return result.status, result.fromID
 }
-

@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/hmans/beans/pkg/bean"
 	"github.com/hmans/beans/internal/output"
+	"github.com/hmans/beans/pkg/bean"
 )
 
 // resolveContent returns content from a direct value or file flag.

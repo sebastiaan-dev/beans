@@ -4,7 +4,7 @@ import { client } from './graphqlClient';
 import {
   BeanChangedDocument,
   type BeanFieldsFragment,
-  type BeanChangedSubscription,
+  type BeanChangedSubscription
 } from './graphql/generated';
 
 /**

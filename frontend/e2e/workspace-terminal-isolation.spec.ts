@@ -14,7 +14,10 @@ async function createWorkspace(page: Page): Promise<Workspace> {
   await expect(page.getByRole('button', { name: 'VS Code' })).toBeVisible({ timeout: 5_000 });
   const activeLabel = page.locator('nav button.font-medium span.truncate');
   await expect(activeLabel).toBeVisible({ timeout: 5_000 });
-  return { id: new URL(page.url()).pathname.split('/')[2], name: (await activeLabel.textContent())! };
+  return {
+    id: new URL(page.url()).pathname.split('/')[2],
+    name: (await activeLabel.textContent())!
+  };
 }
 
 /** Navigate to a workspace through the sidebar (client-side navigation, no reload). */

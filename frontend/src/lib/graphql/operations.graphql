@@ -203,7 +203,6 @@ query AllFileDiff($filePath: String!, $path: String) {
   allFileDiff(filePath: $filePath, path: $path)
 }
 
-
 # =============================================================================
 # Mutations
 # =============================================================================
@@ -254,7 +253,12 @@ mutation RemoveWorktree($id: ID!) {
   removeWorktree(id: $id)
 }
 
-mutation SendAgentMessage($beanId: ID!, $message: String!, $images: [ImageInput!], $attachments: [FileAttachmentInput!]) {
+mutation SendAgentMessage(
+  $beanId: ID!
+  $message: String!
+  $images: [ImageInput!]
+  $attachments: [FileAttachmentInput!]
+) {
   sendAgentMessage(beanId: $beanId, message: $message, images: $images, attachments: $attachments)
 }
 

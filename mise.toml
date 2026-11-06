@@ -42,7 +42,7 @@ run = [
 ]
 
 [tasks."lint:go"]
-description = "Go checks run in CI: gofmt (changed files), go vet (linux/darwin/windows), staticcheck"
+description = "Go checks run in CI: gofmt, go vet (linux/darwin/windows), staticcheck"
 run = [
   ".github/scripts/check-gofmt.sh",
   "for os in linux darwin windows; do echo \"go vet (GOOS=$os)\"; GOOS=$os CGO_ENABLED=0 go vet ./... || exit 1; done",
@@ -50,7 +50,7 @@ run = [
 ]
 
 [tasks."lint:frontend"]
-description = "Frontend checks run in CI: svelte-check, prettier (changed files)"
+description = "Frontend checks run in CI: svelte-check, prettier"
 run = [
   "cd frontend && pnpm check",
   ".github/scripts/check-prettier.sh",

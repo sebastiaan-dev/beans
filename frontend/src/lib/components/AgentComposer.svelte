@@ -20,7 +20,11 @@
     systemStatus: string | null;
     subagentActivities: SubagentActivity[];
     quickReplies: string[];
-    onSend: (message: string, images?: { data: string; mediaType: string }[], attachments?: { path: string }[]) => void;
+    onSend: (
+      message: string,
+      images?: { data: string; mediaType: string }[],
+      attachments?: { path: string }[]
+    ) => void;
     onStop: () => void;
     onSetMode: (mode: 'plan' | 'act') => void;
     onSetEffort: (effort: string) => void;
@@ -83,7 +87,7 @@
       const filtered: typeof allFiles = [];
       for (const file of allFiles) {
         const lower = file.path.toLowerCase();
-        if (terms.every(t => lower.includes(t))) {
+        if (terms.every((t) => lower.includes(t))) {
           filtered.push(file);
           if (filtered.length >= 50) break;
         }
@@ -95,11 +99,17 @@
 
   async function fetchAllFiles() {
     if (allFilesLoaded) return;
-    const result = await client.query(ListFilesDocument, {
-      workspaceId,
-      prefix: '',
-      limit: null
-    }, { requestPolicy: 'network-only' }).toPromise();
+    const result = await client
+      .query(
+        ListFilesDocument,
+        {
+          workspaceId,
+          prefix: '',
+          limit: null
+        },
+        { requestPolicy: 'network-only' }
+      )
+      .toPromise();
     if (result.data?.listFiles) {
       allFiles = result.data.listFiles;
       allFilesLoaded = true;
@@ -159,7 +169,8 @@
     const { from } = editor.state.selection;
 
     // Replace @query with an inline fileMention node
-    editor.chain()
+    editor
+      .chain()
       .deleteRange({ from: mentionStartPos, to: from })
       .insertContentAt(mentionStartPos, [
         { type: 'fileMention', attrs: { path: item.path } },
@@ -200,7 +211,8 @@
           },
           ArrowUp: () => {
             if (showMention && mentionResults.length > 0) {
-              mentionSelectedIndex = (mentionSelectedIndex - 1 + mentionResults.length) % mentionResults.length;
+              mentionSelectedIndex =
+                (mentionSelectedIndex - 1 + mentionResults.length) % mentionResults.length;
               setTimeout(scrollSelectedIntoView, 0);
               return true;
             }
@@ -377,12 +389,14 @@
     if (!editor) return;
     // Serialize with inline markers for file mentions so they appear
     // at the correct position in the displayed message
-    const text = editor.getText({
-      blockSeparator: '\n',
-      textSerializers: {
-        fileMention: ({ node }) => `{{file:${String(node.attrs.path ?? '')}}}`
-      }
-    }).trim();
+    const text = editor
+      .getText({
+        blockSeparator: '\n',
+        textSerializers: {
+          fileMention: ({ node }) => `{{file:${String(node.attrs.path ?? '')}}}`
+        }
+      })
+      .trim();
     const attachments = extractAttachments(editor);
     if (!text && pendingImages.length === 0 && attachments.length === 0) return;
     const images =
@@ -440,16 +454,24 @@
     ondrop={handleDrop}
   >
     {#if showMention && mentionResults.length > 0}
-      <div data-mention-list class="absolute bottom-full left-0 z-50 mb-1 max-h-48 w-full overflow-y-auto rounded border border-border bg-surface shadow-lg">
+      <div
+        data-mention-list
+        class="absolute bottom-full left-0 z-50 mb-1 max-h-48 w-full overflow-y-auto rounded border border-border bg-surface shadow-lg"
+      >
         {#each mentionResults as item, i (item.path)}
           <button
             type="button"
             data-selected={i === mentionSelectedIndex ? '' : undefined}
             class={[
               'flex w-full cursor-pointer items-center gap-2 px-2 py-1 text-left text-xs',
-              i === mentionSelectedIndex ? 'bg-accent/10 text-accent' : 'text-text-muted hover:bg-surface-alt'
+              i === mentionSelectedIndex
+                ? 'bg-accent/10 text-accent'
+                : 'text-text-muted hover:bg-surface-alt'
             ]}
-            onmousedown={(e) => { e.preventDefault(); selectMentionItem(item); }}
+            onmousedown={(e) => {
+              e.preventDefault();
+              selectMentionItem(item);
+            }}
           >
             <span class="icon-[uil--file] size-3.5 shrink-0"></span>
             <span class="truncate">{item.path}</span>
@@ -530,9 +552,7 @@
         disabled={isRunning}
         class={[
           'btn-tab-sm cursor-pointer rounded-l',
-          effort === 'low'
-            ? 'border-accent/30 bg-accent/10 text-accent'
-            : 'btn-tab-sm-inactive'
+          effort === 'low' ? 'border-accent/30 bg-accent/10 text-accent' : 'btn-tab-sm-inactive'
         ]}
       >
         Low
@@ -542,9 +562,7 @@
         disabled={isRunning}
         class={[
           'btn-tab-sm cursor-pointer border-l-0',
-          effort === 'medium'
-            ? 'border-accent/30 bg-accent/10 text-accent'
-            : 'btn-tab-sm-inactive'
+          effort === 'medium' ? 'border-accent/30 bg-accent/10 text-accent' : 'btn-tab-sm-inactive'
         ]}
       >
         Med
@@ -554,9 +572,7 @@
         disabled={isRunning}
         class={[
           'btn-tab-sm cursor-pointer border-l-0',
-          effort === 'high'
-            ? 'border-accent/30 bg-accent/10 text-accent'
-            : 'btn-tab-sm-inactive'
+          effort === 'high' ? 'border-accent/30 bg-accent/10 text-accent' : 'btn-tab-sm-inactive'
         ]}
       >
         High
@@ -566,9 +582,7 @@
         disabled={isRunning}
         class={[
           'btn-tab-sm cursor-pointer rounded-r border-l-0',
-          effort === 'max'
-            ? 'border-accent/30 bg-accent/10 text-accent'
-            : 'btn-tab-sm-inactive'
+          effort === 'max' ? 'border-accent/30 bg-accent/10 text-accent' : 'btn-tab-sm-inactive'
         ]}
       >
         Max
@@ -604,9 +618,7 @@
       </button>
     </div>
 
-    <div
-      class={['flex', (isRunning || !hasMessages) && 'pointer-events-none opacity-30']}
-    >
+    <div class={['flex', (isRunning || !hasMessages) && 'pointer-events-none opacity-30']}>
       <button
         onclick={onCompact}
         disabled={isRunning || !hasMessages}

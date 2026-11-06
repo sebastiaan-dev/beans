@@ -9,9 +9,7 @@
 #   - otherwise the merge base of HEAD and origin/main (or main).
 # Locally, uncommitted and untracked files count as changed too.
 #
-# TODO(repos-dl82): only needed while the repository is not fully formatted;
-# once `mise run fmt` has been applied to everything, the format checks can
-# check all files and this script can go.
+# Used by the format checks' --changed mode (quick local runs).
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"

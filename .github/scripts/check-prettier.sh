@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# Fails when frontend files are not prettier-formatted. Checks only files
-# changed compared to the base commit (see changed-files.sh); pass --all to
-# check the whole frontend. Needs frontend dependencies (pnpm install).
+# Fails when frontend files are not prettier-formatted. Checks the whole
+# frontend; pass --changed to check only files changed compared to the base
+# commit (see changed-files.sh). Needs frontend dependencies (pnpm install).
 #
-# TODO(repos-dl82): check --all by default once the repository is formatted.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 here=.github/scripts
 
-if [[ "${1:-}" == "--all" ]]; then
+if [[ "${1:-}" != "--changed" ]]; then
 	cd frontend && exec pnpm exec prettier --check .
 fi
 

@@ -34,7 +34,6 @@ func colFocusBorder() lipgloss.Color { return ui.ColorFocusBorder }
 // provide one (their Visual/CursorLine background).
 func colSelection() lipgloss.Color { return ui.ColorSelection }
 
-
 // colMuted is used for labels, hints and secondary information.
 func colMuted() lipgloss.Color { return ui.ColorMuted }
 

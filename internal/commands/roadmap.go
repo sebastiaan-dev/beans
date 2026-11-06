@@ -31,7 +31,7 @@ var (
 
 // roadmapData holds the structured roadmap for JSON output.
 type roadmapData struct {
-	Milestones  []milestoneGroup `json:"milestones"`
+	Milestones  []milestoneGroup  `json:"milestones"`
 	Unscheduled *unscheduledGroup `json:"unscheduled,omitempty"`
 }
 
@@ -53,7 +53,6 @@ type epicGroup struct {
 	Epic  *bean.Bean   `json:"epic"`
 	Items []*bean.Bean `json:"items,omitempty"`
 }
-
 
 var roadmapCmd = &cobra.Command{
 	Use:   "roadmap",

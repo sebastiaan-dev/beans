@@ -45,7 +45,13 @@
             {:else}
               <tr class={diffLineClass(line.type)}>
                 <td class="diff-gutter">{line.newNum ?? line.oldNum ?? ''}</td>
-                <td class="whitespace-pre pr-3">{#if line.type === 'add'}<span class="diff-indicator">+</span>{:else if line.type === 'del'}<span class="diff-indicator">-</span>{:else}<span class="diff-indicator"> </span>{/if}{line.content}</td>
+                <td class="pr-3 whitespace-pre"
+                  >{#if line.type === 'add'}<span class="diff-indicator">+</span
+                    >{:else if line.type === 'del'}<span class="diff-indicator">-</span>{:else}<span
+                      class="diff-indicator"
+                    >
+                    </span>{/if}{line.content}</td
+                >
               </tr>
             {/if}
           {/each}

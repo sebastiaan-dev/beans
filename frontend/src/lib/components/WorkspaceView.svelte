@@ -48,9 +48,7 @@
   const hasRunCommand = $derived(!!configStore.worktreeRunCommand);
 
   async function handleRun() {
-    const result = await client
-      .mutation(StartRunDocument, { workspaceId: worktreeId })
-      .toPromise();
+    const result = await client.mutation(StartRunDocument, { workspaceId: worktreeId }).toPromise();
 
     if (result.data) {
       isRunning = true;
@@ -172,7 +170,9 @@
     <div class="pane-toolbar">
       <span>Terminal</span>
       <div class="flex-1"></div>
-      <button onclick={toggleTerminal} class="btn-icon cursor-pointer" title="Close">&#x2715;</button>
+      <button onclick={toggleTerminal} class="btn-icon cursor-pointer" title="Close"
+        >&#x2715;</button
+      >
     </div>
     <TerminalPane sessionId={worktreeId} hideToolbar />
   </div>
@@ -225,9 +225,24 @@
     direction="horizontal"
     panels={[
       { content: agentChatPanel },
-      { content: diffPanel, size: 600, collapsed: !diffSelectionStore.selected, persistKey: 'workspace-diff' },
-      { content: changesPanel, size: 420, collapsed: !ui.showChanges, persistKey: 'workspace-changes' },
-      { content: beanDetailPanel, size: 480, collapsed: !ui.currentBean, persistKey: 'workspace-detail' }
+      {
+        content: diffPanel,
+        size: 600,
+        collapsed: !diffSelectionStore.selected,
+        persistKey: 'workspace-diff'
+      },
+      {
+        content: changesPanel,
+        size: 420,
+        collapsed: !ui.showChanges,
+        persistKey: 'workspace-changes'
+      },
+      {
+        content: beanDetailPanel,
+        size: 480,
+        collapsed: !ui.currentBean,
+        persistKey: 'workspace-detail'
+      }
     ]}
   />
 {/snippet}
@@ -241,7 +256,12 @@
           title="Stop the running process"
           onclick={handleStop}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            class="h-4 w-4"
+          >
             <rect x="4" y="4" width="12" height="12" rx="1" />
           </svg>
           Stop
@@ -262,8 +282,15 @@
           title={`Run: ${configStore.worktreeRunCommand}`}
           onclick={handleRun}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-4 w-4">
-            <path d="M6.3 2.84A1.5 1.5 0 004 4.11v11.78a1.5 1.5 0 002.3 1.27l9.344-5.891a1.5 1.5 0 000-2.538L6.3 2.84z" />
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            class="h-4 w-4"
+          >
+            <path
+              d="M6.3 2.84A1.5 1.5 0 004 4.11v11.78a1.5 1.5 0 002.3 1.27l9.344-5.891a1.5 1.5 0 000-2.538L6.3 2.84z"
+            />
           </svg>
           Run
         </button>
@@ -297,24 +324,36 @@
         {@const isMerged = worktree.pullRequest.state === 'merged'}
         <a
           class={[
-            "btn-toggle ml-1 cursor-pointer",
+            'btn-toggle ml-1 cursor-pointer',
             isMerged
-              ? "border-purple-500/30 bg-purple-500/10 text-purple-400 hover:bg-purple-500/20"
-              : "border-accent/30 bg-accent/10 text-accent hover:bg-accent/20"
+              ? 'border-purple-500/30 bg-purple-500/10 text-purple-400 hover:bg-purple-500/20'
+              : 'border-accent/30 bg-accent/10 text-accent hover:bg-accent/20'
           ]}
           href={worktree.pullRequest.url}
           target="_blank"
           rel="noopener noreferrer"
           title={`PR #${worktree.pullRequest.number}: ${worktree.pullRequest.title}`}
         >
-          <span class={["size-4", isMerged ? "icon-[uil--code-branch] rotate-180" : "icon-[uil--external-link-alt]"]}></span>
+          <span
+            class={[
+              'size-4',
+              isMerged ? 'icon-[uil--code-branch] rotate-180' : 'icon-[uil--external-link-alt]'
+            ]}
+          ></span>
           PR #{worktree.pullRequest.number}
         </a>
       {/if}
       {#if isWorktree}
         <button
-          class={["btn-toggle ml-1 cursor-pointer border-accent/30 bg-accent/10 text-accent", (agentBusy || destroying) ? "opacity-50" : "hover:bg-accent/20"]}
-          title={destroying ? "Destroying..." : agentBusy ? "Cannot destroy while agent is running" : "Close this workspace"}
+          class={[
+            'btn-toggle ml-1 cursor-pointer border-accent/30 bg-accent/10 text-accent',
+            agentBusy || destroying ? 'opacity-50' : 'hover:bg-accent/20'
+          ]}
+          title={destroying
+            ? 'Destroying...'
+            : agentBusy
+              ? 'Cannot destroy while agent is running'
+              : 'Close this workspace'}
           disabled={agentBusy || destroying}
           onclick={() => (confirmingDestroy = true)}
         >
@@ -331,7 +370,7 @@
       role="status"
       data-setup-status="running"
     >
-      <span class="loader shrink-0 !size-3"></span>
+      <span class="loader !size-3 shrink-0"></span>
       {configStore.isWorktrunk
         ? 'Setting up workspace: running worktrunk pre-start hooks and the setup command…'
         : 'Setting up workspace: running the setup command…'}
@@ -342,10 +381,14 @@
       role="alert"
       data-setup-status="failed"
     >
-      <span class="icon-[uil--exclamation-triangle] mt-0.5 block size-4 shrink-0 text-danger"></span>
+      <span class="mt-0.5 icon-[uil--exclamation-triangle] block size-4 shrink-0 text-danger"
+      ></span>
       <div class="min-w-0 flex-1">
         <p class="text-xs font-semibold text-danger">Workspace setup failed</p>
-        <CommandMessage message={setupError} class="mt-1 max-h-48 overflow-y-auto text-text-muted" />
+        <CommandMessage
+          message={setupError}
+          class="mt-1 max-h-48 overflow-y-auto text-text-muted"
+        />
       </div>
       <button
         class="shrink-0 cursor-pointer px-1 text-xs text-text-faint hover:text-text"
@@ -362,7 +405,12 @@
       direction="vertical"
       panels={[
         { content: mainContent },
-        { content: terminalPanel, size: 300, collapsed: !(terminalOpen || isRunning), persistKey: 'workspace-terminal' }
+        {
+          content: terminalPanel,
+          size: 300,
+          collapsed: !(terminalOpen || isRunning),
+          persistKey: 'workspace-terminal'
+        }
       ]}
     />
   </div>

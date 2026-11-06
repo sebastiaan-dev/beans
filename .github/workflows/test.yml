@@ -30,8 +30,7 @@ jobs:
         with:
           go-version: stable
       - uses: ./.github/actions/setup-frontend
-      - name: gofmt (changed files)
-        # TODO(repos-dl82): check all files once the repository is formatted.
+      - name: gofmt
         run: .github/scripts/check-gofmt.sh
       - name: go vet
         run: go vet ./...
@@ -96,8 +95,7 @@ jobs:
       - name: vitest
         working-directory: frontend
         run: pnpm test
-      - name: prettier (changed files)
-        # TODO(repos-dl82): check all files once the repository is formatted.
+      - name: prettier
         run: .github/scripts/check-prettier.sh
       - name: build
         working-directory: frontend

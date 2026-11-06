@@ -27,13 +27,17 @@ test.describe('Workspaces with the worktrunk backend', () => {
 
     await expect(page).toHaveURL(/\/workspace\/feat-login/, { timeout: 20_000 });
     await expect(dialog).not.toBeVisible();
-    await expect(sidebar.locator('button[data-workspace-id="feat-login"]')).toContainText('feat-login');
+    await expect(sidebar.locator('button[data-workspace-id="feat-login"]')).toContainText(
+      'feat-login'
+    );
     await expect(page.locator('[data-workspace-branch]')).toHaveText('feat-login');
 
     const [wt] = await beans.getWorktrees();
     expect(wt).toMatchObject({ id: 'feat-login', branch: 'feat-login' });
     // The branch is exactly what was typed (no beans/ prefix).
-    expect(beans.git(beans.projectDir, ['branch', '--list', 'feat-login']).trim()).toContain('feat-login');
+    expect(beans.git(beans.projectDir, ['branch', '--list', 'feat-login']).trim()).toContain(
+      'feat-login'
+    );
     expect(beans.git(beans.projectDir, ['branch', '--list', 'beans/*']).trim()).toBe('');
     // The path (shown on hover) is worktrunk's template location.
     await expect(sidebar.locator('button[data-workspace-id="feat-login"]')).toHaveAttribute(
@@ -54,7 +58,7 @@ test.describe('Workspaces with the worktrunk backend', () => {
 
     await input.fill('fix/foo');
     const error = dialog.locator('[data-name-error]');
-    await expect(error).toContainText("Invalid name: it must start with a letter or digit");
+    await expect(error).toContainText('Invalid name: it must start with a letter or digit');
     await expect(create).toBeDisabled();
 
     await input.fill('a..b');
@@ -140,13 +144,13 @@ test.describe('Workspaces with the worktrunk backend', () => {
     await expect(page.locator('[data-toast]')).toHaveCount(0);
   });
 
-  test('unapproved project hooks fail setup with approval instructions', async ({ beans, page }) => {
+  test('unapproved project hooks fail setup with approval instructions', async ({
+    beans,
+    page
+  }) => {
     const marker = join(beans.projectDir, 'hook-ran');
     mkdirSync(join(beans.projectDir, '.config'), { recursive: true });
-    writeFileSync(
-      join(beans.projectDir, '.config', 'wt.toml'),
-      `pre-start = "touch ${marker}"\n`
-    );
+    writeFileSync(join(beans.projectDir, '.config', 'wt.toml'), `pre-start = "touch ${marker}"\n`);
     beans.git(beans.projectDir, ['add', '.config/wt.toml']);
     beans.git(beans.projectDir, ['commit', '-m', 'add worktrunk hook']);
 
@@ -168,9 +172,9 @@ test.describe('Workspaces with the worktrunk backend', () => {
       banner.locator(`[data-copy-command="cd ${beans.projectDir} && wt config approvals add"]`)
     ).toBeVisible();
 
-    await expect(sidebar.locator('button[data-workspace-id="hooked"] [data-setup-failed]')).toHaveText(
-      'Setup failed'
-    );
+    await expect(
+      sidebar.locator('button[data-workspace-id="hooked"] [data-setup-failed]')
+    ).toHaveText('Setup failed');
     // Beans never approves hooks itself, so the hook did not run.
     expect(existsSync(marker)).toBe(false);
 
