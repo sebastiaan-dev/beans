@@ -301,6 +301,13 @@ func checkTheme(c *config.Config, nvimAvailable bool, load func(config.ThemeSpec
 	if _, err := c.GetThemeBackground(spec); err != nil {
 		return "", err.Error(), ""
 	}
+	overrides, err := c.GetThemeOverrides()
+	if err == nil {
+		err = ui.ValidateThemeOverrides(overrides)
+	}
+	if err != nil {
+		return "", err.Error(), ""
+	}
 	if spec.Kind == config.ThemeNvim && !nvimAvailable {
 		return "", "", fmt.Sprintf("%s is %q but nvim is not installed; terminal colors will be used", source, value)
 	}
@@ -308,6 +315,9 @@ func checkTheme(c *config.Config, nvimAvailable bool, load func(config.ThemeSpec
 		if err := load(spec); err != nil {
 			return "", fmt.Sprintf("%s %q: %v", source, value, err), ""
 		}
+	}
+	if len(overrides) > 0 {
+		return fmt.Sprintf("Theme '%s' is valid (%d role override(s))", spec, len(overrides)), "", ""
 	}
 	return fmt.Sprintf("Theme '%s' is valid", spec), "", ""
 }

@@ -35,14 +35,16 @@ func TestFromNvimKansoMist(t *testing.T) {
 		Fg:         "#c5c9c7", // Normal
 		Bg:         "#22262d", // Normal
 		Muted:      "#75797f", // Comment
-		Border:     "#393b44", // FloatBorder
-		Accent:     "#8ba4b0", // Function
-		Selection:  "#393b44", // Visual bg
-		Success:    "#98bb6c", // DiagnosticOk
-		Warning:    "#dca561", // DiagnosticWarn
-		Danger:     "#c34043", // DiagnosticError
-		Info:       "#658594", // DiagnosticInfo
-		Hint:       "#6a9589", // DiagnosticHint
+		// FloatBorder #393b44 is too faint on #22262d (contrast 1.35) and
+		// WinSeparator equals Bg: LineNr is the first legible candidate.
+		Border:    "#75797f",
+		Accent:    "#8ba4b0", // Function
+		Selection: "#393b44", // Visual bg
+		Success:   "#98bb6c", // DiagnosticOk
+		Warning:   "#dca561", // DiagnosticWarn
+		Danger:    "#c34043", // DiagnosticError
+		Info:      "#658594", // DiagnosticInfo
+		Hint:      "#6a9589", // DiagnosticHint
 		ANSI: [16]string{ // g:terminal_color_0..15, lowercased
 			"#22262d", "#c4746e", "#8a9a7b", "#c4b28a", "#8ba4b0", "#a292a3", "#c5c9c7", "#a4a7a4",
 			"#909398", "#e46876", "#87a987", "#e6c384", "#7fb4ca", "#938aa9", "#7aa89f", "#c5c9c7",
@@ -200,5 +202,101 @@ func TestNormalizeHex(t *testing.T) {
 		if _, err := NormalizeHex(in); err == nil {
 			t.Errorf("NormalizeHex(%q) succeeded, want error", in)
 		}
+	}
+}
+
+func TestContrastRatio(t *testing.T) {
+	for _, tc := range []struct {
+		a, b     string
+		min, max float64
+	}{
+		{"#000000", "#ffffff", 20.99, 21.01},
+		{"#ffffff", "#000000", 20.99, 21.01},
+		{"#22262d", "#22262d", 1, 1},
+		{"#393b44", "#22262d", 1.3, 1.4}, // kanso-mist FloatBorder: too faint
+		{"#75797f", "#22262d", 3.4, 3.7}, // kanso-mist LineNr
+		{"#fff", "#000", 20.99, 21.01},
+		{"red", "#000000", 0, 0},
+		{"", "#000000", 0, 0},
+	} {
+		if r := ContrastRatio(tc.a, tc.b); r < tc.min || r > tc.max {
+			t.Errorf("ContrastRatio(%s, %s) = %.3f, want %.2f..%.2f", tc.a, tc.b, r, tc.min, tc.max)
+		}
+	}
+}
+
+func TestPickBorder(t *testing.T) {
+	const bg, fg = "#22262d", "#c5c9c7"
+	for name, tc := range map[string]struct {
+		bg    string
+		cands []string
+		want  string
+	}{
+		"first legible":    {bg, []string{"#393b44", "", "#22262d", "#5c6066", "#75797f"}, "#5c6066"},
+		"legible first":    {bg, []string{"#5c6066", "#75797f"}, "#5c6066"},
+		"text color last":  {bg, []string{"#393b44", fg, "#75797f"}, "#75797f"},
+		"only text color":  {bg, []string{"#393b44", fg}, fg},
+		"best when faint":  {bg, []string{"#2a2e35", "#393b44", "#30333a"}, "#393b44"},
+		"no background":    {"", []string{"", "#393b44", "#75797f"}, "#393b44"},
+		"no candidates":    {bg, []string{"", ""}, ""},
+		"light background": {"#fafafa", []string{"#eeeeee", "#aaaaaa"}, "#aaaaaa"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := pickBorder(tc.bg, fg, tc.cands...); got != tc.want {
+				t.Errorf("pickBorder = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestFromNvimBorderGuard: FloatBorder too close to the background falls
+// through WinSeparator, LineNr, NonText and Comment.
+func TestFromNvimBorderGuard(t *testing.T) {
+	exp := func(hl map[string]NvimHighlight) *NvimExport {
+		hl["Normal"] = NvimHighlight{Fg: "#c5c9c7", Bg: "#22262d"}
+		return &NvimExport{Highlights: hl}
+	}
+	for name, tc := range map[string]struct {
+		hl   map[string]NvimHighlight
+		want string
+	}{
+		"legible FloatBorder": {map[string]NvimHighlight{"FloatBorder": {Fg: "#6a6e75"}, "WinSeparator": {Fg: "#5c6066"}}, "#6a6e75"},
+		"WinSeparator":        {map[string]NvimHighlight{"FloatBorder": {Fg: "#393b44"}, "WinSeparator": {Fg: "#5c6066"}}, "#5c6066"},
+		"NonText":             {map[string]NvimHighlight{"FloatBorder": {Fg: "#393b44"}, "LineNr": {Fg: "#2a2e35"}, "NonText": {Fg: "#54585e"}, "Comment": {Fg: "#75797f"}}, "#54585e"},
+		"Comment":             {map[string]NvimHighlight{"FloatBorder": {Fg: "#393b44"}, "Comment": {Fg: "#75797f"}}, "#75797f"},
+		"all faint":           {map[string]NvimHighlight{"FloatBorder": {Fg: "#2a2e35"}, "WinSeparator": {Fg: "#393b44"}}, "#393b44"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			th, err := FromNvim(exp(tc.hl), "x")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if th.Border != tc.want {
+				t.Errorf("border = %q, want %q", th.Border, tc.want)
+			}
+		})
+	}
+}
+
+func TestParsePaletteBorderGuard(t *testing.T) {
+	for name, tc := range map[string]struct{ in, want string }{
+		"faint border uses muted": {"bg: '#22262d'\nmuted: '#75797f'\nborder: '#393b44'\n", "#75797f"},
+		"faint border uses ansi8": {"bg: '#22262d'\nmuted: '#2a2e35'\nborder: '#393b44'\nansi: ['', '', '', '', '', '', '', '', '#909398']\n", "#909398"},
+		"legible border kept":     {"bg: '#22262d'\nmuted: '#75797f'\nborder: '#5c6066'\n", "#5c6066"},
+		"no bg keeps border":      {"muted: '#75797f'\nborder: '#393b44'\n", "#393b44"},
+		"focus border":            {"bg: '#22262d'\nborder: '#5c6066'\nfocus_border: '#ABC'\n", "#5c6066"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			th, err := ParsePalette([]byte(tc.in))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if th.Border != tc.want {
+				t.Errorf("border = %q, want %q", th.Border, tc.want)
+			}
+			if strings.Contains(tc.in, "focus_border") && th.FocusBorder != "#aabbcc" {
+				t.Errorf("focus_border = %q", th.FocusBorder)
+			}
+		})
 	}
 }

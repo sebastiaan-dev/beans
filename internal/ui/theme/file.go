@@ -13,20 +13,21 @@ import (
 // paletteFile is the on-disk palette format (JSON or YAML; JSON is valid
 // YAML). It mirrors Theme's JSON form, but allows fewer than 16 ANSI slots.
 type paletteFile struct {
-	Name       string   `yaml:"name"`
-	Background string   `yaml:"background"`
-	Fg         string   `yaml:"fg"`
-	Bg         string   `yaml:"bg"`
-	Muted      string   `yaml:"muted"`
-	Border     string   `yaml:"border"`
-	Accent     string   `yaml:"accent"`
-	Selection  string   `yaml:"selection"`
-	Success    string   `yaml:"success"`
-	Warning    string   `yaml:"warning"`
-	Danger     string   `yaml:"danger"`
-	Info       string   `yaml:"info"`
-	Hint       string   `yaml:"hint"`
-	ANSI       []string `yaml:"ansi"`
+	Name        string   `yaml:"name"`
+	Background  string   `yaml:"background"`
+	Fg          string   `yaml:"fg"`
+	Bg          string   `yaml:"bg"`
+	Muted       string   `yaml:"muted"`
+	Border      string   `yaml:"border"`
+	FocusBorder string   `yaml:"focus_border"`
+	Accent      string   `yaml:"accent"`
+	Selection   string   `yaml:"selection"`
+	Success     string   `yaml:"success"`
+	Warning     string   `yaml:"warning"`
+	Danger      string   `yaml:"danger"`
+	Info        string   `yaml:"info"`
+	Hint        string   `yaml:"hint"`
+	ANSI        []string `yaml:"ansi"`
 }
 
 // LoadFile reads a palette file. Example (YAML):
@@ -36,7 +37,8 @@ type paletteFile struct {
 //	fg: "#c5c9c7"
 //	bg: "#22262d"
 //	muted: "#75797f"
-//	border: "#393b44"
+//	border: "#5c6066"       # see below
+//	focus_border: "#8ba4b0" # default: accent
 //	accent: "#8ba4b0"
 //	selection: "#393b44"
 //	success: "#98bb6c"
@@ -47,7 +49,10 @@ type paletteFile struct {
 //	ansi: ["#22262d", "#c4746e", ...]   # up to 16 slots, 0-15
 //
 // Every key is optional; unset roles and slots are derived from each other.
-// Unknown keys and invalid colors are errors.
+// Unknown keys and invalid colors are errors. A border whose contrast with
+// bg is below MinBorderContrast is replaced by muted or ansi[8], whichever
+// contrasts enough first (set the border with tui.theme_overrides to keep a
+// faint one).
 func LoadFile(path string) (*Theme, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -76,7 +81,7 @@ func ParsePalette(data []byte) (*Theme, error) {
 	}
 	t := &Theme{
 		Name: p.Name, Background: p.Background,
-		Fg: p.Fg, Bg: p.Bg, Muted: p.Muted, Border: p.Border, Accent: p.Accent,
+		Fg: p.Fg, Bg: p.Bg, Muted: p.Muted, Border: p.Border, FocusBorder: p.FocusBorder, Accent: p.Accent,
 		Selection: p.Selection, Success: p.Success, Warning: p.Warning,
 		Danger: p.Danger, Info: p.Info, Hint: p.Hint,
 	}
@@ -88,5 +93,6 @@ func ParsePalette(data []byte) (*Theme, error) {
 		return nil, errors.New("palette defines no colors")
 	}
 	t.complete()
+	t.Border = pickBorder(t.Bg, t.Fg, t.Border, t.Muted, t.ANSI[8])
 	return t, nil
 }

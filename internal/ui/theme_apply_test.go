@@ -307,6 +307,7 @@ func TestApplyConfiguredTheme(t *testing.T) {
 	}
 	t.Setenv(config.ThemeEnvVar, "")
 	t.Setenv(config.ThemeBackgroundEnvVar, "")
+	t.Setenv(config.ThemeOverridesEnvVar, "")
 
 	cfg := config.Default()
 	cfg.SetConfigDir(dir)
