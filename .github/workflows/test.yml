@@ -21,7 +21,7 @@ env:
 jobs:
   lint:
     name: lint (gofmt, vet, staticcheck, codegen)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -46,7 +46,7 @@ jobs:
 
   test-go:
     name: go test -race
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -63,7 +63,7 @@ jobs:
 
   cross:
     name: build + vet (${{ matrix.goos }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -83,7 +83,7 @@ jobs:
 
   frontend:
     name: frontend (check, vitest, prettier, build)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -103,7 +103,7 @@ jobs:
 
   e2e:
     name: e2e (Playwright)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       # frontend/e2e/run.sh builds with `mise exec -- go build`; use the Go
       # from setup-go instead of letting mise install the tools in mise.toml.
