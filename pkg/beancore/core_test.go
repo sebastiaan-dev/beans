@@ -29,6 +29,8 @@ func setupTestCore(t *testing.T) (*Core, string) {
 	if err := core.Load(); err != nil {
 		t.Fatalf("failed to load core: %v", err)
 	}
+	// Every test using the core also checks the link index at its end.
+	t.Cleanup(func() { assertLinkIndexConsistent(t, core) })
 
 	return core, beansDir
 }
@@ -48,6 +50,8 @@ func setupTestCoreWithRequireIfMatch(t *testing.T) (*Core, string) {
 	if err := core.Load(); err != nil {
 		t.Fatalf("failed to load core: %v", err)
 	}
+	// Every test using the core also checks the link index at its end.
+	t.Cleanup(func() { assertLinkIndexConsistent(t, core) })
 
 	return core, beansDir
 }

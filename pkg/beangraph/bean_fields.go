@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 
 	"github.com/hmans/beans/pkg/bean"
-	"github.com/hmans/beans/pkg/beancore"
 	"github.com/hmans/beans/pkg/beangraph/model"
 )
 
@@ -47,32 +46,7 @@ func (r *CoreResolver) BeanBlockedByIds(ctx context.Context, obj *bean.Bean) ([]
 // Combines both directions: the bean's own blocked_by field AND incoming
 // blocking links (other beans that list this bean in their blocking field).
 func (r *CoreResolver) BeanBlockedBy(ctx context.Context, obj *bean.Bean, filter *model.BeanFilter) ([]*bean.Bean, error) {
-	seen := make(map[string]bool)
-	var result []*bean.Bean
-
-	// 1. Resolve beans from the direct blocked_by field
-	for _, blockerID := range obj.BlockedBy {
-		if !seen[blockerID] {
-			seen[blockerID] = true
-			if blocker, err := r.Core.Get(blockerID); err == nil {
-				result = append(result, blocker)
-			}
-		}
-	}
-
-	// 2. Resolve beans from incoming blocking links (other beans blocking this one)
-	incoming := r.Core.FindIncomingLinks(obj.ID)
-	for _, link := range incoming {
-		if link.LinkType == "blocking" && !seen[link.FromBean.ID] {
-			seen[link.FromBean.ID] = true
-			result = append(result, link.FromBean)
-		}
-	}
-
-	filtered := ApplyFilter(result, filter, r.Core)
-	cfg := r.Core.Config()
-	bean.SortByStatusPriorityAndType(filtered, cfg.StatusNames(), cfg.PriorityNames(), cfg.TypeNames())
-	return filtered, nil
+	return r.relatedBeans(r.Core.BlockedBy(obj), filter), nil
 }
 
 // BeanBlocking resolves the full list of beans this bean is blocking.
@@ -80,59 +54,26 @@ func (r *CoreResolver) BeanBlockedBy(ctx context.Context, obj *bean.Bean, filter
 // blocking field AND incoming blocked_by links (other beans that list this
 // bean in their blocked_by field).
 func (r *CoreResolver) BeanBlocking(ctx context.Context, obj *bean.Bean, filter *model.BeanFilter) ([]*bean.Bean, error) {
-	seen := make(map[string]bool)
-	var result []*bean.Bean
-
-	// 1. Resolve beans from the direct blocking field (skipping broken links)
-	for _, targetID := range obj.Blocking {
-		if !seen[targetID] {
-			seen[targetID] = true
-			if target, err := r.Core.Get(targetID); err == nil {
-				result = append(result, target)
-			}
-		}
-	}
-
-	// 2. Resolve beans from incoming blocked_by links (beans blocked by this one)
-	for _, link := range r.Core.FindIncomingLinks(obj.ID) {
-		if link.LinkType == "blocked_by" && !seen[link.FromBean.ID] {
-			seen[link.FromBean.ID] = true
-			result = append(result, link.FromBean)
-		}
-	}
-
-	filtered := ApplyFilter(result, filter, r.Core)
-	cfg := r.Core.Config()
-	bean.SortByStatusPriorityAndType(filtered, cfg.StatusNames(), cfg.PriorityNames(), cfg.TypeNames())
-	return filtered, nil
+	return r.relatedBeans(r.Core.Blocking(obj), filter), nil
 }
 
-// BeanParent resolves the parent bean.
+// BeanParent resolves the parent bean (nil for broken links).
 func (r *CoreResolver) BeanParent(ctx context.Context, obj *bean.Bean) (*bean.Bean, error) {
-	if obj.Parent == "" {
-		return nil, nil
-	}
-	// Filter out broken links
-	parent, err := r.Core.Get(obj.Parent)
-	if err == beancore.ErrNotFound {
-		return nil, nil
-	}
-	return parent, err
+	return r.Core.Parent(obj), nil
 }
 
 // BeanChildren resolves the child beans.
 func (r *CoreResolver) BeanChildren(ctx context.Context, obj *bean.Bean, filter *model.BeanFilter) ([]*bean.Bean, error) {
-	incoming := r.Core.FindIncomingLinks(obj.ID)
-	var result []*bean.Bean
-	for _, link := range incoming {
-		if link.LinkType == "parent" {
-			result = append(result, link.FromBean)
-		}
-	}
-	filtered := ApplyFilter(result, filter, r.Core)
+	return r.relatedBeans(r.Core.Children(obj.ID), filter), nil
+}
+
+// relatedBeans filters and sorts the beans of a relation field. The beans
+// are Core's shared, read-only snapshots, like the top-level beans query.
+func (r *CoreResolver) relatedBeans(beans []*bean.Bean, filter *model.BeanFilter) []*bean.Bean {
+	filtered := ApplyFilter(beans, filter, r.Core)
 	cfg := r.Core.Config()
 	bean.SortByStatusPriorityAndType(filtered, cfg.StatusNames(), cfg.PriorityNames(), cfg.TypeNames())
-	return filtered, nil
+	return filtered
 }
 
 // BeanImplicitStatus returns the implicit status inherited from ancestors.

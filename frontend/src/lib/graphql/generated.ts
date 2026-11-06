@@ -232,9 +232,9 @@ export type BeanChangeEvent = {
 
 /** Filter options for querying beans */
 export type BeanFilter = {
-  /** Include only beans blocked by this specific bean ID (via blocked_by field) */
+  /** Include only beans blocked by this bean ID (it is in their blockedBy field, either direction) */
   blockedById?: InputMaybe<Scalars['String']['input']>;
-  /** Include only beans that are blocking this specific bean ID */
+  /** Include only beans that are blocking this bean ID (it is in their blocking field, either direction) */
   blockingId?: InputMaybe<Scalars['String']['input']>;
   /** Exclude beans that inherit a terminal status (scrapped or completed) from an ancestor */
   excludeImplicitTerminal?: InputMaybe<Scalars['Boolean']['input']>;
@@ -246,9 +246,9 @@ export type BeanFilter = {
   excludeTags?: InputMaybe<Array<Scalars['String']['input']>>;
   /** Exclude beans with these types */
   excludeType?: InputMaybe<Array<Scalars['String']['input']>>;
-  /** Include only beans that have explicit blocked-by entries */
+  /** Include only beans that are blocked by other beans (non-empty blockedBy field, either direction, regardless of the blockers' status) */
   hasBlockedBy?: InputMaybe<Scalars['Boolean']['input']>;
-  /** Include only beans that are blocking other beans */
+  /** Include only beans that are blocking other beans (non-empty blocking field, either direction, regardless of the blocked beans' status) */
   hasBlocking?: InputMaybe<Scalars['Boolean']['input']>;
   /** Include only beans with a parent */
   hasParent?: InputMaybe<Scalars['Boolean']['input']>;
@@ -258,9 +258,9 @@ export type BeanFilter = {
   isExplicitlyBlocked?: InputMaybe<Scalars['Boolean']['input']>;
   /** Filter beans that are implicitly blocked (an ancestor in the parent chain is blocked) */
   isImplicitlyBlocked?: InputMaybe<Scalars['Boolean']['input']>;
-  /** Exclude beans that have explicit blocked-by entries */
+  /** Exclude beans that are blocked by other beans (inverse of hasBlockedBy) */
   noBlockedBy?: InputMaybe<Scalars['Boolean']['input']>;
-  /** Exclude beans that are blocking other beans */
+  /** Exclude beans that are blocking other beans (inverse of hasBlocking) */
   noBlocking?: InputMaybe<Scalars['Boolean']['input']>;
   /** Exclude beans that have a parent */
   noParent?: InputMaybe<Scalars['Boolean']['input']>;
@@ -763,6 +763,11 @@ export type Query = {
   /** Get the allocated port for a workspace. Returns 0 if not allocated. */
   workspacePort: Scalars['Int']['output'];
   /**
+   * Get a single worktree by ID (null if there is none). Cheaper than worktrees
+   * for one workspace: only the selected fields of this worktree are computed.
+   */
+  worktree?: Maybe<Worktree>;
+  /**
    * The worktree backend (from worktree.backend config).
    * "git" = branches beans/<name> under worktree.path; only beans/* worktrees are workspaces.
    * "worktrunk" = managed with worktrunk (wt): plain branch names, worktrunk's path
@@ -855,6 +860,11 @@ export type QueryListFilesArgs = {
 
 export type QueryWorkspacePortArgs = {
   workspaceId: Scalars['ID']['input'];
+};
+
+
+export type QueryWorktreeArgs = {
+  id: Scalars['ID']['input'];
 };
 
 /** A single text replacement operation. */
@@ -1046,10 +1056,12 @@ export type ConfigQueryVariables = Exact<{ [key: string]: never; }>;
 
 export type ConfigQuery = { projectName: string, defaultBeanStatus: string, defaultBeanType: string, mainBranch: string, agentEnabled: boolean, worktreeBaseRef: string, worktreeRunCommand: string, worktreeIntegrateMode: string, worktreeBackend: string };
 
-export type WorktreesQueryVariables = Exact<{ [key: string]: never; }>;
+export type WorktreeStatusQueryVariables = Exact<{
+  id: Scalars['ID']['input'];
+}>;
 
 
-export type WorktreesQuery = { worktrees: Array<{ id: string, hasChanges: boolean, hasUnmergedCommits: boolean }> };
+export type WorktreeStatusQuery = { worktree?: { id: string, hasChanges: boolean, hasUnmergedCommits: boolean } | null };
 
 export type FileChangesQueryVariables = Exact<{
   path?: InputMaybe<Scalars['String']['input']>;
@@ -1293,7 +1305,7 @@ export const AgentSessionChangedDocument = {"kind":"Document","definitions":[{"k
 export const ActiveAgentStatusesDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"subscription","name":{"kind":"Name","value":"ActiveAgentStatuses"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"activeAgentStatuses"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"beanId"}},{"kind":"Field","name":{"kind":"Name","value":"status"}}]}}]}}]} as unknown as DocumentNode<ActiveAgentStatusesSubscription, ActiveAgentStatusesSubscriptionVariables>;
 export const WorkspaceStatusesDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"subscription","name":{"kind":"Name","value":"WorkspaceStatuses"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"workspaceStatuses"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"hasChanges"}},{"kind":"Field","name":{"kind":"Name","value":"hasUnmergedCommits"}}]}}]}}]} as unknown as DocumentNode<WorkspaceStatusesSubscription, WorkspaceStatusesSubscriptionVariables>;
 export const ConfigDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"query","name":{"kind":"Name","value":"Config"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"projectName"}},{"kind":"Field","name":{"kind":"Name","value":"defaultBeanStatus"}},{"kind":"Field","name":{"kind":"Name","value":"defaultBeanType"}},{"kind":"Field","name":{"kind":"Name","value":"mainBranch"}},{"kind":"Field","name":{"kind":"Name","value":"agentEnabled"}},{"kind":"Field","name":{"kind":"Name","value":"worktreeBaseRef"}},{"kind":"Field","name":{"kind":"Name","value":"worktreeRunCommand"}},{"kind":"Field","name":{"kind":"Name","value":"worktreeIntegrateMode"}},{"kind":"Field","name":{"kind":"Name","value":"worktreeBackend"}}]}}]} as unknown as DocumentNode<ConfigQuery, ConfigQueryVariables>;
-export const WorktreesDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"query","name":{"kind":"Name","value":"Worktrees"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"worktrees"},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"hasChanges"}},{"kind":"Field","name":{"kind":"Name","value":"hasUnmergedCommits"}}]}}]}}]} as unknown as DocumentNode<WorktreesQuery, WorktreesQueryVariables>;
+export const WorktreeStatusDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"query","name":{"kind":"Name","value":"WorktreeStatus"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"id"}},"type":{"kind":"NonNullType","type":{"kind":"NamedType","name":{"kind":"Name","value":"ID"}}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"worktree"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"id"},"value":{"kind":"Variable","name":{"kind":"Name","value":"id"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"id"}},{"kind":"Field","name":{"kind":"Name","value":"hasChanges"}},{"kind":"Field","name":{"kind":"Name","value":"hasUnmergedCommits"}}]}}]}}]} as unknown as DocumentNode<WorktreeStatusQuery, WorktreeStatusQueryVariables>;
 export const FileChangesDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"query","name":{"kind":"Name","value":"FileChanges"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"path"}},"type":{"kind":"NamedType","name":{"kind":"Name","value":"String"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"fileChanges"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"path"},"value":{"kind":"Variable","name":{"kind":"Name","value":"path"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"FragmentSpread","name":{"kind":"Name","value":"FileChangeFields"}}]}}]}},{"kind":"FragmentDefinition","name":{"kind":"Name","value":"FileChangeFields"},"typeCondition":{"kind":"NamedType","name":{"kind":"Name","value":"FileChange"}},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"path"}},{"kind":"Field","name":{"kind":"Name","value":"status"}},{"kind":"Field","name":{"kind":"Name","value":"additions"}},{"kind":"Field","name":{"kind":"Name","value":"deletions"}},{"kind":"Field","name":{"kind":"Name","value":"staged"}}]}}]} as unknown as DocumentNode<FileChangesQuery, FileChangesQueryVariables>;
 export const AllFileChangesDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"query","name":{"kind":"Name","value":"AllFileChanges"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"path"}},"type":{"kind":"NamedType","name":{"kind":"Name","value":"String"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"allFileChanges"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"path"},"value":{"kind":"Variable","name":{"kind":"Name","value":"path"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"FragmentSpread","name":{"kind":"Name","value":"FileChangeFields"}}]}}]}},{"kind":"FragmentDefinition","name":{"kind":"Name","value":"FileChangeFields"},"typeCondition":{"kind":"NamedType","name":{"kind":"Name","value":"FileChange"}},"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"path"}},{"kind":"Field","name":{"kind":"Name","value":"status"}},{"kind":"Field","name":{"kind":"Name","value":"additions"}},{"kind":"Field","name":{"kind":"Name","value":"deletions"}},{"kind":"Field","name":{"kind":"Name","value":"staged"}}]}}]} as unknown as DocumentNode<AllFileChangesQuery, AllFileChangesQueryVariables>;
 export const BranchStatusDocument = {"kind":"Document","definitions":[{"kind":"OperationDefinition","operation":"query","name":{"kind":"Name","value":"BranchStatus"},"variableDefinitions":[{"kind":"VariableDefinition","variable":{"kind":"Variable","name":{"kind":"Name","value":"path"}},"type":{"kind":"NamedType","name":{"kind":"Name","value":"String"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"branchStatus"},"arguments":[{"kind":"Argument","name":{"kind":"Name","value":"path"},"value":{"kind":"Variable","name":{"kind":"Name","value":"path"}}}],"selectionSet":{"kind":"SelectionSet","selections":[{"kind":"Field","name":{"kind":"Name","value":"commitsBehind"}},{"kind":"Field","name":{"kind":"Name","value":"hasConflicts"}}]}}]}}]} as unknown as DocumentNode<BranchStatusQuery, BranchStatusQueryVariables>;

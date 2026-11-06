@@ -6,7 +6,7 @@ import {
   WorktreesChangedDocument,
   CreateWorktreeDocument,
   RemoveWorktreeDocument,
-  WorktreesDocument,
+  WorktreeStatusDocument,
   type WorktreeFieldsFragment
 } from './graphql/generated';
 
@@ -188,13 +188,16 @@ class WorktreeStore {
     return this.worktrees.find((wt) => wt.beanIds.includes(beanId))?.id ?? null;
   }
 
-  /** Fetch fresh git status for a specific worktree (on-demand, not cached). */
+  /**
+   * Fetch fresh git status for a specific worktree (on-demand, not cached).
+   * Only this worktree's status is computed by the server.
+   */
   async getWorktreeStatus(id: string): Promise<WorktreeStatus | null> {
     const result = await client
-      .query(WorktreesDocument, {}, { requestPolicy: 'network-only' })
+      .query(WorktreeStatusDocument, { id }, { requestPolicy: 'network-only' })
       .toPromise();
     if (result.error) return null;
-    const wt = result.data?.worktrees?.find((w) => w.id === id);
+    const wt = result.data?.worktree;
     return wt ? { hasChanges: wt.hasChanges, hasUnmergedCommits: wt.hasUnmergedCommits } : null;
   }
 }

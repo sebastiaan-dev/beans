@@ -11,16 +11,17 @@ import (
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/hmans/beans/internal/gitutil"
+	"github.com/hmans/beans/internal/worktree"
 )
 
 // gitOpCounts counts the git status operations run via worktreeGitOps.
 type gitOpCounts struct {
-	hasChanges, defaultBase, resolveCommits, aheadBehind, mergeConflicts atomic.Int32
+	detectBeanIDs, hasChanges, defaultBase, resolveCommits, aheadBehind, mergeConflicts atomic.Int32
 }
 
 func (c *gitOpCounts) total() int32 {
-	return c.hasChanges.Load() + c.defaultBase.Load() + c.resolveCommits.Load() +
-		c.aheadBehind.Load() + c.mergeConflicts.Load()
+	return c.detectBeanIDs.Load() + c.hasChanges.Load() + c.defaultBase.Load() +
+		c.resolveCommits.Load() + c.aheadBehind.Load() + c.mergeConflicts.Load()
 }
 
 // countGitOps wraps worktreeGitOps with counters for the duration of the test
@@ -30,6 +31,10 @@ func countGitOps(t *testing.T) *gitOpCounts {
 	orig := worktreeGitOps
 	c := &gitOpCounts{}
 	worktreeGitOps = gitStatusOps{
+		detectBeanIDs: func(mgr *worktree.Manager, dir string) []string {
+			c.detectBeanIDs.Add(1)
+			return orig.detectBeanIDs(mgr, dir)
+		},
 		hasChanges: func(dir string) bool { c.hasChanges.Add(1); return orig.hasChanges(dir) },
 		defaultBase: func(dir string) (string, bool) {
 			c.defaultBase.Add(1)
@@ -180,15 +185,27 @@ func TestWorktreesQueryGitWorkOnlyForSelectedFields(t *testing.T) {
 	counts := countGitOps(t)
 	n := int32(6)
 
-	t.Run("id-only query runs no git status commands", func(t *testing.T) {
+	t.Run("id-only query runs no git commands beyond the worktree list", func(t *testing.T) {
 		var resp struct{ Worktrees []map[string]any }
-		c.MustPost(`{ worktrees { id name description branch path beans { id } setupStatus setupError } }`, &resp)
+		c.MustPost(`{ worktrees { id name description branch path setupStatus setupError pullRequest { number } } }`, &resp)
 		if len(resp.Worktrees) != int(n) {
 			t.Fatalf("got %d worktrees, want %d", len(resp.Worktrees), n)
 		}
 		if total := counts.total(); total != 0 {
-			t.Errorf("expected no git status commands, got %d", total)
+			t.Errorf("expected no git status commands or bean detection, got %d", total)
 		}
+	})
+
+	t.Run("beans runs only bean detection", func(t *testing.T) {
+		var resp struct{ Worktrees []map[string]any }
+		c.MustPost(`{ worktrees { id beans { id } } }`, &resp)
+		if got := counts.detectBeanIDs.Load(); got != n {
+			t.Errorf("bean detection ran %d times, want %d", got, n)
+		}
+		if other := counts.total() - counts.detectBeanIDs.Load(); other != 0 {
+			t.Errorf("expected only bean detection, got %d other commands", other)
+		}
+		counts.detectBeanIDs.Store(0)
 	})
 
 	t.Run("hasChanges runs only git status", func(t *testing.T) {
@@ -230,6 +247,39 @@ func TestWorktreesQueryGitWorkOnlyForSelectedFields(t *testing.T) {
 			t.Error("expected cached rev-list/merge-tree results for unchanged commits")
 		}
 	})
+}
+
+// TestWorktreeQuery checks the single-worktree query: it computes the status
+// of that worktree only.
+func TestWorktreeQuery(t *testing.T) {
+	r, _ := setupStatusWorktrees(t)
+	c := newGraphQLClient(r)
+	counts := countGitOps(t)
+
+	var resp struct {
+		Worktree *worktreeStatusResult
+	}
+	c.MustPost(`{ worktree(id: "dirty") { id hasChanges hasUnmergedCommits } }`, &resp)
+	if resp.Worktree == nil || resp.Worktree.ID != "dirty" || !resp.Worktree.HasChanges || resp.Worktree.HasUnmergedCommits {
+		t.Fatalf("worktree(dirty) = %+v", resp.Worktree)
+	}
+	if got := counts.hasChanges.Load(); got != 1 {
+		t.Errorf("hasChanges ran %d times, want 1", got)
+	}
+	if got := counts.detectBeanIDs.Load(); got != 0 {
+		t.Errorf("bean detection ran %d times, want 0", got)
+	}
+
+	c.MustPost(`{ worktree(id: "ahead") { id hasChanges hasUnmergedCommits } }`, &resp)
+	if resp.Worktree == nil || resp.Worktree.HasChanges || !resp.Worktree.HasUnmergedCommits {
+		t.Errorf("worktree(ahead) = %+v", resp.Worktree)
+	}
+
+	var missing struct{ Worktree *worktreeStatusResult }
+	c.MustPost(`{ worktree(id: "nope") { id } }`, &missing)
+	if missing.Worktree != nil {
+		t.Errorf("worktree(nope) = %+v, want null", missing.Worktree)
+	}
 }
 
 func TestWorktreesQueryStatusFollowsNewCommits(t *testing.T) {

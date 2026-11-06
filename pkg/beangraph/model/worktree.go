@@ -2,16 +2,15 @@ package model
 
 import (
 	"context"
-
-	"github.com/hmans/beans/pkg/bean"
 )
 
 // Worktree is a git worktree (workspace) as exposed via GraphQL.
 //
 // It is hand-written (bound in gqlgen.yml) rather than generated so that the
-// git status fields (hasChanges, hasUnmergedCommits, commitsBehind,
-// hasConflicts) can be served by field resolvers backed by GitStatus: they
-// shell out to git, so they are only computed when a query selects them.
+// fields that shell out to git — the git status fields (hasChanges,
+// hasUnmergedCommits, commitsBehind, hasConflicts, backed by GitStatus) and
+// beans (backed by BeanIDs) — are served by field resolvers and only computed
+// when a query selects them.
 type Worktree struct {
 	// Unique worktree identifier
 	ID string `json:"id"`
@@ -23,8 +22,6 @@ type Worktree struct {
 	Branch string `json:"branch"`
 	// Filesystem path to the worktree
 	Path string `json:"path"`
-	// Beans detected from changes in this worktree vs the base branch
-	Beans []*bean.Bean `json:"beans"`
 	// Post-creation setup status (null if no setup configured)
 	SetupStatus *WorktreeSetupStatus `json:"setupStatus,omitempty"`
 	// Error message if setup failed
@@ -35,6 +32,15 @@ type Worktree struct {
 	// GitStatus lazily computes the git status fields. If nil, they resolve
 	// to false/0.
 	GitStatus WorktreeGitStatus `json:"-"`
+	// BeanIDs lazily detects the beans changed in this worktree vs the base
+	// branch (the beans field). If nil, the worktree has no beans.
+	BeanIDs WorktreeBeanIDs `json:"-"`
+}
+
+// WorktreeBeanIDs detects a worktree's bean IDs on demand. Implementations
+// compute them at most once and must be safe for concurrent use.
+type WorktreeBeanIDs interface {
+	BeanIDs(ctx context.Context) []string
 }
 
 // WorktreeGitStatus computes a worktree's git status on demand.

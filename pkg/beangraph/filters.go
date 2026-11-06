@@ -1,6 +1,8 @@
 package beangraph
 
 import (
+	"slices"
+
 	"github.com/hmans/beans/pkg/bean"
 	"github.com/hmans/beans/pkg/beancore"
 	"github.com/hmans/beans/pkg/beangraph/model"
@@ -58,15 +60,17 @@ func ApplyFilter(beans []*bean.Bean, filter *model.BeanFilter, core *beancore.Co
 		result = filterByParentID(result, *filter.ParentID)
 	}
 
-	// Blocking filters
+	// Blocking filters. Like the Bean.blocking and Bean.blockedBy fields,
+	// they use the symmetric relations: a bean is blocking B if it lists B
+	// in its blocking field or B lists it in its blocked_by field.
 	if filter.HasBlocking != nil && *filter.HasBlocking {
-		result = filterByHasBlocking(result)
+		result = filterBeans(result, core.HasBlocking)
 	}
 	if filter.BlockingID != nil && *filter.BlockingID != "" {
-		result = filterByBlockingID(result, *filter.BlockingID)
+		result = filterByBlockingID(result, *filter.BlockingID, core)
 	}
 	if filter.NoBlocking != nil && *filter.NoBlocking {
-		result = filterByNoBlocking(result)
+		result = filterBeans(result, func(b *bean.Bean) bool { return !core.HasBlocking(b) })
 	}
 	if filter.IsBlocked != nil {
 		if *filter.IsBlocked {
@@ -82,15 +86,15 @@ func ApplyFilter(beans []*bean.Bean, filter *model.BeanFilter, core *beancore.Co
 		result = filterByIsImplicitlyBlocked(result, core)
 	}
 
-	// Blocked-by filters (for direct blocked_by field)
+	// Blocked-by filters (symmetric, like the blocking filters)
 	if filter.HasBlockedBy != nil && *filter.HasBlockedBy {
-		result = filterByHasBlockedBy(result)
+		result = filterBeans(result, core.HasBlockedBy)
 	}
 	if filter.BlockedByID != nil && *filter.BlockedByID != "" {
-		result = filterByBlockedByID(result, *filter.BlockedByID)
+		result = filterByBlockedByID(result, *filter.BlockedByID, core)
 	}
 	if filter.NoBlockedBy != nil && *filter.NoBlockedBy {
-		result = filterByNoBlockedBy(result)
+		result = filterBeans(result, func(b *bean.Bean) bool { return !core.HasBlockedBy(b) })
 	}
 
 	// Implicit status filter
@@ -247,40 +251,42 @@ func filterByParentID(beans []*bean.Bean, parentID string) []*bean.Bean {
 	return result
 }
 
-// filterByHasBlocking filters beans that are blocking other beans.
-func filterByHasBlocking(beans []*bean.Bean) []*bean.Bean {
+// filterBeans returns the beans matching keep.
+func filterBeans(beans []*bean.Bean, keep func(*bean.Bean) bool) []*bean.Bean {
 	var result []*bean.Bean
 	for _, b := range beans {
-		if len(b.Blocking) > 0 {
+		if keep(b) {
 			result = append(result, b)
 		}
 	}
 	return result
 }
 
-// filterByBlockingID filters beans that are blocking a specific bean ID.
-func filterByBlockingID(beans []*bean.Bean, targetID string) []*bean.Bean {
-	var result []*bean.Bean
-	for _, b := range beans {
-		for _, blocked := range b.Blocking {
-			if blocked == targetID {
-				result = append(result, b)
-				break
-			}
-		}
+// filterByBlockingID filters beans that are blocking the bean with the given
+// ID (short IDs are supported): beans listing it in their blocking field and
+// beans it lists in its blocked_by field. Matches nothing if the bean doesn't
+// exist, like the Bean.blocking field skips broken links.
+func filterByBlockingID(beans []*bean.Bean, targetID string, core *beancore.Core) []*bean.Bean {
+	target, err := core.Get(targetID)
+	if err != nil {
+		return nil
 	}
-	return result
+	return filterBeans(beans, func(b *bean.Bean) bool {
+		return slices.Contains(b.Blocking, target.ID) || slices.Contains(target.BlockedBy, b.ID)
+	})
 }
 
-// filterByNoBlocking filters beans that aren't blocking other beans.
-func filterByNoBlocking(beans []*bean.Bean) []*bean.Bean {
-	var result []*bean.Bean
-	for _, b := range beans {
-		if len(b.Blocking) == 0 {
-			result = append(result, b)
-		}
+// filterByBlockedByID filters beans that are blocked by the bean with the
+// given ID (short IDs are supported): beans listing it in their blocked_by
+// field and beans it lists in its blocking field.
+func filterByBlockedByID(beans []*bean.Bean, blockerID string, core *beancore.Core) []*bean.Bean {
+	blocker, err := core.Get(blockerID)
+	if err != nil {
+		return nil
 	}
-	return result
+	return filterBeans(beans, func(b *bean.Bean) bool {
+		return slices.Contains(b.BlockedBy, blocker.ID) || slices.Contains(blocker.Blocking, b.ID)
+	})
 }
 
 // filterByIsBlocked filters beans that are blocked by others.
@@ -323,42 +329,6 @@ func filterByNotBlocked(beans []*bean.Bean, core *beancore.Core) []*bean.Bean {
 	var result []*bean.Bean
 	for _, b := range beans {
 		if !core.IsBlocked(b.ID) {
-			result = append(result, b)
-		}
-	}
-	return result
-}
-
-// filterByHasBlockedBy filters beans that have explicit blocked_by entries.
-func filterByHasBlockedBy(beans []*bean.Bean) []*bean.Bean {
-	var result []*bean.Bean
-	for _, b := range beans {
-		if len(b.BlockedBy) > 0 {
-			result = append(result, b)
-		}
-	}
-	return result
-}
-
-// filterByBlockedByID filters beans that are blocked by a specific bean ID (via blocked_by field).
-func filterByBlockedByID(beans []*bean.Bean, blockerID string) []*bean.Bean {
-	var result []*bean.Bean
-	for _, b := range beans {
-		for _, blocker := range b.BlockedBy {
-			if blocker == blockerID {
-				result = append(result, b)
-				break
-			}
-		}
-	}
-	return result
-}
-
-// filterByNoBlockedBy filters beans that have no explicit blocked_by entries.
-func filterByNoBlockedBy(beans []*bean.Bean) []*bean.Bean {
-	var result []*bean.Bean
-	for _, b := range beans {
-		if len(b.BlockedBy) == 0 {
 			result = append(result, b)
 		}
 	}

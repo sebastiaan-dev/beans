@@ -218,13 +218,13 @@ func (c *Core) resolveWorktreeBeanLocked(id string) (BeanEvent, bool) {
 		delete(c.worktreeLinks, id)
 		delete(c.dirty, id)
 		if base == nil {
-			delete(c.beans, id)
+			c.deleteBeanLocked(id)
 			if c.searchIndex != nil {
 				_ = c.searchIndex.DeleteBean(id)
 			}
 			return BeanEvent{Type: EventDeleted, BeanID: id}, true
 		}
-		c.beans[id] = base
+		c.setBeanLocked(base)
 		if c.searchIndex != nil {
 			_ = c.searchIndex.IndexBean(base)
 		}
@@ -250,7 +250,7 @@ func (c *Core) resolveWorktreeBeanLocked(id string) (BeanEvent, bool) {
 	if linked && prevLink == winner.path && prev != nil && prev.Path == winner.b.Path && prev.ETag() == winner.b.ETag() {
 		return BeanEvent{}, false
 	}
-	c.beans[id] = winner.b
+	c.setBeanLocked(winner.b)
 	c.dirty[id] = true // came from a worktree, not persisted to main
 	c.worktreeLinks[id] = winner.path
 	if c.searchIndex != nil {

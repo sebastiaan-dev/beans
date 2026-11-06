@@ -250,7 +250,7 @@ func (r *mutationResolver) CreateWorktree(ctx context.Context, name string, bean
 		fmt.Printf("[beans] warning: failed to watch worktree beans: %v\n", err)
 	}
 
-	return worktreeToModel(wt, r.Core, r.WorktreeMgr.BaseRef()), nil
+	return r.worktreeModel(wt), nil
 }
 
 // RemoveWorktree is the resolver for the removeWorktree field.
@@ -610,16 +610,34 @@ func (r *queryResolver) Worktrees(ctx context.Context) ([]*model.Worktree, error
 		return []*model.Worktree{}, nil
 	}
 
-	wts, err := r.WorktreeMgr.List()
+	wts, err := r.WorktreeMgr.ListBasic()
 	if err != nil {
 		return nil, err
 	}
 
 	result := make([]*model.Worktree, len(wts))
 	for i, wt := range wts {
-		result[i] = worktreeToModel(&wt, r.Core, r.WorktreeMgr.BaseRef())
+		result[i] = r.worktreeModel(&wt)
 	}
-	populatePRsBatch(ctx, result, r.Forge, r.ProjectRoot)
+	if selectsField(ctx, "pullRequest") {
+		populatePRsBatch(ctx, result, r.Forge, r.ProjectRoot)
+	}
+	return result, nil
+}
+
+// Worktree is the resolver for the worktree field.
+func (r *queryResolver) Worktree(ctx context.Context, id string) (*model.Worktree, error) {
+	if r.WorktreeMgr == nil {
+		return nil, nil
+	}
+	wt, err := r.WorktreeMgr.Get(id)
+	if err != nil || wt == nil {
+		return nil, err
+	}
+	result := r.worktreeModel(wt)
+	if selectsField(ctx, "pullRequest") {
+		populatePRsBatch(ctx, []*model.Worktree{result}, r.Forge, r.ProjectRoot)
+	}
 	return result, nil
 }
 
@@ -1148,7 +1166,7 @@ func (r *subscriptionResolver) WorktreesChanged(ctx context.Context) (<-chan []*
 	buildWorktreeList := func(wts []worktree.Worktree) []*model.Worktree {
 		result := make([]*model.Worktree, len(wts))
 		for i, wt := range wts {
-			result[i] = worktreeToModel(&wt, r.Core, r.WorktreeMgr.BaseRef())
+			result[i] = r.worktreeModel(&wt)
 		}
 		return result
 	}
@@ -1157,12 +1175,22 @@ func (r *subscriptionResolver) WorktreesChanged(ctx context.Context) (<-chan []*
 	// to finish before closing the out channel, preventing send-on-closed-channel panics.
 	var wg sync.WaitGroup
 
+	// PR data is only fetched (and periodically refreshed) when the
+	// subscription selects it.
+	wantPRs := r.Forge != nil && selectsField(ctx, "pullRequest")
+
 	// populatePRsAsync fetches PR data for all worktrees in a single batch query,
-	// then re-emits the updated list on the output channel.
-	populatePRsAsync := func(result []*model.Worktree) {
+	// then re-emits the updated list on the output channel. It fills copies of
+	// the models: the emitted ones may still be being resolved.
+	populatePRsAsync := func(emitted []*model.Worktree) {
 		defer wg.Done()
-		if r.Forge == nil || len(result) == 0 {
+		if !wantPRs || len(emitted) == 0 {
 			return
+		}
+		result := make([]*model.Worktree, len(emitted))
+		for i, wt := range emitted {
+			c := *wt
+			result[i] = &c
 		}
 		populatePRsBatch(ctx, result, r.Forge, r.ProjectRoot)
 		select {
@@ -1178,7 +1206,7 @@ func (r *subscriptionResolver) WorktreesChanged(ctx context.Context) (<-chan []*
 
 		// Emit the current list immediately without PR data, then
 		// fetch PR data in the background and re-emit.
-		if wts, err := r.WorktreeMgr.List(); err == nil {
+		if wts, err := r.WorktreeMgr.ListBasic(); err == nil {
 			result := buildWorktreeList(wts)
 			select {
 			case out <- result:
@@ -1196,7 +1224,10 @@ func (r *subscriptionResolver) WorktreesChanged(ctx context.Context) (<-chan []*
 
 		// refreshPRs fetches the current worktree list with PR data and emits it.
 		refreshPRs := func() {
-			wts, err := r.WorktreeMgr.List()
+			if !wantPRs {
+				return
+			}
+			wts, err := r.WorktreeMgr.ListBasic()
 			if err != nil {
 				return
 			}
@@ -1213,7 +1244,7 @@ func (r *subscriptionResolver) WorktreesChanged(ctx context.Context) (<-chan []*
 				if !ok {
 					return
 				}
-				wts, err := r.WorktreeMgr.List()
+				wts, err := r.WorktreeMgr.ListBasic()
 				if err != nil {
 					continue
 				}
@@ -1459,6 +1490,20 @@ func (r *subscriptionResolver) WorkspaceStatuses(ctx context.Context) (<-chan []
 	}()
 
 	return out, nil
+}
+
+// Beans is the resolver for the beans field.
+func (r *worktreeResolver) Beans(ctx context.Context, obj *model.Worktree) ([]*bean.Bean, error) {
+	result := []*bean.Bean{}
+	if obj.BeanIDs == nil || r.Core == nil {
+		return result, nil
+	}
+	for _, id := range obj.BeanIDs.BeanIDs(ctx) {
+		if b, err := r.Core.Get(id); err == nil {
+			result = append(result, b)
+		}
+	}
+	return result, nil
 }
 
 // HasChanges is the resolver for the hasChanges field.

@@ -25,11 +25,13 @@ models:
   # Use existing Bean type from bean package
   Bean:
     model: github.com/hmans/beans/pkg/bean.Bean
-  # Hand-written model: git status fields are computed lazily by field
-  # resolvers so queries that don't select them run no git commands.
+  # Hand-written model: git status fields and beans are computed lazily by
+  # field resolvers so queries that don't select them run no git commands.
   Worktree:
     model: github.com/hmans/beans/pkg/beangraph/model.Worktree
     fields:
+      beans:
+        resolver: true
       hasChanges:
         resolver: true
       hasUnmergedCommits:
