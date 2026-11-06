@@ -11,8 +11,28 @@ class ConfigStore {
   worktreeBaseRef = $state('main');
   worktreeRunCommand = $state('');
   worktreeIntegrateMode = $state<'local' | 'pr'>('local');
+  /** worktree.backend: 'worktrunk' means workspaces are managed with worktrunk (wt). */
+  worktreeBackend = $state<'git' | 'worktrunk'>('git');
+
+  get isWorktrunk(): boolean {
+    return this.worktreeBackend === 'worktrunk';
+  }
+
+  /** Whether the config has been loaded (until then the fields hold defaults). */
+  loaded = $state(false);
+  #resolveReady!: () => void;
+  /** Resolves once load() has finished (successfully or not). */
+  readonly ready: Promise<void> = new Promise((resolve) => (this.#resolveReady = resolve));
 
   async load(): Promise<void> {
+    try {
+      await this.#load();
+    } finally {
+      this.#resolveReady();
+    }
+  }
+
+  async #load(): Promise<void> {
     const result = await client.query(ConfigDocument, {}).toPromise();
     if (result.error) {
       console.warn('Failed to load config:', result.error.message);
@@ -27,6 +47,8 @@ class ConfigStore {
       this.worktreeBaseRef = result.data.worktreeBaseRef;
       this.worktreeRunCommand = result.data.worktreeRunCommand;
       this.worktreeIntegrateMode = result.data.worktreeIntegrateMode as 'local' | 'pr';
+      this.worktreeBackend = result.data.worktreeBackend === 'worktrunk' ? 'worktrunk' : 'git';
+      this.loaded = true;
     }
   }
 }

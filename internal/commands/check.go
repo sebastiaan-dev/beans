@@ -6,10 +6,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/spf13/cobra"
+	"github.com/hmans/beans/internal/ui"
+	"github.com/hmans/beans/internal/worktree"
 	"github.com/hmans/beans/pkg/beancore"
 	"github.com/hmans/beans/pkg/config"
-	"github.com/hmans/beans/internal/ui"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -23,6 +24,8 @@ type checkResult struct {
 	BeanIssues   *beancore.LinkCheckResult `json:"bean_issues,omitempty"`
 	DuplicateIDs []beancore.DuplicateID    `json:"duplicate_ids"`
 	Fixed        int                       `json:"fixed,omitempty"`
+	// Notices are informational hints that never fail the check.
+	Notices []string `json:"notices,omitempty"`
 }
 
 var checkCmd = &cobra.Command{
@@ -71,6 +74,22 @@ Note: Cycles cannot be auto-fixed and require manual intervention.`,
 		} else if effort != "" {
 			if !checkJSON {
 				fmt.Printf("  %s Default effort '%s' is valid\n", ui.Success.Render("✓"), effort)
+			}
+		}
+
+		// 2d. Check worktree.backend and suggest worktrunk when it is installed.
+		// Suggestions and a missing wt binary are informational only.
+		backend := cfg.GetWorktreeBackend()
+		if !config.IsValidWorktreeBackend(backend) {
+			configErrors = append(configErrors, fmt.Sprintf("worktree.backend '%s' is not valid (use git or worktrunk)", backend))
+		} else if !checkJSON {
+			fmt.Printf("  %s Worktree backend '%s' is valid\n", ui.Success.Render("✓"), backend)
+		}
+		var notices []string
+		if notice := worktreeBackendNotice(backend, worktree.WorktrunkAvailable()); notice != "" {
+			notices = append(notices, notice)
+			if !checkJSON {
+				fmt.Printf("  %s %s\n", ui.Muted.Render("i"), notice)
 			}
 		}
 
@@ -203,6 +222,7 @@ Note: Cycles cannot be auto-fixed and require manual intervention.`,
 				BeanIssues:   linkResult,
 				DuplicateIDs: duplicateIDs,
 				Fixed:        fixed,
+				Notices:      notices,
 			}
 			data, _ := json.MarshalIndent(result, "", "  ")
 			fmt.Println(string(data))
@@ -229,6 +249,20 @@ Note: Cycles cannot be auto-fixed and require manual intervention.`,
 
 		return nil
 	},
+}
+
+// worktreeBackendNotice returns an informational hint about the worktree
+// backend: suggest worktrunk when wt is installed but not used, and point out
+// a missing wt when the worktrunk backend is configured (beans-serve won't
+// start then). Returns "" when there is nothing to say.
+func worktreeBackendNotice(backend config.WorktreeBackend, wtAvailable bool) string {
+	switch {
+	case backend == config.WorktreeBackendGit && wtAvailable:
+		return "worktrunk (wt) found on PATH; set worktree.backend: worktrunk to manage workspaces with it"
+	case backend == config.WorktreeBackendWorktrunk && !wtAvailable:
+		return "worktree.backend is worktrunk but wt was not found on PATH; beans-serve needs it to manage workspaces"
+	}
+	return ""
 }
 
 func RegisterCheckCmd(root *cobra.Command) {

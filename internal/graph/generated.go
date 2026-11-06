@@ -45,6 +45,7 @@ type ResolverRoot interface {
 	Mutation() MutationResolver
 	Query() QueryResolver
 	Subscription() SubscriptionResolver
+	Worktree() WorktreeResolver
 }
 
 type DirectiveRoot struct {
@@ -222,6 +223,7 @@ type ComplexityRoot struct {
 		MainBranch            func(childComplexity int) int
 		ProjectName           func(childComplexity int) int
 		WorkspacePort         func(childComplexity int, workspaceID string) int
+		WorktreeBackend       func(childComplexity int) int
 		WorktreeBaseRef       func(childComplexity int) int
 		WorktreeIntegrateMode func(childComplexity int) int
 		WorktreeRunCommand    func(childComplexity int) int
@@ -330,6 +332,7 @@ type QueryResolver interface {
 	WorkspacePort(ctx context.Context, workspaceID string) (int, error)
 	IsRunning(ctx context.Context, workspaceID string) (bool, error)
 	WorktreeIntegrateMode(ctx context.Context) (string, error)
+	WorktreeBackend(ctx context.Context) (string, error)
 	ListFiles(ctx context.Context, workspaceID *string, prefix string, limit *int) ([]*model.FileEntry, error)
 }
 type SubscriptionResolver interface {
@@ -338,6 +341,12 @@ type SubscriptionResolver interface {
 	AgentSessionChanged(ctx context.Context, beanID string) (<-chan *model.AgentSession, error)
 	ActiveAgentStatuses(ctx context.Context) (<-chan []*model.ActiveAgentStatus, error)
 	WorkspaceStatuses(ctx context.Context) (<-chan []*model.WorkspaceStatus, error)
+}
+type WorktreeResolver interface {
+	HasChanges(ctx context.Context, obj *model.Worktree) (bool, error)
+	HasUnmergedCommits(ctx context.Context, obj *model.Worktree) (bool, error)
+	CommitsBehind(ctx context.Context, obj *model.Worktree) (int, error)
+	HasConflicts(ctx context.Context, obj *model.Worktree) (bool, error)
 }
 
 type executableSchema struct {
@@ -1329,6 +1338,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.Query.WorkspacePort(childComplexity, args["workspaceId"].(string)), true
+	case "Query.worktreeBackend":
+		if e.complexity.Query.WorktreeBackend == nil {
+			break
+		}
+
+		return e.complexity.Query.WorktreeBackend(childComplexity), true
 	case "Query.worktreeBaseRef":
 		if e.complexity.Query.WorktreeBaseRef == nil {
 			break
@@ -7485,6 +7500,35 @@ func (ec *executionContext) fieldContext_Query_worktreeIntegrateMode(_ context.C
 	return fc, nil
 }
 
+func (ec *executionContext) _Query_worktreeBackend(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_Query_worktreeBackend,
+		func(ctx context.Context) (any, error) {
+			return ec.resolvers.Query().WorktreeBackend(ctx)
+		},
+		nil,
+		ec.marshalNString2string,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_Query_worktreeBackend(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Query_listFiles(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -8321,7 +8365,7 @@ func (ec *executionContext) _Worktree_hasChanges(ctx context.Context, field grap
 		field,
 		ec.fieldContext_Worktree_hasChanges,
 		func(ctx context.Context) (any, error) {
-			return obj.HasChanges, nil
+			return ec.resolvers.Worktree().HasChanges(ctx, obj)
 		},
 		nil,
 		ec.marshalNBoolean2bool,
@@ -8334,8 +8378,8 @@ func (ec *executionContext) fieldContext_Worktree_hasChanges(_ context.Context, 
 	fc = &graphql.FieldContext{
 		Object:     "Worktree",
 		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
+		IsMethod:   true,
+		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type Boolean does not have child fields")
 		},
@@ -8350,7 +8394,7 @@ func (ec *executionContext) _Worktree_hasUnmergedCommits(ctx context.Context, fi
 		field,
 		ec.fieldContext_Worktree_hasUnmergedCommits,
 		func(ctx context.Context) (any, error) {
-			return obj.HasUnmergedCommits, nil
+			return ec.resolvers.Worktree().HasUnmergedCommits(ctx, obj)
 		},
 		nil,
 		ec.marshalNBoolean2bool,
@@ -8363,8 +8407,8 @@ func (ec *executionContext) fieldContext_Worktree_hasUnmergedCommits(_ context.C
 	fc = &graphql.FieldContext{
 		Object:     "Worktree",
 		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
+		IsMethod:   true,
+		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type Boolean does not have child fields")
 		},
@@ -8379,7 +8423,7 @@ func (ec *executionContext) _Worktree_commitsBehind(ctx context.Context, field g
 		field,
 		ec.fieldContext_Worktree_commitsBehind,
 		func(ctx context.Context) (any, error) {
-			return obj.CommitsBehind, nil
+			return ec.resolvers.Worktree().CommitsBehind(ctx, obj)
 		},
 		nil,
 		ec.marshalNInt2int,
@@ -8392,8 +8436,8 @@ func (ec *executionContext) fieldContext_Worktree_commitsBehind(_ context.Contex
 	fc = &graphql.FieldContext{
 		Object:     "Worktree",
 		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
+		IsMethod:   true,
+		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type Int does not have child fields")
 		},
@@ -8408,7 +8452,7 @@ func (ec *executionContext) _Worktree_hasConflicts(ctx context.Context, field gr
 		field,
 		ec.fieldContext_Worktree_hasConflicts,
 		func(ctx context.Context) (any, error) {
-			return obj.HasConflicts, nil
+			return ec.resolvers.Worktree().HasConflicts(ctx, obj)
 		},
 		nil,
 		ec.marshalNBoolean2bool,
@@ -8421,8 +8465,8 @@ func (ec *executionContext) fieldContext_Worktree_hasConflicts(_ context.Context
 	fc = &graphql.FieldContext{
 		Object:     "Worktree",
 		Field:      field,
-		IsMethod:   false,
-		IsResolver: false,
+		IsMethod:   true,
+		IsResolver: true,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type Boolean does not have child fields")
 		},
@@ -12499,6 +12543,28 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "worktreeBackend":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_worktreeBackend(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
 		case "listFiles":
 			field := field
 
@@ -12697,7 +12763,7 @@ func (ec *executionContext) _Worktree(ctx context.Context, sel ast.SelectionSet,
 		case "id":
 			out.Values[i] = ec._Worktree_id(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "name":
 			out.Values[i] = ec._Worktree_name(ctx, field, obj)
@@ -12706,38 +12772,162 @@ func (ec *executionContext) _Worktree(ctx context.Context, sel ast.SelectionSet,
 		case "branch":
 			out.Values[i] = ec._Worktree_branch(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "path":
 			out.Values[i] = ec._Worktree_path(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "beans":
 			out.Values[i] = ec._Worktree_beans(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
-				out.Invalids++
+				atomic.AddUint32(&out.Invalids, 1)
 			}
 		case "hasChanges":
-			out.Values[i] = ec._Worktree_hasChanges(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				out.Invalids++
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Worktree_hasChanges(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
 			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		case "hasUnmergedCommits":
-			out.Values[i] = ec._Worktree_hasUnmergedCommits(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				out.Invalids++
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Worktree_hasUnmergedCommits(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
 			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		case "commitsBehind":
-			out.Values[i] = ec._Worktree_commitsBehind(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				out.Invalids++
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Worktree_commitsBehind(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
 			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		case "hasConflicts":
-			out.Values[i] = ec._Worktree_hasConflicts(ctx, field, obj)
-			if out.Values[i] == graphql.Null {
-				out.Invalids++
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Worktree_hasConflicts(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
 			}
+
+			if field.Deferrable != nil {
+				dfs, ok := deferred[field.Deferrable.Label]
+				di := 0
+				if ok {
+					dfs.AddField(field)
+					di = len(dfs.Values) - 1
+				} else {
+					dfs = graphql.NewFieldSet([]graphql.CollectedField{field})
+					deferred[field.Deferrable.Label] = dfs
+				}
+				dfs.Concurrently(di, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, dfs)
+				})
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		case "setupStatus":
 			out.Values[i] = ec._Worktree_setupStatus(ctx, field, obj)
 		case "setupError":

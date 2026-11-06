@@ -2,9 +2,9 @@
 package worktree
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -24,8 +24,6 @@ import (
 // the HTTP connection from dying before the fetch completes.
 const DefaultFetchTimeout = 10 * time.Second
 
-const branchPrefix = "beans/"
-
 // SetupStatus represents the state of a worktree's post-creation setup.
 type SetupStatus string
 
@@ -39,8 +37,9 @@ const (
 // Worktree represents a git worktree.
 type Worktree struct {
 	ID           string
-	Branch       string
+	Branch       string // empty for detached worktrunk worktrees
 	Path         string
+	Detached     bool        // HEAD is detached (e.g. during a rebase)
 	Name         string      // Human-readable name
 	Description  string      // Auto-generated summary of what this workspace is doing
 	BeanIDs      []string    // Bean IDs detected from changes vs base branch
@@ -56,7 +55,8 @@ type SetupDoneFunc func(worktreeID string, success bool, errMsg string)
 // Manager handles git worktree operations for a repository.
 type Manager struct {
 	repoRoot     string
-	worktreeRoot string // directory where worktrees are created (e.g. ~/.beans/worktrees/<project>/)
+	worktreeRoot string // git backend: where worktrees are created; both backends: metadata files (e.g. ~/.beans/worktrees/<project>/)
+	backend      Backend
 	baseRef      string
 	setupCommand string        // shell command to run after worktree creation
 	fetchTimeout time.Duration // timeout for git fetch during worktree creation (0 = skip fetch)
@@ -71,6 +71,14 @@ type Manager struct {
 	// subscribers for worktree change events
 	subMu       sync.Mutex
 	subscribers []chan struct{}
+
+	// pathIDs remembers the ID of each worktree path seen on a branch, so a
+	// worktrunk worktree keeps its ID while detached.
+	idMu    sync.Mutex
+	pathIDs map[string]string
+	// seen holds the workspaces (ID -> path) at the last pruneRemoved call
+	// (nil until the first one).
+	seen map[string]string
 }
 
 // setupState tracks the runtime setup status and error for a worktree.
@@ -79,12 +87,17 @@ type setupState struct {
 	err    string
 }
 
-// NewManager creates a new worktree manager for the given repository root.
-// worktreeRoot is the directory where worktrees are created (e.g. ~/.beans/worktrees/<project>/).
-// baseRef is the git ref to use as the starting point for new branches (e.g. "main").
-// setupCommand is an optional shell command to run inside new worktrees after creation.
 // ManagerOption is a functional option for configuring a Manager.
 type ManagerOption func(*Manager)
+
+// WithBackend sets the worktree backend (default: the git backend).
+func WithBackend(b Backend) ManagerOption {
+	return func(m *Manager) {
+		if b != nil {
+			m.backend = b
+		}
+	}
+}
 
 // WithFetchTimeout sets the timeout for git fetch operations during worktree creation.
 // A value of 0 disables the fetch entirely. Negative values use the default timeout.
@@ -94,14 +107,21 @@ func WithFetchTimeout(d time.Duration) ManagerOption {
 	}
 }
 
+// NewManager creates a new worktree manager for the given repository root.
+// worktreeRoot is the directory for metadata files and, with the git backend,
+// the worktrees themselves (e.g. ~/.beans/worktrees/<project>/).
+// baseRef is the git ref to use as the starting point for new branches (e.g. "main").
+// setupCommand is an optional shell command to run inside new worktrees after creation.
 func NewManager(repoRoot, worktreeRoot, baseRef, setupCommand string, opts ...ManagerOption) *Manager {
 	m := &Manager{
 		repoRoot:      repoRoot,
 		worktreeRoot:  worktreeRoot,
+		backend:       gitBackend{},
 		baseRef:       baseRef,
 		setupCommand:  setupCommand,
 		fetchTimeout:  DefaultFetchTimeout,
 		setupStatuses: make(map[string]setupState),
+		pathIDs:       make(map[string]string),
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -112,6 +132,11 @@ func NewManager(repoRoot, worktreeRoot, baseRef, setupCommand string, opts ...Ma
 // RepoRoot returns the path to the main repository root.
 func (m *Manager) RepoRoot() string {
 	return m.repoRoot
+}
+
+// Backend returns the kind of worktree backend in use.
+func (m *Manager) Backend() BackendKind {
+	return m.backend.Kind()
 }
 
 // BaseRef returns the configured base ref for worktree branches.
@@ -216,110 +241,188 @@ func (m *Manager) notify() {
 	}
 }
 
-// List returns all active worktrees that were created by beans (branch prefix "beans/").
+// List returns the workspaces of the repository: for the git backend the
+// worktrees on beans/* branches, for the worktrunk backend every linked
+// worktree. The main worktree is never included. Worktrees are returned in
+// git's order (creation order, oldest first).
 func (m *Manager) List() ([]Worktree, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	worktrees, err := m.listLocked()
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range worktrees {
+		wt := &worktrees[i]
+		if meta := m.loadMetaFor(wt.ID, wt.Path); meta != nil {
+			wt.Name = meta.Name
+			wt.Description = meta.Description
+			if meta.LastActiveAt != nil {
+				wt.LastActiveAt = *meta.LastActiveAt
+			}
+		}
+		if wt.Name == "" && m.backend.Kind() == BackendWorktrunk {
+			// Worktrees adopted from worktrunk (or plain git) are named
+			// after their branch, or their directory when detached.
+			wt.Name = wt.Branch
+			if wt.Name == "" {
+				wt.Name = filepath.Base(wt.Path)
+			}
+		}
+		wt.BeanIDs = m.DetectBeanIDs(wt.Path)
+		if st, ok := m.setupStatuses[wt.ID]; ok {
+			wt.Setup = st.status
+			wt.SetupError = st.err
+		}
+	}
+	return worktrees, nil
+}
+
+// listLocked lists the workspaces (IDs, branches and paths only) from
+// `git worktree list --porcelain`. Must be called with m.mu held.
+func (m *Manager) listLocked() ([]Worktree, error) {
+	entries, err := m.entries()
+	if err != nil {
+		return nil, err
+	}
+	return m.workspacesOf(entries), nil
+}
+
+// entries returns all worktrees of the repository, main worktree first.
+func (m *Manager) entries() ([]Entry, error) {
 	cmd := exec.Command("git", "worktree", "list", "--porcelain")
 	cmd.Dir = m.repoRoot
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("git worktree list: %w", err)
 	}
-
-	worktrees := parsePorcelain(string(out), m.worktreeRoot)
-
-	// Enrich with metadata (name, description for standalone worktrees)
-	for i := range worktrees {
-		if meta := m.loadMeta(worktrees[i].ID); meta != nil {
-			worktrees[i].Name = meta.Name
-			worktrees[i].Description = meta.Description
-			if meta.LastActiveAt != nil {
-				worktrees[i].LastActiveAt = *meta.LastActiveAt
-			}
-		}
-		worktrees[i].BeanIDs = m.DetectBeanIDs(worktrees[i].Path)
-		// Attach runtime setup status
-		if st, ok := m.setupStatuses[worktrees[i].ID]; ok {
-			worktrees[i].Setup = st.status
-			worktrees[i].SetupError = st.err
-		}
-	}
-
-	// Keep worktrees in git's output order (creation order, oldest first).
-	return worktrees, nil
+	return parseEntries(string(out)), nil
 }
 
-// parsePorcelain parses `git worktree list --porcelain` output and returns
-// worktrees whose branch starts with the beans prefix.
-// Entries marked as "prunable" (stale/missing directory) are skipped.
-// worktreesDir is the path to the beans worktrees directory (e.g. "~/.beans/worktrees/<project>/"),
-// used to identify beans-managed worktrees that are temporarily detached (e.g. during rebase).
-func parsePorcelain(output string, worktreesDir string) []Worktree {
-	var worktrees []Worktree
-	var currentPath, currentBranch string
-	var prunable, detached bool
-
-	emit := func() {
-		if prunable || currentPath == "" {
-			currentPath = ""
-			currentBranch = ""
-			prunable = false
-			detached = false
-			return
-		}
-
-		if strings.HasPrefix(currentBranch, branchPrefix) {
-			// Normal case: branch is on a beans/ branch
-			id := strings.TrimPrefix(currentBranch, branchPrefix)
-			worktrees = append(worktrees, Worktree{
-				ID:     id,
-				Branch: currentBranch,
-				Path:   currentPath,
-			})
-		} else if detached && worktreesDir != "" && strings.HasPrefix(currentPath, worktreesDir) {
-			// Detached HEAD (e.g. during rebase) — identify by path
-			id := filepath.Base(currentPath)
-			worktrees = append(worktrees, Worktree{
-				ID:     id,
-				Branch: branchPrefix + id,
-				Path:   currentPath,
-			})
-		}
-
-		currentPath = ""
-		currentBranch = ""
-		prunable = false
-		detached = false
-	}
-
-	scanner := bufio.NewScanner(strings.NewReader(output))
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		if strings.HasPrefix(line, "worktree ") {
-			currentPath = strings.TrimPrefix(line, "worktree ")
-			currentBranch = ""
-			prunable = false
-			detached = false
-		} else if strings.HasPrefix(line, "branch ") {
-			ref := strings.TrimPrefix(line, "branch ")
-			// ref is like "refs/heads/beans/beans-abc1"
-			currentBranch = strings.TrimPrefix(ref, "refs/heads/")
-		} else if line == "detached" {
-			detached = true
-		} else if strings.HasPrefix(line, "prunable ") {
-			prunable = true
-		} else if line == "" {
-			emit()
-		}
-	}
-
-	// Handle last entry (porcelain output may not end with blank line)
-	emit()
-
+// workspacesOf maps worktree entries to workspaces and remembers their IDs.
+func (m *Manager) workspacesOf(entries []Entry) []Worktree {
+	worktrees := m.backend.workspaces(entries, m.worktreeRoot, m.knownIDForPath)
+	m.rememberIDs(worktrees)
 	return worktrees
+}
+
+// pruneRemoved forgets the metadata and setup status of workspaces whose
+// worktree was removed outside beans (e.g. `wt remove`, `git worktree
+// remove`) since the last call, so a new worktree that later gets the same ID
+// doesn't inherit them. A workspace that merely changed its ID while its
+// worktree still exists (e.g. a branch switch) keeps its metadata. The first
+// call only records the current workspaces.
+func (m *Manager) pruneRemoved() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	entries, err := m.entries()
+	if err != nil {
+		return
+	}
+	existing := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		if !e.Prunable {
+			existing[e.Path] = true
+		}
+	}
+	current := make(map[string]string)
+	for _, wt := range m.workspacesOf(entries) {
+		current[wt.ID] = wt.Path
+	}
+
+	m.idMu.Lock()
+	seen := m.seen
+	m.seen = current
+	m.idMu.Unlock()
+
+	for id, path := range seen {
+		if _, ok := current[id]; ok || existing[path] {
+			continue
+		}
+		log.Printf("[worktree] worktree %s (%s) was removed outside beans; forgetting its metadata", id, path)
+		m.removeMeta(id)
+		delete(m.setupStatuses, id)
+		m.idMu.Lock()
+		delete(m.pathIDs, path)
+		m.idMu.Unlock()
+	}
+}
+
+// findLocked returns the workspace with the given ID. Must be called with m.mu held.
+func (m *Manager) findLocked(id string) (*Worktree, error) {
+	worktrees, err := m.listLocked()
+	if err != nil {
+		return nil, err
+	}
+	for i := range worktrees {
+		if worktrees[i].ID == id {
+			return &worktrees[i], nil
+		}
+	}
+	return nil, fmt.Errorf("no worktree with id %s", id)
+}
+
+// Path returns the filesystem path of the workspace with the given ID, looked
+// up from git (worktrunk places worktrees wherever its path template says, and
+// git backend worktrees may have been created from another workspace).
+func (m *Manager) Path(id string) (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	wt, err := m.findLocked(id)
+	if err != nil {
+		return "", err
+	}
+	return wt.Path, nil
+}
+
+// rememberIDs records the IDs of worktrees on a branch, so a worktree keeps
+// its ID while it is temporarily detached (e.g. during a rebase).
+func (m *Manager) rememberIDs(worktrees []Worktree) {
+	m.idMu.Lock()
+	defer m.idMu.Unlock()
+	for _, wt := range worktrees {
+		if !wt.Detached {
+			m.pathIDs[wt.Path] = wt.ID
+		}
+	}
+}
+
+// knownIDForPath returns the ID a worktree path had before, from memory or
+// from the path recorded in a metadata file, or "".
+func (m *Manager) knownIDForPath(path string) string {
+	m.idMu.Lock()
+	id := m.pathIDs[path]
+	m.idMu.Unlock()
+	if id != "" {
+		return id
+	}
+	matches, _ := filepath.Glob(filepath.Join(m.worktreeRoot, "*"+metaSuffix))
+	sort.Strings(matches)
+	for _, file := range matches {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		var meta worktreeMeta
+		if json.Unmarshal(data, &meta) == nil && meta.Path != "" && samePath(meta.Path, path) {
+			return strings.TrimSuffix(filepath.Base(file), metaSuffix)
+		}
+	}
+	return ""
+}
+
+// samePath reports whether two paths refer to the same location, resolving
+// symlinks (e.g. /tmp vs /private/tmp on macOS).
+func samePath(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && ra == rb
 }
 
 // DetectBeanIDs returns bean IDs found in the worktree's diff vs the base branch.
@@ -368,49 +471,59 @@ func (m *Manager) DetectBeanIDs(worktreePath string) []string {
 	return ids
 }
 
-// Create creates a new git worktree with the given name.
-// It stores the human-readable name as metadata.
-// The worktree is placed in the configured worktree root directory.
+// Create creates a new worktree for a workspace with the given name and stores
+// the name as metadata. With the git backend the branch is beans/<name> and
+// the worktree is placed in the worktree root; with the worktrunk backend the
+// branch is <name> and worktrunk's path template places it. The workspace ID
+// is the name (for worktrunk: the ID derived from the branch, which equals the
+// name for all valid names except ones with repeated '_').
 func (m *Manager) Create(name string) (*Worktree, error) {
 	if err := ValidateName(name); err != nil {
 		return nil, err
 	}
 
-	// Use the name as the worktree ID so branch and directory match
-	id := name
-
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	branch := branchPrefix + name
-	worktreePath := m.WorktreePath(id)
-
-	// Check if the worktree path already exists
-	if _, err := os.Stat(worktreePath); err == nil {
-		return nil, fmt.Errorf("worktree path already exists: %s", worktreePath)
+	// Refuse names whose ID is already used: reusing it would hand the other
+	// workspace's conversation, port and metadata to the new one.
+	if existing, err := m.listLocked(); err == nil {
+		for _, wt := range existing {
+			if wt.ID == name || (m.backend.Kind() == BackendWorktrunk && wt.Branch == name) {
+				return nil, fmt.Errorf("a workspace named %q already exists (branch %q at %s)", name, wt.Branch, wt.Path)
+			}
+		}
 	}
 
 	// Fetch the latest base ref from origin so worktrees branch from up-to-date code.
 	// This is especially important for PR-based workflows using origin/<branch> as base_ref.
 	m.fetchBaseRef()
 
-	// Create the worktree with a new branch
-	args := []string{"worktree", "add", worktreePath, "-b", branch}
-	if m.baseRef != "" {
-		args = append(args, m.baseRef)
-	}
-	cmd := exec.Command("git", args...)
-	cmd.Dir = m.repoRoot
-	if out, err := cmd.CombinedOutput(); err != nil {
-		log.Printf("[worktree] failed to create worktree %s at %s: %s: %v", id, worktreePath, strings.TrimSpace(string(out)), err)
-		return nil, fmt.Errorf("git worktree add: %s: %w", strings.TrimSpace(string(out)), err)
+	branch, worktreePath, err := m.backend.create(createRequest{
+		repoRoot:     m.repoRoot,
+		worktreeRoot: m.worktreeRoot,
+		name:         name,
+		baseRef:      m.baseRef,
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	// Save the name metadata with initial LastActiveAt so new worktrees
-	// sort to the top (most recently created first)
-	now := time.Now().UTC()
-	if err := m.saveMeta(id, &worktreeMeta{Name: name, LastActiveAt: &now}); err != nil {
-		log.Printf("[worktree] warning: failed to save metadata for %s: %v", id, err)
+	id := name
+	if m.backend.Kind() != BackendGit {
+		// The ID is derived from the listing, like for any other worktree.
+		id = ""
+		if listed, err := m.listLocked(); err == nil {
+			for _, wt := range listed {
+				if samePath(wt.Path, worktreePath) {
+					id, worktreePath = wt.ID, wt.Path
+					break
+				}
+			}
+		}
+		if id == "" {
+			return nil, fmt.Errorf("worktree %s was created at %s but git does not list it", branch, worktreePath)
+		}
 	}
 
 	wt := &Worktree{
@@ -420,39 +533,110 @@ func (m *Manager) Create(name string) (*Worktree, error) {
 		Name:   name,
 	}
 
-	// Run setup command asynchronously if configured
-	if m.setupCommand != "" {
-		m.setupStatuses[id] = setupState{status: SetupRunning}
-		wt.Setup = SetupRunning
+	m.idMu.Lock()
+	m.pathIDs[worktreePath] = id
+	if m.seen != nil {
+		m.seen[id] = worktreePath
+	}
+	m.idMu.Unlock()
 
-		go func() {
-			log.Printf("[worktree] running setup command in %s: %s", worktreePath, m.setupCommand)
-			setupCmd := exec.Command("sh", "-c", m.setupCommand)
-			setupCmd.Dir = worktreePath
-			out, err := setupCmd.CombinedOutput()
-
-			m.mu.Lock()
-			if err != nil {
-				errMsg := strings.TrimSpace(string(out))
-				log.Printf("[worktree] setup command failed in %s: %s: %v", worktreePath, errMsg, err)
-				m.setupStatuses[id] = setupState{status: SetupFailed, err: errMsg}
-			} else {
-				log.Printf("[worktree] setup command completed in %s", worktreePath)
-				m.setupStatuses[id] = setupState{status: SetupDone}
-			}
-			m.mu.Unlock()
-
-			m.notify()
-
-			if m.onSetupDone != nil {
-				m.onSetupDone(id, err == nil, strings.TrimSpace(string(out)))
-			}
-		}()
+	// Save the name metadata with initial LastActiveAt so new worktrees
+	// sort to the top (most recently created first)
+	now := time.Now().UTC()
+	if err := m.saveMeta(id, &worktreeMeta{Name: name, LastActiveAt: &now}); err != nil {
+		log.Printf("[worktree] warning: failed to save metadata for %s: %v", id, err)
 	}
 
-	log.Printf("[worktree] created worktree %s (name=%s, branch=%s, path=%s)", id, name, branch, worktreePath)
+	m.startSetupLocked(wt)
+
+	log.Printf("[worktree] created worktree %s (name=%s, branch=%s, path=%s, backend=%s)", id, name, branch, worktreePath, m.backend.Kind())
 	m.notify()
 	return wt, nil
+}
+
+// startSetupLocked runs the post-creation setup asynchronously: the backend's
+// blocking creation hooks (worktrunk pre-start), then the worktree.setup
+// command, then the backend's background hooks (worktrunk post-start). The
+// setup status covers all of them; nothing is tracked when there is nothing to
+// run. Must be called with m.mu held.
+func (m *Manager) startSetupLocked(wt *Worktree) {
+	hooks, hooksErr := m.backend.creationHooks(m.repoRoot, m.baseRef, wt)
+	if hooksErr != nil {
+		errMsg := hooksErr.Error()
+		log.Printf("[worktree] setup for %s not run: %s", wt.ID, errMsg)
+		m.setupStatuses[wt.ID] = setupState{status: SetupFailed, err: errMsg}
+		wt.Setup, wt.SetupError = SetupFailed, errMsg
+		if m.onSetupDone != nil {
+			go m.onSetupDone(wt.ID, false, errMsg)
+		}
+		return
+	}
+	if hooks == nil {
+		hooks = &CreationHooks{}
+	}
+	if hooks.Before == nil && hooks.After == nil && m.setupCommand == "" {
+		return
+	}
+
+	m.setupStatuses[wt.ID] = setupState{status: SetupRunning}
+	wt.Setup = SetupRunning
+
+	id, worktreePath := wt.ID, wt.Path
+	go func() {
+		out, err := m.runSetup(hooks, worktreePath)
+
+		m.mu.Lock()
+		if err != nil {
+			log.Printf("[worktree] setup failed in %s: %s: %v", worktreePath, out, err)
+			m.setupStatuses[id] = setupState{status: SetupFailed, err: out}
+		} else {
+			log.Printf("[worktree] setup completed in %s", worktreePath)
+			m.setupStatuses[id] = setupState{status: SetupDone}
+		}
+		m.mu.Unlock()
+
+		m.notify()
+
+		if m.onSetupDone != nil {
+			m.onSetupDone(id, err == nil, out)
+		}
+	}()
+}
+
+// runSetup runs the setup steps in order and stops at the first failure.
+// It returns the failing step's output (or the error text) on failure.
+func (m *Manager) runSetup(hooks *CreationHooks, worktreePath string) (string, error) {
+	fail := func(out string, err error) (string, error) {
+		if out == "" {
+			out = err.Error()
+		}
+		var approvalErr *ApprovalError
+		if errors.As(err, &approvalErr) {
+			out = approvalErr.Error()
+		}
+		return out, err
+	}
+	if hooks.Before != nil {
+		log.Printf("[worktree] running creation hooks (pre-start) in %s", worktreePath)
+		if out, err := hooks.Before(); err != nil {
+			return fail(out, err)
+		}
+	}
+	if m.setupCommand != "" {
+		log.Printf("[worktree] running setup command in %s: %s", worktreePath, m.setupCommand)
+		setupCmd := exec.Command("sh", "-c", m.setupCommand)
+		setupCmd.Dir = worktreePath
+		if out, err := setupCmd.CombinedOutput(); err != nil {
+			return fail(strings.TrimSpace(string(out)), err)
+		}
+	}
+	if hooks.After != nil {
+		log.Printf("[worktree] starting background creation hooks (post-start) in %s", worktreePath)
+		if out, err := hooks.After(); err != nil {
+			return fail(out, err)
+		}
+	}
+	return "", nil
 }
 
 // worktreeMeta is the metadata stored alongside standalone worktrees.
@@ -461,11 +645,40 @@ type worktreeMeta struct {
 	Description  string     `json:"description,omitempty"`
 	Port         int        `json:"port,omitempty"`
 	LastActiveAt *time.Time `json:"last_active_at,omitempty"`
+	// Path is the worktree's location when the metadata was last written.
+	// Used to keep IDs of detached worktrunk worktrees stable and to ignore
+	// stale metadata left behind by a worktree removed outside beans.
+	Path string `json:"path,omitempty"`
 }
+
+const metaSuffix = ".meta.json"
 
 // metaPath returns the path to the metadata file for a worktree ID.
 func (m *Manager) metaPath(id string) string {
-	return filepath.Join(m.worktreeRoot, id+".meta.json")
+	return filepath.Join(m.worktreeRoot, id+metaSuffix)
+}
+
+// loadMetaFor loads the metadata of the worktree with the given ID and path.
+// With the worktrunk backend, metadata recorded for another path belongs to a
+// worktree that was removed outside beans and is ignored.
+func (m *Manager) loadMetaFor(id, path string) *worktreeMeta {
+	meta := m.loadMeta(id)
+	if meta != nil && m.backend.Kind() == BackendWorktrunk && meta.Path != "" && path != "" && !samePath(meta.Path, path) {
+		return nil
+	}
+	return meta
+}
+
+// pathForID returns the remembered path of a worktree ID, or "".
+func (m *Manager) pathForID(id string) string {
+	m.idMu.Lock()
+	defer m.idMu.Unlock()
+	for path, pid := range m.pathIDs {
+		if pid == id {
+			return path
+		}
+	}
+	return ""
 }
 
 // loadMeta loads the metadata for a worktree, if it exists.
@@ -481,8 +694,11 @@ func (m *Manager) loadMeta(id string) *worktreeMeta {
 	return &meta
 }
 
-// saveMeta saves metadata for a worktree.
+// saveMeta saves metadata for a worktree, recording its current path.
 func (m *Manager) saveMeta(id string, meta *worktreeMeta) error {
+	if path := m.pathForID(id); path != "" {
+		meta.Path = path
+	}
 	data, err := json.Marshal(meta)
 	if err != nil {
 		return err
@@ -500,7 +716,7 @@ func (m *Manager) SavePort(id string, port int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	meta := m.loadMeta(id)
+	meta := m.loadMetaFor(id, m.pathForID(id))
 	if meta == nil {
 		meta = &worktreeMeta{}
 	}
@@ -513,7 +729,7 @@ func (m *Manager) GetPort(id string) int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if meta := m.loadMeta(id); meta != nil {
+	if meta := m.loadMetaFor(id, m.pathForID(id)); meta != nil {
 		return meta.Port
 	}
 	return 0
@@ -525,7 +741,7 @@ func (m *Manager) TouchLastActive(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	meta := m.loadMeta(id)
+	meta := m.loadMetaFor(id, m.pathForID(id))
 	if meta == nil {
 		meta = &worktreeMeta{}
 	}
@@ -543,7 +759,7 @@ func (m *Manager) UpdateDescription(id, description string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	meta := m.loadMeta(id)
+	meta := m.loadMetaFor(id, m.pathForID(id))
 	if meta == nil {
 		meta = &worktreeMeta{}
 	}
@@ -555,56 +771,32 @@ func (m *Manager) UpdateDescription(id, description string) error {
 	return nil
 }
 
-// Remove removes the worktree with the given ID.
-// The actual worktree path is looked up from git (not computed), so this works
-// even when the worktree was created from a different repo root/workspace.
+// Remove removes the worktree with the given ID, discarding uncommitted
+// changes. The actual worktree is looked up from git (not computed), so this
+// works even when the worktree was created from a different repo
+// root/workspace or by another tool. With the worktrunk backend `wt remove`
+// runs its pre/post-remove hooks and deletes the branch only if it is merged.
 func (m *Manager) Remove(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Look up the actual path from git rather than computing it,
-	// since the worktree may have been created from a different workspace.
-	worktreePath, err := m.findWorktreePathByID(id)
+	wt, err := m.findLocked(id)
 	if err != nil {
 		return fmt.Errorf("worktree %s not found: %w", id, err)
 	}
 
-	cmd := exec.Command("git", "worktree", "remove", "--force", worktreePath)
-	cmd.Dir = m.repoRoot
-	if out, err := cmd.CombinedOutput(); err != nil {
-		outStr := strings.TrimSpace(string(out))
-		log.Printf("[worktree] failed to remove worktree %s at %s: %s: %v", id, worktreePath, outStr, err)
-		return fmt.Errorf("git worktree remove: %s: %w", outStr, err)
+	if err := m.backend.remove(m.repoRoot, wt); err != nil {
+		log.Printf("[worktree] failed to remove worktree %s at %s: %v", id, wt.Path, err)
+		return err
 	}
 
-	log.Printf("[worktree] removed worktree %s (path=%s)", id, worktreePath)
+	log.Printf("[worktree] removed worktree %s (path=%s)", id, wt.Path)
 	m.removeMeta(id)
+	delete(m.setupStatuses, id)
+	m.idMu.Lock()
+	delete(m.pathIDs, wt.Path)
+	delete(m.seen, id)
+	m.idMu.Unlock()
 	m.notify()
 	return nil
-}
-
-// findWorktreePathByID looks up the actual filesystem path for a worktree
-// by parsing git worktree list output.
-// Must be called with m.mu held.
-func (m *Manager) findWorktreePathByID(id string) (string, error) {
-	cmd := exec.Command("git", "worktree", "list", "--porcelain")
-	cmd.Dir = m.repoRoot
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("git worktree list: %w", err)
-	}
-
-	for _, wt := range parsePorcelain(string(out), m.worktreeRoot) {
-		if wt.ID == id {
-			return wt.Path, nil
-		}
-	}
-	return "", fmt.Errorf("no worktree with id %s", id)
-}
-
-// WorktreePath returns the filesystem path for a worktree with the given ID.
-// Worktrees are stored outside the main repo, in the configured worktree root
-// (default: ~/.beans/worktrees/<project>/).
-func (m *Manager) WorktreePath(id string) string {
-	return filepath.Join(m.worktreeRoot, id)
 }

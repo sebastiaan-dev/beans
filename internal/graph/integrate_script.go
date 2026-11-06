@@ -67,3 +67,52 @@ for P in ${drop[@]+"${drop[@]}"}; do
 done
 echo "Main is ready for the fast-forward."`, shellQuote(mainRepo))
 }
+
+// Messages of `wt merge` (worktrunk v0.80) that the worktrunk Integrate
+// prompt tells the agent to look for. The integration tests check them
+// against real wt output.
+const (
+	// wtApprovalMessage and wtNoPromptMessage: project hooks need the
+	// user's approval (same check as worktree.isApprovalFailure). Nothing
+	// ran and nothing was merged.
+	wtApprovalMessage = "needs approval"
+	wtNoPromptMessage = "Cannot prompt for approval"
+	// wtPreMergeFailedMessage: a pre-merge hook (e.g. the test suite) failed;
+	// nothing was merged.
+	wtPreMergeFailedMessage = "pre-merge command failed"
+	// wtNotRebasedMessage: the target moved since the squash (--no-rebase
+	// requires the target to be an ancestor); nothing was merged.
+	wtNotRebasedMessage = "not rebased onto"
+	// wtTargetDirtyMessage: the target's worktree (the main repo) has
+	// uncommitted changes at paths the merge changes; nothing was merged.
+	wtTargetDirtyMessage = "conflicting uncommitted changes"
+	// wtSourceDirtyMessage: the workspace has uncommitted changes, which
+	// --no-commit refuses; nothing was merged.
+	wtSourceDirtyMessage = "has uncommitted changes"
+)
+
+// worktrunkMergeCommand returns the command the worktrunk Integrate flow runs
+// to merge the workspace's squashed commit into target (wt's default branch
+// when target is ""):
+//   - --no-commit: the agent already made the squash commit with its own
+//     message; wt's commit/squash step can't take a message (it generates one
+//     with the configured LLM or lists the squashed subjects);
+//   - --no-rebase: merge exactly the commit the prepare script checked (and
+//     the pre-merge hooks test); a moved target is reported, not rebased;
+//   - --no-remove: keep the worktree; it is the agent's own working directory
+//     and beans-serve has sessions in it. The user destroys the workspace from
+//     the UI, which stops those processes before running `wt remove`;
+//   - no --yes and stdin from /dev/null: unapproved project hooks make wt fail
+//     instead of prompting, and beans never approves hooks on the user's
+//     behalf.
+//
+// The pre-merge hooks run in the worktree before the fast-forward, which also
+// updates the target's worktree (wt step push); post-merge hooks run in the
+// background in the target's worktree.
+func worktrunkMergeCommand(worktreePath, target string) string {
+	cmd := "wt -C " + shellQuote(worktreePath) + " merge"
+	if target != "" {
+		cmd += " " + shellQuote(target)
+	}
+	return cmd + " --no-commit --no-rebase --no-remove --format json </dev/null"
+}

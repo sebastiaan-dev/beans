@@ -1,6 +1,14 @@
 import { test as base, type Page, type TestInfo } from '@playwright/test';
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
-import { cpSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
@@ -118,6 +126,9 @@ function setYamlKeys(
   return lines.join('\n');
 }
 
+/** worktree.backend of the test project (see CLAUDE.md "Worktree backends"). */
+export type WorktreeBackend = 'git' | 'worktrunk';
+
 /** An isolated on-disk test project: git repo, beans data, and worktree root. */
 type TestProject = {
   projectDir: string;
@@ -126,7 +137,56 @@ type TestProject = {
   fakeClaudeDir: string;
   /** worktree.path — keeps test worktrees out of ~/.beans/worktrees. */
   worktreeDir: string;
+  /** Isolated worktrunk setup (worktrunk backend only). */
+  worktrunk: Worktrunk | null;
 };
+
+/**
+ * Isolated worktrunk (wt) configuration: its own HOME, user config (with a
+ * worktree-path template inside the project's worktree root), approvals file
+ * and a nonexistent system config, so the developer's own worktrunk config,
+ * hooks and approvals never apply. Mirrors setupWorktrunkRepo in
+ * internal/worktree/worktrunk_integration_test.go.
+ */
+type Worktrunk = {
+  dir: string;
+  /** Environment variables for beans-serve and every `wt` invocation. */
+  env: Record<string, string>;
+};
+
+/** Path of the worktrunk (wt) executable, or null when it isn't installed. */
+export function findWorktrunk(): string | null {
+  try {
+    const out = execFileSync('sh', ['-c', 'command -v wt'], { encoding: 'utf-8', timeout: 5_000 });
+    return out.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function createWorktrunk(worktreeDir: string): Worktrunk {
+  const dir = makeTempDir('beans-e2e-wt-');
+  const home = join(dir, 'home');
+  mkdirSync(home, { recursive: true });
+  const userConfig = join(dir, 'wt-user.toml');
+  // Worktrees go to <worktreeDir>/trees/<branch>, inside the project's worktree
+  // root, so removeTestProject's leak check covers them.
+  writeFileSync(
+    userConfig,
+    `worktree-path = ${JSON.stringify(join(worktreeDir, 'trees', '{{ branch | sanitize }}'))}\n`
+  );
+  return {
+    dir,
+    env: {
+      HOME: home,
+      XDG_CONFIG_HOME: join(home, '.config'),
+      WORKTRUNK_CONFIG_PATH: userConfig,
+      WORKTRUNK_SYSTEM_CONFIG_PATH: join(dir, 'wt-system.toml'),
+      WORKTRUNK_APPROVALS_PATH: join(dir, 'wt-approvals.toml'),
+      GIT_CONFIG_NOSYSTEM: '1'
+    }
+  };
+}
 
 /**
  * Create a fresh git repo (needed for worktree operations; avoids stale git
@@ -135,7 +195,8 @@ type TestProject = {
  */
 function createTestProject(
   beansTemplate: string,
-  configure: (config: string) => string = (c) => c
+  configure: (config: string) => string = (c) => c,
+  backend: WorktreeBackend = 'git'
 ): TestProject {
   const projectDir = makeTempDir('beans-e2e-');
   const fakeClaudeDir = makeTempDir('beans-e2e-claude-');
@@ -150,11 +211,18 @@ function createTestProject(
   cpSync(join(beansTemplate, '.beans'), join(projectDir, '.beans'), { recursive: true });
   const configPath = join(projectDir, '.beans.yml');
   const config = setYamlKeys(readFileSync(join(beansTemplate, '.beans.yml'), 'utf-8'), 'worktree', {
-    path: JSON.stringify(worktreeDir)
+    path: JSON.stringify(worktreeDir),
+    backend: backend === 'worktrunk' ? 'worktrunk' : undefined
   });
   writeFileSync(configPath, configure(config));
 
-  return { projectDir, beansPath: join(projectDir, '.beans'), fakeClaudeDir, worktreeDir };
+  return {
+    projectDir,
+    beansPath: join(projectDir, '.beans'),
+    fakeClaudeDir,
+    worktreeDir,
+    worktrunk: backend === 'worktrunk' ? createWorktrunk(worktreeDir) : null
+  };
 }
 
 /** Paths of the project's git worktrees other than the main checkout. */
@@ -181,7 +249,9 @@ function removeTestProject(project: TestProject): void {
   try {
     leaked = linkedWorktrees(project).filter((p) => !p.startsWith(project.worktreeDir + '/'));
   } finally {
-    for (const dir of [project.projectDir, project.fakeClaudeDir, project.worktreeDir, ...leaked]) {
+    const dirs = [project.projectDir, project.fakeClaudeDir, project.worktreeDir, ...leaked];
+    if (project.worktrunk) dirs.push(project.worktrunk.dir);
+    for (const dir of dirs) {
       rmSync(dir, { recursive: true, force: true });
     }
   }
@@ -197,12 +267,13 @@ const FAKE_CLAUDE_BIN = join(import.meta.dirname, 'fake-claude');
  * Environment for beans-serve. The fake `claude` shadows any real Claude Code
  * install on PATH, so agent sessions in e2e tests never start a real agent.
  */
-function serverEnv(fakeClaudeDir: string): NodeJS.ProcessEnv {
+function serverEnv(project: TestProject): NodeJS.ProcessEnv {
   return {
     ...process.env,
     GIN_MODE: 'release',
     PATH: `${FAKE_CLAUDE_BIN}${delimiter}${process.env.PATH ?? ''}`,
-    FAKE_CLAUDE_DIR: fakeClaudeDir
+    FAKE_CLAUDE_DIR: project.fakeClaudeDir,
+    ...project.worktrunk?.env
   };
 }
 
@@ -284,7 +355,7 @@ async function startServer(
 
     const server = spawn(beansServe, ['--port', String(port), '--beans-path', project.beansPath], {
       cwd: project.projectDir,
-      env: serverEnv(project.fakeClaudeDir),
+      env: serverEnv(project),
       stdio: ['ignore', 'pipe', 'pipe']
     });
     // Always drain output so a chatty server never blocks on a full pipe.
@@ -335,8 +406,26 @@ class BeansCLI {
     private binaryPath: string,
     readonly baseURL: string,
     /** State directory of the fake claude CLI ($FAKE_CLAUDE_DIR). */
-    readonly fakeClaudeDir: string
+    readonly fakeClaudeDir: string,
+    /** worktree.path of the project (worktrunk worktrees live in <root>/trees/). */
+    readonly worktreeRoot: string,
+    /** Isolated worktrunk environment (worktrunk backend only). */
+    private worktrunkEnv: Record<string, string> | null = null
   ) {}
+
+  /**
+   * Run worktrunk (wt) in the project with the same isolated configuration as
+   * beans-serve, e.g. to create or remove worktrees "outside beans".
+   */
+  wt(args: string[]): string {
+    if (!this.worktrunkEnv) throw new Error('wt() needs the worktrunk backend');
+    return execFileSync('wt', args, {
+      cwd: this.projectDir,
+      encoding: 'utf-8',
+      timeout: 30_000,
+      env: { ...GIT_ENV, ...this.worktrunkEnv }
+    });
+  }
 
   run(args: string[]): string {
     return execFileSync(this.binaryPath, ['--beans-path', this.beansPath, ...args], {
@@ -429,6 +518,12 @@ type BeansDefaults = { status?: string; type?: string };
 type Fixtures = {
   /** Run command configured for `beansWithRun` (override with `test.use({ runCommand })`). */
   runCommand: string;
+  /**
+   * worktree.backend for `beans` (override with `test.use({ worktreeBackend })`).
+   * 'worktrunk' runs beans-serve with an isolated worktrunk config; tests
+   * should skip when `findWorktrunk()` returns null.
+   */
+  worktreeBackend: WorktreeBackend;
   /** beans.default_status / beans.default_type for `beans` (override with `test.use`). */
   beansDefaults: BeansDefaults | null;
   beans: BeansCLI;
@@ -452,10 +547,11 @@ async function withServedProject(
   beansTemplate: string,
   testInfo: TestInfo,
   configure: (config: string) => string,
-  use: (cli: BeansCLI) => Promise<void>
+  use: (cli: BeansCLI) => Promise<void>,
+  backend: WorktreeBackend = 'git'
 ): Promise<void> {
   const { beans: beansBin, beansServe } = getBinaries();
-  const project = createTestProject(beansTemplate, configure);
+  const project = createTestProject(beansTemplate, configure, backend);
   let server: ChildProcess | undefined;
   try {
     const port = serverPort(testInfo);
@@ -472,7 +568,9 @@ async function withServedProject(
         project.projectDir,
         beansBin,
         `http://localhost:${port}`,
-        project.fakeClaudeDir
+        project.fakeClaudeDir,
+        project.worktreeDir,
+        project.worktrunk?.env ?? null
       )
     );
   } finally {
@@ -491,6 +589,8 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
 
   beansDefaults: [null, { option: true }],
 
+  worktreeBackend: ['git', { option: true }],
+
   // Worker-scoped: run `beans init` once per worker, copy .beans dir for each test.
   beansTemplate: [
     async ({}, use) => {
@@ -502,7 +602,7 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     { scope: 'worker' }
   ],
 
-  beans: async ({ page, beansTemplate, beansDefaults }, use, testInfo) => {
+  beans: async ({ page, beansTemplate, beansDefaults, worktreeBackend }, use, testInfo) => {
     await withServedProject(
       page,
       beansTemplate,
@@ -514,7 +614,8 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
               default_type: beansDefaults.type
             })
           : config,
-      use
+      use,
+      worktreeBackend
     );
   },
 

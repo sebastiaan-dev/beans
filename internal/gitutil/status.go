@@ -126,50 +126,78 @@ func MergeBase(dir, baseRef string) (string, bool) {
 // a single entry per file showing the total diff from merge-base to working tree.
 // baseRef is the branch to compare against (e.g. "main"); if empty, falls back
 // to the default remote branch.
+//
+// It runs the merge-base lookup and the untracked-file listing concurrently,
+// then a single `git diff --raw --numstat` that yields both the line counts and
+// which files were added since the merge-base.
 func AllChangesVsUpstream(dir, baseRef string) ([]FileChange, error) {
+	var untracked []FileChange
+	var untrackedErr error
+	untrackedDone := make(chan struct{})
+	go func() {
+		defer close(untrackedDone)
+		untracked, untrackedErr = untrackedFiles(dir)
+	}()
+
 	base, ok := MergeBase(dir, baseRef)
 	if !ok {
+		<-untrackedDone
 		// Fallback: if no merge-base, just return regular working tree changes
 		return FileChanges(dir)
 	}
 
 	// Diff from merge-base to working tree (includes committed + staged + unstaged)
-	args := []string{"-C", dir, "diff", "--numstat", base}
-	cmd := exec.Command("git", args...)
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, err
+	cmd := exec.Command("git", "-C", dir, "diff", "--raw", "--numstat", base)
+	out, diffErr := cmd.Output()
+	<-untrackedDone
+	if diffErr != nil {
+		return nil, diffErr
 	}
-
-	changes, err := parseNumstat(string(out), false)
+	changes, err := parseRawNumstat(string(out))
 	if err != nil {
 		return nil, err
 	}
 
 	// Also include untracked files (not covered by git diff)
-	untracked, err := untrackedFiles(dir)
+	if untrackedErr != nil {
+		return nil, untrackedErr
+	}
+	return append(changes, untracked...), nil
+}
+
+// parseRawNumstat parses `git diff --raw --numstat` output: one raw line
+// (":<modes> <shas> <status>\t<paths>") per file, followed by one numstat line
+// per file in the same order. Files that the raw status marks as added ("A")
+// get status "added"; otherwise statuses are as in parseNumstat.
+func parseRawNumstat(output string) ([]FileChange, error) {
+	var statuses []string
+	var numstat strings.Builder
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if raw, ok := strings.CutPrefix(line, ":"); ok {
+			meta, _, _ := strings.Cut(raw, "\t")
+			fields := strings.Fields(meta)
+			status := ""
+			if len(fields) > 0 {
+				status = fields[len(fields)-1]
+			}
+			statuses = append(statuses, status)
+			continue
+		}
+		numstat.WriteString(line)
+		numstat.WriteByte('\n')
+	}
+
+	changes, err := parseNumstat(numstat.String(), false)
 	if err != nil {
 		return nil, err
 	}
-	changes = append(changes, untracked...)
-
-	// Detect added files: files that don't exist at the merge-base
-	existsAtBase := make(map[string]bool)
-	lsCmd := exec.Command("git", "-C", dir, "ls-tree", "--name-only", "-r", base)
-	lsOut, err := lsCmd.Output()
-	if err == nil {
-		for _, p := range strings.Split(strings.TrimSpace(string(lsOut)), "\n") {
-			if p != "" {
-				existsAtBase[p] = true
-			}
-		}
+	if len(statuses) == len(changes) {
 		for i := range changes {
-			if changes[i].Status == "modified" && !existsAtBase[changes[i].Path] {
+			if statuses[i] == "A" && changes[i].Status == "modified" {
 				changes[i].Status = "added"
 			}
 		}
 	}
-
 	return changes, nil
 }
 
@@ -254,17 +282,27 @@ func HasConflicts(dir, baseBranch string) bool {
 		}
 		baseBranch = remote
 	}
-	// git merge-tree --write-tree exits 0 if clean, 1 if conflicts
-	cmd := exec.Command("git", "-C", dir, "merge-tree", "--write-tree", "--no-messages", baseBranch, "HEAD")
-	err := cmd.Run()
+	// Errors (e.g., git too old) — assume no conflicts
+	conflicts, _ := MergeConflicts(dir, baseBranch, "HEAD")
+	return conflicts
+}
+
+// MergeConflicts reports whether merging ours and theirs would produce
+// conflicts, using an in-memory tree-level merge (git merge-tree) that
+// doesn't touch the working tree. The result depends only on the two commits.
+func MergeConflicts(dir, ours, theirs string) (bool, error) {
+	// git merge-tree --write-tree exits 0 if clean, 1 if conflicts; either way
+	// it prints the resulting tree. It also exits 1 (with no output) when a
+	// rev can't be resolved, which is an error rather than a conflict.
+	cmd := exec.Command("git", "-C", dir, "merge-tree", "--write-tree", "--no-messages", ours, theirs)
+	out, err := cmd.Output()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			return true
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 && len(strings.TrimSpace(string(out))) > 0 {
+			return true, nil
 		}
-		// Other errors (e.g., git too old) — assume no conflicts
-		return false
+		return false, err
 	}
-	return false
+	return false, nil
 }
 
 // HasUnpushedCommits returns true if the current branch has commits
@@ -287,13 +325,64 @@ func HasUnpushedCommits(dir string) bool {
 	return count > 0
 }
 
-// HasChanges returns true if there are any uncommitted changes or untracked files.
+// HasChanges returns true if there are any uncommitted changes (staged or
+// unstaged) or untracked files. Returns false if git fails.
+//
+// It runs a single `git status --porcelain` instead of the three commands
+// FileChanges needs. --no-optional-locks keeps this read-only check from
+// taking the index lock (and racing with git commands run in the worktree),
+// and --untracked-files=normal ignores a status.showUntrackedFiles=no config
+// so untracked files always count, like in FileChanges.
 func HasChanges(dir string) bool {
-	changes, err := FileChanges(dir)
+	cmd := exec.Command("git", "--no-optional-locks", "-C", dir, "status", "--porcelain", "--untracked-files=normal")
+	out, err := cmd.Output()
 	if err != nil {
 		return false
 	}
-	return len(changes) > 0
+	return len(strings.TrimSpace(string(out))) > 0
+}
+
+// AheadBehind counts the commits reachable from HEAD but not from baseRef
+// (ahead) and those reachable from baseRef but not from HEAD (behind), with a
+// single `git rev-list --left-right --count`. baseRef must be non-empty.
+func AheadBehind(dir, baseRef string) (ahead, behind int, err error) {
+	cmd := exec.Command("git", "-C", dir, "rev-list", "--left-right", "--count", baseRef+"...HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, 0, err
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) != 2 {
+		return 0, 0, fmt.Errorf("unexpected rev-list output %q", out)
+	}
+	if behind, err = strconv.Atoi(fields[0]); err != nil {
+		return 0, 0, err
+	}
+	if ahead, err = strconv.Atoi(fields[1]); err != nil {
+		return 0, 0, err
+	}
+	return ahead, behind, nil
+}
+
+// ResolveCommits resolves each rev to the full SHA of the commit it points to,
+// with a single `git rev-parse`. It fails if any rev doesn't name a commit.
+func ResolveCommits(dir string, revs ...string) ([]string, error) {
+	args := []string{"-C", dir, "rev-parse"}
+	for _, rev := range revs {
+		if rev == "" || strings.HasPrefix(rev, "-") {
+			return nil, fmt.Errorf("invalid revision %q", rev)
+		}
+		args = append(args, rev+"^{commit}")
+	}
+	out, err := exec.Command("git", args...).Output()
+	if err != nil {
+		return nil, err
+	}
+	shas := strings.Fields(string(out))
+	if len(shas) != len(revs) {
+		return nil, fmt.Errorf("unexpected rev-parse output %q", out)
+	}
+	return shas, nil
 }
 
 // FileDiff returns the unified diff for a specific file.

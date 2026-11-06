@@ -2,12 +2,14 @@ package graph
 
 import (
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/hmans/beans/internal/gitutil"
 
 	"github.com/hmans/beans/internal/agent"
+	"github.com/hmans/beans/internal/worktree"
 	"github.com/hmans/beans/pkg/beangraph/model"
 	"github.com/hmans/beans/pkg/forge"
 )
@@ -177,6 +179,11 @@ type actionContext struct {
 	ForgeCLI           string // "gh", "glab", or "" if no forge detected
 	ForgeLoading       bool   // true when forge is detected but PR state hasn't been fetched yet
 	IntegrateMode      string // "local" or "pr" — controls which integration buttons are visible
+	// WorktreeBackend selects the Integrate prompt ("" means the git backend).
+	WorktreeBackend worktree.BackendKind
+	// BaseBranch is the local branch that worktrunk's Integrate merges into
+	// (see localBaseBranch); "" lets wt use the repository's default branch.
+	BaseBranch string
 }
 
 // agentActionDef defines a single agent action with its metadata and prompt.
@@ -239,34 +246,7 @@ IMPORTANT: Do NOT fix anything automatically. Only identify and list the issues,
 		ID:          "integrate",
 		Label:       "Integrate",
 		Description: "Commit, complete any associated beans, and squash-merge into main",
-		PromptFunc: func(ctx actionContext) string {
-			return fmt.Sprintf(`Squash-merge this worktree's work into main. All commits from this branch must be combined into a single commit on main. Follow these steps in order:
-
-CRITICAL SAFETY RULES — READ BEFORE DOING ANYTHING:
-- NEVER run "git push" to origin/main or any remote. This is a LOCAL-ONLY operation.
-- NEVER run "git push --force" or "git push -f" on ANY branch, especially not main.
-- NEVER run any push command that targets the main branch on any remote.
-- If something goes wrong, STOP and report the error. Do NOT attempt destructive recovery.
-
-1. If there are associated beans, mark them as completed.
-2. If there are uncommitted changes, create a commit (following the usual commit guidelines).
-3. Squash-merge onto main:
-   a. Rebase onto main to incorporate any prior integrations: git rebase main
-   b. Squash all commits into one: git reset --soft main && git commit -m "<your message>"
-      - Write a single, well-crafted conventional commit message that summarizes all the work done in this branch. Include relevant bean IDs.
-   c. Record the squashed commit SHA: SQUASH_SHA=$(git rev-parse HEAD)
-   d. Prepare the main repo. Beans UI saves bean edits to the main repo without committing them, and the branch usually carries the same edits (the bean was copied into this worktree). Uncommitted changes in main at paths the squashed commit changes would make the fast-forward abort. Run this script verbatim with bash, from this worktree, with SQUASH_SHA set. It drops main's uncommitted changes ONLY where they are identical to this branch's version, and changes nothing otherwise:
-`+"```bash"+`
-%s
-`+"```"+`
-      If it prints CONFLICT, STOP. Do NOT merge, and do NOT stash, reset, checkout, or otherwise modify anything in the main repo. Tell the user which files have uncommitted changes in the main repo that differ from this branch, and that they need to commit or discard those changes (or tell you to update this branch's version), then run Integrate again.
-   e. Fast-forward main to the squashed commit (this updates main's ref, index, AND working tree):
-      git -C %s merge --ff-only $SQUASH_SHA
-   f. If the merge fails because main moved (not possible to fast-forward), go back to step (a) and retry. If it fails because of local changes in the main repo (e.g. a bean was edited in the UI meanwhile), run step (d) again and retry the merge once; if it still fails, STOP and report the error.
-4. Reset this branch to main so it doesn't appear to diverge: git reset --hard main
-
-REMINDER: Do NOT push anything to any remote. The integrate action is purely local.`, integratePrepareMainScript(ctx.MainRepoPath), shellQuote(ctx.MainRepoPath))
-		},
+		PromptFunc:  integratePrompt,
 		Visible: func(ctx actionContext) bool {
 			if ctx.IntegrateMode == "pr" {
 				return false
@@ -406,6 +386,128 @@ IMPORTANT: Do NOT merge the PR. Only fix the failing checks.`, cli)
 2. Merge using the appropriate strategy: %[1]s pr merge with the right flag (--squash, --merge, or --rebase).
 3. Do NOT switch branches or delete the worktree after merging.
 4. Report the PR URL when done.`, cli)
+}
+
+// integratePrompt generates the local Integrate prompt for the workspace's
+// worktree backend.
+func integratePrompt(ctx actionContext) string {
+	if ctx.WorktreeBackend == worktree.BackendWorktrunk {
+		return worktrunkIntegratePrompt(ctx)
+	}
+	return gitIntegratePrompt(ctx)
+}
+
+// gitIntegratePrompt squash-merges with plain git: squash commit, prepare
+// main, `git merge --ff-only` in the main repo.
+func gitIntegratePrompt(ctx actionContext) string {
+	return fmt.Sprintf(`Squash-merge this worktree's work into main. All commits from this branch must be combined into a single commit on main. Follow these steps in order:
+
+CRITICAL SAFETY RULES — READ BEFORE DOING ANYTHING:
+- NEVER run "git push" to origin/main or any remote. This is a LOCAL-ONLY operation.
+- NEVER run "git push --force" or "git push -f" on ANY branch, especially not main.
+- NEVER run any push command that targets the main branch on any remote.
+- If something goes wrong, STOP and report the error. Do NOT attempt destructive recovery.
+
+1. If there are associated beans, mark them as completed.
+2. If there are uncommitted changes, create a commit (following the usual commit guidelines).
+3. Squash-merge onto main:
+   a. Rebase onto main to incorporate any prior integrations: git rebase main
+   b. Squash all commits into one: git reset --soft main && git commit -m "<your message>"
+      - Write a single, well-crafted conventional commit message that summarizes all the work done in this branch. Include relevant bean IDs.
+   c. Record the squashed commit SHA: SQUASH_SHA=$(git rev-parse HEAD)
+   d. Prepare the main repo. Beans UI saves bean edits to the main repo without committing them, and the branch usually carries the same edits (the bean was copied into this worktree). Uncommitted changes in main at paths the squashed commit changes would make the fast-forward abort. Run this script verbatim with bash, from this worktree, with SQUASH_SHA set. It drops main's uncommitted changes ONLY where they are identical to this branch's version, and changes nothing otherwise:
+`+"```bash"+`
+%s
+`+"```"+`
+      If it prints CONFLICT, STOP. Do NOT merge, and do NOT stash, reset, checkout, or otherwise modify anything in the main repo. Tell the user which files have uncommitted changes in the main repo that differ from this branch, and that they need to commit or discard those changes (or tell you to update this branch's version), then run Integrate again.
+   e. Fast-forward main to the squashed commit (this updates main's ref, index, AND working tree):
+      git -C %s merge --ff-only $SQUASH_SHA
+   f. If the merge fails because main moved (not possible to fast-forward), go back to step (a) and retry. If it fails because of local changes in the main repo (e.g. a bean was edited in the UI meanwhile), run step (d) again and retry the merge once; if it still fails, STOP and report the error.
+4. Reset this branch to main so it doesn't appear to diverge: git reset --hard main
+
+REMINDER: Do NOT push anything to any remote. The integrate action is purely local.`, integratePrepareMainScript(ctx.MainRepoPath), shellQuote(ctx.MainRepoPath))
+}
+
+// worktrunkIntegratePrompt squash-merges with worktrunk: the agent squashes
+// with its own message, prepares main, then `wt merge` runs the project's
+// pre-merge hooks and fast-forwards the target (see worktrunkMergeCommand).
+func worktrunkIntegratePrompt(ctx actionContext) string {
+	target := ctx.BaseBranch
+	if target == "" {
+		target = "main"
+	}
+	q := shellQuote(target)
+	return fmt.Sprintf(`Squash-merge this worktree's work into %[1]s with worktrunk (wt). All commits from this branch must be combined into a single commit on %[1]s. Follow these steps in order:
+
+CRITICAL SAFETY RULES — READ BEFORE DOING ANYTHING:
+- NEVER run "git push" (or "wt step push") to any remote. This is a LOCAL-ONLY operation.
+- NEVER run "git push --force" or "git push -f" on ANY branch, especially not %[1]s.
+- NEVER pass --yes, -y or --no-hooks to wt, and NEVER run "wt config approvals add" yourself, even if wt suggests it. Project hooks are the user's checks (e.g. tests); only the user may approve or skip them.
+- NEVER remove this worktree or its branch (no "wt remove", no "wt merge" without --no-remove, no "git worktree remove"). Beans runs this agent and the workspace's terminals in it; the user destroys the workspace from Beans UI when done.
+- If something goes wrong, STOP and report the error. Do NOT attempt destructive recovery.
+
+1. If there are associated beans, mark them as completed.
+2. If there are uncommitted changes, create a commit (following the usual commit guidelines).
+3. Squash onto %[1]s:
+   a. Rebase onto %[1]s to incorporate any prior integrations: git rebase %[2]s
+      - If the rebase stops with conflicts, resolve them in this worktree so that both this branch's work and the changes on %[1]s are kept, then "git add" the files and "git rebase --continue". If you can't resolve a conflict with confidence, run "git rebase --abort", STOP and tell the user which files conflict.
+   b. Squash all commits into one: git reset --soft %[2]s && git commit -m "<your message>"
+      - Write a single, well-crafted conventional commit message that summarizes all the work done in this branch. Include relevant bean IDs. (wt merge can't take a commit message, so you make the squash commit yourself and wt merges it as is.)
+   c. Record the squashed commit SHA: SQUASH_SHA=$(git rev-parse HEAD)
+   d. Prepare the main repo. Beans UI saves bean edits to the main repo without committing them, and the branch usually carries the same edits (the bean was copied into this worktree). wt merge refuses to update %[1]s while the main repo has uncommitted changes at paths the squashed commit changes. Run this script verbatim with bash, from this worktree, with SQUASH_SHA set. It drops main's uncommitted changes ONLY where they are identical to this branch's version, and changes nothing otherwise:
+`+"```bash"+`
+%[3]s
+`+"```"+`
+      If it prints CONFLICT, STOP. Do NOT merge, and do NOT stash, reset, checkout, or otherwise modify anything in the main repo. Tell the user which files have uncommitted changes in the main repo that differ from this branch, and that they need to commit or discard those changes (or tell you to update this branch's version), then run Integrate again.
+4. Merge with worktrunk. Run exactly this command:
+      %[4]s
+   It runs the project's pre-merge hooks (e.g. tests) in this worktree, then fast-forwards %[1]s to the squashed commit (updating the main repo's working tree too) and starts the post-merge hooks in the background. It merges your commit as is (--no-commit) without rebasing it (--no-rebase) and keeps this worktree (--no-remove).
+5. If the command fails, nothing was merged. Read wt's output:
+   - "%[5]s" or "%[6]s": the project's worktrunk hooks need the user's approval, so wt ran nothing. STOP. Tell the user, listing the commands wt printed: "worktrunk project hooks need your approval, so the merge did not run. Beans never approves project hooks for you. Review and approve them by running `+"`wt config approvals add`"+` in %[7]s, then run Integrate again."
+   - "%[8]s": a pre-merge hook failed (e.g. tests or lint). Investigate the hook's output and fix the problem in this worktree, then fold the fix into the squash commit (git add -A && git commit --amend --no-edit, or git commit --amend -m "<updated message>" if the scope changed) and go back to step (c). If you can't find a fix, or the hook still fails after your second fix, STOP and report the failing hook and its output.
+   - "%[9]s": %[1]s moved since you squashed. Go back to step (a).
+   - "%[10]s": the main repo got new uncommitted changes (e.g. a bean was edited in the UI meanwhile). Run step (d) again and retry the command once; if it still fails, STOP and report the error.
+   - "%[11]s": this worktree has uncommitted changes (e.g. files created by a hook or by you). Commit what belongs to the work into the squash commit (git add -A && git commit --amend --no-edit) and go back to step (c); if you don't know where the changes come from, STOP and report them.
+   - Anything else: STOP and report wt's output.
+6. Confirm the result: git rev-parse HEAD %[2]s must print the same commit twice. Tell the user that the work is merged into %[1]s, and that they can destroy this workspace from Beans UI (that also removes the worktree and, since it is merged, its branch).
+
+REMINDER: Do NOT push anything to any remote. The integrate action is purely local.`,
+		target, q, integratePrepareMainScript(ctx.MainRepoPath), worktrunkMergeCommand(ctx.WorkDir, target),
+		wtApprovalMessage, wtNoPromptMessage, shellQuote(ctx.MainRepoPath), wtPreMergeFailedMessage,
+		wtNotRebasedMessage, wtTargetDirtyMessage, wtSourceDirtyMessage)
+}
+
+// addWorktreeBackend records the worktree backend (and, for worktrunk, the
+// branch Integrate merges into) in the action context.
+func (r *Resolver) addWorktreeBackend(ctx *actionContext) {
+	if r.WorktreeMgr == nil {
+		return
+	}
+	ctx.WorktreeBackend = r.WorktreeMgr.Backend()
+	if ctx.WorktreeBackend == worktree.BackendWorktrunk {
+		ctx.BaseBranch = localBaseBranch(r.WorktreeMgr.RepoRoot(), r.WorktreeMgr.BaseRef())
+	}
+}
+
+// localBaseBranch returns the local branch for the configured base ref, which
+// is what `wt merge` fast-forwards (it never touches remote-tracking refs): the
+// ref itself when it is a local branch, otherwise, for a remote-tracking ref
+// like "origin/main", the branch without the remote ("main").
+func localBaseBranch(repoRoot, baseRef string) string {
+	if baseRef == "" || gitRefExists(repoRoot, "refs/heads/"+baseRef) {
+		return baseRef
+	}
+	if remote, branch, ok := strings.Cut(baseRef, "/"); ok && gitRefExists(repoRoot, "refs/remotes/"+remote+"/"+branch) {
+		return branch
+	}
+	return baseRef
+}
+
+// gitRefExists reports whether the full ref exists in the repository.
+func gitRefExists(repoRoot, ref string) bool {
+	cmd := exec.Command("git", "show-ref", "--verify", "--quiet", ref)
+	cmd.Dir = repoRoot
+	return cmd.Run() == nil
 }
 
 // commitPrompt generates a commit prompt. The agent will inspect git state itself.

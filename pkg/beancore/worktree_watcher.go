@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -150,6 +151,69 @@ func (c *Core) UnwatchWorktreeBeans(worktreePath string) {
 		close(wt.done)
 		c.logWarn("stopped watching worktree beans: %s", wt.beansDir)
 	}
+}
+
+// SyncWorktreeWatchers reconciles the worktree watchers with the given set of
+// active worktree paths: it starts watching worktrees that aren't watched yet
+// (e.g. created outside beans, or whose .beans/ directory appeared since the
+// last sync) and stops watching worktrees that are gone. Paths are compared
+// after resolving symlinks, so the same worktree reached through different
+// paths (e.g. /tmp vs /private/tmp) is watched once. Returns the first error
+// from starting a watcher; the remaining worktrees are still synced.
+func (c *Core) SyncWorktreeWatchers(worktreePaths []string) error {
+	wanted := make(map[string]string, len(worktreePaths)) // canonical -> path
+	for _, p := range worktreePaths {
+		canon := canonicalPath(p)
+		if _, ok := wanted[canon]; !ok {
+			wanted[canon] = p
+		}
+	}
+
+	c.mu.RLock()
+	watched := make(map[string]string, len(c.worktreeWatchers)) // canonical -> watched key
+	for p := range c.worktreeWatchers {
+		watched[canonicalPath(p)] = p
+	}
+	c.mu.RUnlock()
+
+	for canon, key := range watched {
+		if _, ok := wanted[canon]; !ok {
+			c.UnwatchWorktreeBeans(key)
+		}
+	}
+
+	var firstErr error
+	for canon, p := range wanted {
+		if _, ok := watched[canon]; ok {
+			continue
+		}
+		if err := c.WatchWorktreeBeans(p); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("watching worktree %s: %w", p, err)
+		}
+	}
+	return firstErr
+}
+
+// WatchedWorktrees returns the paths of the worktrees whose .beans/
+// directories are being watched, sorted.
+func (c *Core) WatchedWorktrees() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	paths := make([]string, 0, len(c.worktreeWatchers))
+	for p := range c.worktreeWatchers {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+// canonicalPath resolves symlinks in p, or returns it cleaned if that fails
+// (e.g. the worktree was already deleted).
+func canonicalPath(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return filepath.Clean(p)
 }
 
 // UnwatchAllWorktrees stops watching all worktree .beans/ directories.

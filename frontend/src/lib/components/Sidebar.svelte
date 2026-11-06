@@ -13,7 +13,10 @@
   import { decryptText } from '$lib/actions/decryptText';
   import { sidebarState } from '$lib/sidebarState.svelte';
   import { sidebarShortcutLabel, workspaceInitials } from '$lib/sidebar';
+  import { isDetached, workspaceLabel, workspaceTooltip } from '$lib/workspaces';
+  import { toasts } from '$lib/toasts.svelte';
   import ConfirmModal from './ConfirmModal.svelte';
+  import CreateWorkspaceModal from './CreateWorkspaceModal.svelte';
 
   interface PullRequestInfo {
     state: string;
@@ -25,9 +28,16 @@
   interface WorkspaceItem {
     id: string;
     label: string;
+    /** Branch shown under the label when it differs from it (null: don't show). */
+    branchHint: string | null;
+    /** Detached HEAD: the worktree has no branch checked out. */
+    detached: boolean;
+    /** Hover text with branch and path (null for the main workspace). */
+    tooltip: string | null;
     description: string | null;
     beans: Bean[];
     settingUp: boolean;
+    setupError: string | null;
     pullRequest: PullRequestInfo | null;
   }
 
@@ -38,16 +48,34 @@
       .filter((b): b is Bean => b != null);
   }
 
-  const mainWorkspace: WorkspaceItem = $derived({ id: MAIN_WORKSPACE_ID, label: configStore.mainBranch, description: null, beans: [], settingUp: false, pullRequest: null });
+  const mainWorkspace: WorkspaceItem = $derived({
+    id: MAIN_WORKSPACE_ID,
+    label: configStore.mainBranch,
+    branchHint: null,
+    detached: false,
+    tooltip: null,
+    description: null,
+    beans: [],
+    settingUp: false,
+    setupError: null,
+    pullRequest: null
+  });
 
   const workspaceItems = $derived([
     mainWorkspace,
     ...worktreeStore.worktrees.map((wt): WorkspaceItem => ({
       id: wt.id,
-      label: wt.name ?? wt.branch,
+      label: workspaceLabel(wt),
+      // Worktrunk workspaces can be on any branch; show it unless the label says it all.
+      branchHint:
+        configStore.isWorktrunk && wt.branch && wt.branch !== workspaceLabel(wt) ? wt.branch : null,
+      detached: isDetached(wt),
+      tooltip: workspaceTooltip(wt),
       description: wt.description ?? null,
       beans: beansForWorktree(wt.beanIds),
       settingUp: wt.setupStatus === 'RUNNING',
+      setupError:
+        wt.setupStatus === 'FAILED' ? wt.setupError || 'Workspace setup failed.' : null,
       pullRequest: wt.pullRequest ? {
         state: wt.pullRequest.state,
         checkStatus: wt.pullRequest.checkStatus,
@@ -135,10 +163,21 @@
     });
   }
 
+  let creatingWorkspace = $state(false);
+
   async function handleCreateWorktree() {
+    // The backend decides between one-click creation and choosing a name.
+    await configStore.ready;
+    // With worktrunk the name becomes the branch, so let the user choose it.
+    if (configStore.isWorktrunk) {
+      creatingWorkspace = true;
+      return;
+    }
     const wt = await worktreeStore.createWorktree();
     if (wt) {
       ui.navigateTo(wt.id);
+    } else {
+      toasts.error('Could not create the workspace', worktreeStore.error ?? undefined);
     }
   }
 
@@ -149,8 +188,11 @@
       ui.navigateTo('planning');
     }
     // The backend stops the run process and terminal sessions before removing the worktree.
+    const label = worktreeStore.labelFor(id) ?? id;
     if (await worktreeStore.removeWorktree(id)) {
       ui.forgetWorkspace(id);
+    } else {
+      toasts.error(`Could not destroy workspace "${label}"`, worktreeStore.error ?? undefined);
     }
   }
 
@@ -161,6 +203,7 @@
   /** Compact status indicator for a workspace in the collapsed rail. */
   function railStatus(item: WorkspaceItem): { class: string; label: string } | null {
     if (item.settingUp) return { class: 'bg-text-faint animate-pulse', label: 'Setting up' };
+    if (item.setupError) return { class: 'bg-danger', label: 'Setup failed' };
     if (item.id === MAIN_WORKSPACE_ID) {
       return mainHasChanges ? { class: 'bg-warning', label: 'Uncommitted changes' } : null;
     }
@@ -178,7 +221,10 @@
   function railTooltip(item: WorkspaceItem): string {
     const status = railStatus(item);
     const running = agentStatusesStore.isRunning(item.id) ? 'Agent running' : null;
-    return [item.label, item.description, running, status?.label].filter(Boolean).join(' — ');
+    const extras = [item.description, running, status?.label];
+    return item.tooltip
+      ? [item.tooltip, ...extras].filter(Boolean).join('\n')
+      : [item.label, ...extras].filter(Boolean).join(' — ');
   }
 </script>
 
@@ -353,6 +399,8 @@
           <div class="group flex items-start">
             <button
               onclick={() => ui.navigateTo(item.id)}
+              title={item.tooltip ?? undefined}
+              data-workspace-id={item.id}
               class={[
                 'flex min-w-0 flex-1 cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm transition-colors',
                 ui.activeView === item.id
@@ -361,9 +409,26 @@
               ]}
             >
               <div class="min-w-0 flex-1">
-                <span class="block truncate">{item.label}</span>
+                <div class="flex min-w-0 items-center gap-1.5">
+                  <span class="block truncate">{item.label}</span>
+                  {#if item.detached}
+                    <span
+                      class="shrink-0 rounded border border-border px-1 font-mono text-[10px] leading-4 font-normal text-text-faint"
+                      title="Detached HEAD: no branch is checked out in this worktree"
+                      data-detached
+                    >detached</span>
+                  {/if}
+                </div>
+                {#if item.branchHint}
+                  <div class="flex min-w-0 items-center gap-1 text-[11px] font-normal text-text-faint" data-branch>
+                    <span class="icon-[uil--code-branch] block size-3 shrink-0"></span>
+                    <div class="truncate font-mono">{item.branchHint}</div>
+                  </div>
+                {/if}
                 {#if item.settingUp}
                   <span class="block text-xs font-normal text-text-faint animate-pulse">Setting up...</span>
+                {:else if item.setupError}
+                  <span class="block text-xs font-normal text-danger" title={item.setupError} data-setup-failed>Setup failed</span>
                 {:else if item.description}
                   <span class="block text-xs font-normal text-text-faint" use:decryptText={{ text: item.description, immediate: isWorkspaceSeen(item.id) }}></span>
                 {/if}
@@ -447,15 +512,28 @@
       confirmingStatus?.hasChanges && 'uncommitted changes',
       confirmingStatus?.hasUnmergedCommits && 'unmerged commits'
     ].filter(Boolean)}
+    {@const hooksNote = configStore.isWorktrunk
+      ? " Worktrunk's pre-remove/post-remove hooks run, and the branch is deleted only if it is merged."
+      : ''}
     <ConfirmModal
       title="Destroy Worktree"
       message={warnings.length > 0
-        ? `This worktree has ${warnings.join(' and ')}. Are you sure you want to destroy the worktree for "${label}"? This cannot be undone.`
-        : `Are you sure you want to destroy the worktree for "${label}"? This cannot be undone.`}
+        ? `This worktree has ${warnings.join(' and ')}. Are you sure you want to destroy the worktree for "${label}"?${hooksNote} This cannot be undone.`
+        : `Are you sure you want to destroy the worktree for "${label}"?${hooksNote} This cannot be undone.`}
       confirmLabel="Destroy"
       danger
       onConfirm={() => handleRemoveWorktree(confirmingRemoveId!)}
       onCancel={() => { confirmingRemoveId = null; confirmingStatus = null; }}
+    />
+  {/if}
+
+  {#if creatingWorkspace}
+    <CreateWorkspaceModal
+      onCreated={(wt) => {
+        creatingWorkspace = false;
+        ui.navigateTo(wt.id);
+      }}
+      onCancel={() => (creatingWorkspace = false)}
     />
   {/if}
 </nav>
