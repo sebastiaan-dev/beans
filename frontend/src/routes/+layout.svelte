@@ -17,6 +17,9 @@
   import SplitPane from '$lib/components/SplitPane.svelte';
   import Toaster from '$lib/components/Toaster.svelte';
   import { toasts } from '$lib/toasts.svelte';
+  import FocusView from '$lib/components/FocusView.svelte';
+  import { focusMode } from '$lib/focusMode.svelte';
+  import { focusActionForKey, isFocusEnterShortcut } from '$lib/focusMode';
 
   preloadHighlighter();
 
@@ -74,10 +77,93 @@
     if (configStore.projectName) foldState.setProject(configStore.projectName);
   });
 
+  // Focus mode: leave it with a toast when the focused bean disappears
+  // (deleted, or a link to a bean that doesn't exist).
+  const FOCUS_MISSING_GRACE_MS = 2000;
+  let lastFocused: { id: string; title: string } | null = null;
+  let exitingMissing: string | null = null;
+  $effect(() => {
+    const id = focusMode.id;
+    if (!id || beansStore.loading) return;
+    const bean = focusMode.bean;
+    if (bean) {
+      lastFocused = { id, title: bean.title };
+      exitingMissing = null;
+      return;
+    }
+    // Navigation is async: don't notify twice while it is in flight.
+    if (exitingMissing === id) return;
+    const leave = (title: string, message: string) => {
+      exitingMissing = id;
+      toasts.show(title, { message });
+      focusMode.exit();
+    };
+    if (lastFocused?.id === id) {
+      leave(`"${lastFocused.title}" was deleted`, 'Left focus mode.');
+      return;
+    }
+    // Never seen: give a just-created bean (e.g. a link from an agent) a moment
+    // to arrive from the file watcher before giving up.
+    const timer = setTimeout(
+      () => leave(`Bean "${id}" not found`, 'It may have been deleted.'),
+      FOCUS_MISSING_GRACE_MS
+    );
+    return () => clearTimeout(timer);
+  });
+
+  // When focus mode ends (Esc, Back, browser back), select the bean that was
+  // focused last and restore keyboard focus in the regular view.
+  let previousFocusId: string | null = null;
+  $effect(() => {
+    const id = focusMode.id;
+    const prev = previousFocusId;
+    previousFocusId = id;
+    if (id || !prev) return;
+    exitingMissing = null;
+    if (beansStore.get(prev) && ui.selectedBeanId !== prev) ui.selectBeanById(prev);
+    focusMode.restoreFocus();
+  });
+
+  /** Whether a modal dialog (bean form, confirmation, …) has the keyboard. */
+  function modalOpen(): boolean {
+    return ui.showForm || !!document.querySelector('[aria-modal="true"]');
+  }
+
+  function handleFocusModeKeydown(e: KeyboardEvent) {
+    if (modalOpen()) return;
+    const action = focusActionForKey(e);
+    if (!action) return;
+    e.preventDefault();
+    switch (action) {
+      case 'exit':
+        focusMode.exit();
+        break;
+      case 'prev':
+      case 'next':
+        focusMode.step(action);
+        break;
+      case 'edit':
+        if (focusMode.bean) ui.openEditForm(focusMode.bean);
+        break;
+      case 'toggleWidth':
+        focusMode.toggleWidth();
+        break;
+    }
+  }
+
   function handleKeydown(e: KeyboardEvent) {
+    if (focusMode.active) {
+      handleFocusModeKeydown(e);
+      return;
+    }
     if (isSidebarToggleShortcut(e)) {
       e.preventDefault();
       sidebarState.toggle();
+      return;
+    }
+    if (isFocusEnterShortcut(e) && ui.currentBean && !modalOpen()) {
+      e.preventDefault();
+      focusMode.enter(ui.currentBean.id);
     }
   }
 
@@ -96,13 +182,21 @@
 </script>
 
 <svelte:head>
-  <title>{configStore.projectName ? `${configStore.projectName} — Beans UI` : 'Beans UI'}</title>
+  <title
+    >{[focusMode.bean?.title, configStore.projectName, 'Beans UI']
+      .filter(Boolean)
+      .join(' — ')}</title
+  >
   <link rel="icon" href={favicon} />
 </svelte:head>
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="flex h-screen flex-col bg-surface-alt">
+<!-- Kept mounted under focus mode (inert and hidden) so scroll positions and state survive. -->
+<div
+  class={['flex h-screen flex-col bg-surface-alt', focusMode.active && 'invisible']}
+  inert={focusMode.active}
+>
   {#if beansStore.error}
     <div class="m-4">
       <div class="rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
@@ -134,6 +228,10 @@
     />
   {/if}
 </div>
+
+{#if focusMode.active && !beansStore.error}
+  <FocusView />
+{/if}
 
 <Toaster />
 

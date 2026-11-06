@@ -1,4 +1,5 @@
-import { beansStore, type Bean } from '$lib/beans.svelte';
+import { beansStore, sortBeans, type Bean } from '$lib/beans.svelte';
+import { BACKLOG_STATUSES, backlogRoots } from '$lib/backlog';
 import { ui } from '$lib/uiState.svelte';
 import {
   compileFilter,
@@ -12,6 +13,12 @@ import {
   type FilterQuery,
   type SuggestionSources
 } from '$lib/filter';
+
+type BacklogStatus = (typeof BACKLOG_STATUSES)[number];
+
+/** Board columns, left to right. */
+export const BOARD_STATUSES = ['todo', 'in-progress', 'completed'] as const;
+export type BoardStatus = (typeof BOARD_STATUSES)[number];
 
 function containerRank(type: string): number {
   return type === 'milestone' ? 0 : type === 'epic' ? 1 : 2;
@@ -57,6 +64,39 @@ class PlanningFilter {
       tree.visible.add(bean.id);
     }
     return tree;
+  });
+
+  /**
+   * Root beans of each backlog section, in display order: top-level backlog
+   * beans plus backlog beans whose ancestors are not in the backlog (e.g. todo
+   * children of an in-progress parent). Archived beans requested by the filter
+   * (archived:yes) are never nested (BeanItem only renders non-archived
+   * children), so they are extra roots. With a filter, only roots that match
+   * or have a matching descendant are kept.
+   */
+  readonly backlogSections: Record<BacklogStatus, Bean[]> = $derived.by(() => {
+    const tree = this.tree;
+    const sections = {} as Record<BacklogStatus, Bean[]>;
+    for (const status of BACKLOG_STATUSES) {
+      const roots = [
+        ...backlogRoots(beansStore.all, status),
+        ...this.archivedMatches.filter((b) => b.status === status)
+      ];
+      sections[status] = tree ? roots.filter((b) => tree.visible.has(b.id)) : roots;
+    }
+    return sections;
+  });
+
+  /** Beans of each board column, in display order (scrapped beans never show on the board). */
+  readonly boardColumns: Record<BoardStatus, Bean[]> = $derived.by(() => {
+    const columns = {} as Record<BoardStatus, Bean[]>;
+    for (const status of BOARD_STATUSES) {
+      // sortBeans handles order → priority → type → title sorting
+      columns[status] = sortBeans(
+        this.beans.filter((b) => b.status === status && this.predicate(b))
+      );
+    }
+    return columns;
   });
 
   /** Values offered by autocomplete and the popover. */

@@ -262,6 +262,86 @@ a,
   @apply my-3 rounded;
 }
 
+/* ── Bean body: markdown of a bean (detail pane, focus mode) ── */
+.bean-body h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--th-md-h1);
+  border-bottom: 1px solid var(--th-md-h1-border);
+  padding-bottom: 0.25rem;
+  margin-top: 1.5rem;
+}
+
+.bean-body h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--th-md-h2);
+  margin-top: 1.25rem;
+}
+
+.bean-body h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--th-md-h3);
+  margin-top: 1rem;
+}
+
+.bean-body h4,
+.bean-body h5,
+.bean-body h6 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--th-md-h456);
+  margin-top: 0.75rem;
+}
+
+.bean-body ul:has(input[type='checkbox']) {
+  list-style: none;
+  padding-left: 0;
+}
+
+.bean-body li:has(> input[type='checkbox']) {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding-left: 0;
+}
+
+.bean-body li:has(> input[type='checkbox'])::before {
+  content: none;
+}
+
+.bean-body input[type='checkbox'] {
+  margin-top: 0.25rem;
+  accent-color: #22c55e;
+}
+
+.bean-body pre.shiki {
+  padding: 1rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  margin: 1rem 0;
+}
+
+.bean-body pre.shiki code {
+  font-family:
+    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, 'Cascadia Code', Consolas,
+    'Liberation Mono', 'Courier New', monospace;
+}
+
+.bean-body code:not(pre code) {
+  color: var(--th-text);
+  background-color: var(--th-md-code-bg);
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  font-size: 0.875em;
+  font-family:
+    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, 'Cascadia Code', Consolas,
+    'Liberation Mono', 'Courier New', monospace;
+}
+
 /* ── Agent prose: uniform font size for chat markdown ── */
 .agent-prose *:not(pre, pre *, code) {
   font-size: inherit;

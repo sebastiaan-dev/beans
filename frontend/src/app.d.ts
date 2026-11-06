@@ -5,7 +5,10 @@ declare global {
     // interface Error {}
     // interface Locals {}
     // interface PageData {}
-    // interface PageState {}
+    interface PageState {
+      /** Set on the history entry focus mode added (see focusMode.svelte.ts), so exiting can go back. */
+      focusEntered?: boolean;
+    }
     // interface Platform {}
   }
 }
