@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/hmans/beans/internal/ui"
 	"github.com/hmans/beans/pkg/beancore"
 	"github.com/hmans/beans/pkg/config"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var core *beancore.Core
@@ -44,6 +46,7 @@ a full view of your project.`,
 				return fmt.Errorf("loading beans: %w", err)
 			}
 
+			applyCLITheme(cmd)
 			return nil
 		},
 	}
@@ -52,6 +55,18 @@ a full view of your project.`,
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "Path to config file (overrides BEANS_CONFIG env var; default: searches upward for .beans.yml)")
 
 	return rootCmd
+}
+
+// applyCLITheme applies the configured color theme to colored CLI output.
+// It only runs when stdout is a terminal (otherwise no colors are emitted
+// anyway) and never paints a background (CLI output is line-oriented). The
+// TUI applies the theme itself, with its background (see tui.Run). A theme
+// that fails to load falls back to terminal colors with a warning.
+func applyCLITheme(cmd *cobra.Command) {
+	if cmd.Name() == "tui" || !term.IsTerminal(int(os.Stdout.Fd())) {
+		return
+	}
+	ui.WarnThemeError(ui.ApplyConfiguredTheme(cfg, false))
 }
 
 // requiresProject reports whether cmd needs a loaded beans project.

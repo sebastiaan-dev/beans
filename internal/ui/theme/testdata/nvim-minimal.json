@@ -1,0 +1,18 @@
+{
+  "colors_name": "minimal",
+  "background": "light",
+  "highlights": {
+    "Normal": {"fg": "#222222", "bg": "#fafafa"},
+    "Comment": {"fg": "#888888"},
+    "Function": {"fg": "#0055aa"},
+    "Statement": {"fg": "#aa00aa"},
+    "String": {"fg": "#228822"},
+    "Special": {"fg": "#008888"},
+    "WinSeparator": {"fg": "#fafafa"},
+    "LineNr": {"fg": "#aaaaaa"},
+    "Visual": {"reverse": true},
+    "DiagnosticError": {"fg": "#cc0000"},
+    "DiagnosticWarn": {"fg": "#aa7700"}
+  },
+  "terminal_colors": {}
+}

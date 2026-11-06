@@ -6,12 +6,14 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/hmans/beans/internal/ui"
 	"github.com/hmans/beans/pkg/beancore"
 	"github.com/hmans/beans/pkg/beangraph"
 	"github.com/hmans/beans/pkg/beangraph/model"
@@ -767,8 +769,14 @@ func (a *App) renderTwoColumnView() string {
 	return columns + "\n" + footer
 }
 
-// View renders the current view
+// View renders the current view, painted with the theme's background (see
+// ui.PaintBackground; a no-op with the terminal theme).
 func (a *App) View() string {
+	return ui.PaintBackground(a.view(), a.width, a.height)
+}
+
+// view renders the current view without the theme background.
+func (a *App) view() string {
 	switch a.state {
 	case viewList:
 		if a.isTwoColumnMode() {
@@ -827,8 +835,31 @@ func getEditor() string {
 	return "nano"
 }
 
+func init() {
+	ui.OnThemeApplied(rebuildThemeStyles)
+}
+
+// rebuildThemeStyles rebuilds the package-level styles derived from the ui
+// palette after ui.ApplyTheme (they are built at init, before any theme is
+// applied).
+func rebuildThemeStyles() {
+	listTitleStyle = lipgloss.NewStyle().Foreground(ui.ColorPrimary).Bold(true)
+	detailTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(ui.ColorPrimary).Reverse(true).Padding(0, 1)
+	helpStyle = lipgloss.NewStyle().Foreground(ui.ColorMuted)
+	helpKeyStyle = lipgloss.NewStyle().Foreground(ui.ColorPrimary).Bold(true)
+	modalDimStyle = lipgloss.NewStyle().Foreground(ui.ColorSubtle)
+
+	// The markdown renderer captures the theme's markdown style.
+	glamourRenderer = nil
+	glamourRendererOnce = sync.Once{}
+}
+
 // Run starts the TUI application with file watching
 func Run(core *beancore.Core, cfg *config.Config) error {
+	// Apply the configured theme (with its background) before building any
+	// view. A theme that fails to load falls back to terminal colors.
+	ui.WarnThemeError(ui.ApplyConfiguredTheme(cfg, true))
+
 	app := New(core, cfg)
 	p := tea.NewProgram(app, tea.WithAltScreen())
 

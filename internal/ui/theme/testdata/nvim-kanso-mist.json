@@ -1,0 +1,101 @@
+{
+  "colors_name": "kanso",
+  "background": "dark",
+  "highlights": {
+    "Comment": {
+      "fg": "#75797f"
+    },
+    "Constant": {
+      "fg": "#b6927b"
+    },
+    "CursorLine": {
+      "bg": "#393b44"
+    },
+    "DiagnosticError": {
+      "fg": "#c34043"
+    },
+    "DiagnosticHint": {
+      "fg": "#6a9589"
+    },
+    "DiagnosticInfo": {
+      "fg": "#658594"
+    },
+    "DiagnosticOk": {
+      "fg": "#98bb6c"
+    },
+    "DiagnosticWarn": {
+      "fg": "#dca561"
+    },
+    "DiffAdd": {
+      "bg": "#2b3328"
+    },
+    "DiffDelete": {
+      "fg": "#c34043",
+      "bg": "#43242b"
+    },
+    "FloatBorder": {
+      "fg": "#393b44",
+      "bg": "#22262d"
+    },
+    "Function": {
+      "fg": "#8ba4b0"
+    },
+    "Identifier": {
+      "fg": "#8992a7"
+    },
+    "LineNr": {
+      "fg": "#75797f"
+    },
+    "Normal": {
+      "fg": "#c5c9c7",
+      "bg": "#22262d"
+    },
+    "NormalFloat": {
+      "fg": "#a4a7a4",
+      "bg": "#22262d"
+    },
+    "Search": {
+      "fg": "#c5c9c7",
+      "bg": "#2d4f67"
+    },
+    "Special": {
+      "fg": "#c4b28a"
+    },
+    "Statement": {
+      "fg": "#8992a7"
+    },
+    "String": {
+      "fg": "#8a9a7b"
+    },
+    "Title": {
+      "fg": "#8ba4b0"
+    },
+    "Type": {
+      "fg": "#8ea4a2"
+    },
+    "Visual": {
+      "bg": "#393b44"
+    },
+    "WinSeparator": {
+      "fg": "#22262d"
+    }
+  },
+  "terminal_colors": {
+    "0": "#22262D",
+    "1": "#c4746e",
+    "10": "#87a987",
+    "11": "#E6C384",
+    "12": "#7FB4CA",
+    "13": "#938AA9",
+    "14": "#7AA89F",
+    "15": "#C5C9C7",
+    "2": "#8a9a7b",
+    "3": "#c4b28a",
+    "4": "#8ba4b0",
+    "5": "#a292a3",
+    "6": "#C5C9C7",
+    "7": "#A4A7A4",
+    "8": "#909398",
+    "9": "#E46876"
+  }
+}

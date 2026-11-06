@@ -8,7 +8,9 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/bubbles/list"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/hmans/beans/internal/ui"
 	"github.com/hmans/beans/pkg/bean"
 	"github.com/hmans/beans/pkg/beancore"
 	"github.com/hmans/beans/pkg/beangraph"
@@ -118,5 +120,62 @@ func profileName(p termenv.Profile) string {
 		return "ansi"
 	default:
 		return "ascii"
+	}
+}
+
+// kansoTheme is the kanso-mist palette as exported from Neovim.
+func kansoTheme() *ui.Theme {
+	return &ui.Theme{
+		Name: "kanso", Background: "dark",
+		Fg: "#c5c9c7", Bg: "#22262d", Muted: "#75797f", Border: "#393b44", Accent: "#8ba4b0",
+		Selection: "#393b44", Success: "#98bb6c", Warning: "#dca561", Danger: "#c34043",
+		Info: "#658594", Hint: "#6a9589",
+		ANSI: [16]string{
+			"#22262d", "#c4746e", "#8a9a7b", "#c4b28a", "#8ba4b0", "#a292a3", "#c5c9c7", "#a4a7a4",
+			"#909398", "#e46876", "#87a987", "#e6c384", "#7fb4ca", "#938aa9", "#7aa89f", "#c5c9c7",
+		},
+	}
+}
+
+// TestTUIViewsUseTheme applies a hex theme and checks that the views (and
+// the package-level styles rebuilt by the theme hook) use its colors, and
+// that the app view is painted with the theme background.
+func TestTUIViewsUseTheme(t *testing.T) {
+	withColorProfile(t, termenv.TrueColor)
+	ui.ApplyTheme(kansoTheme(), true)
+	t.Cleanup(func() { ui.ApplyTheme(nil, false) })
+
+	accent := termenv.TrueColor.Color("#8ba4b0").Sequence(false)
+	bg := termenv.TrueColor.Color("#22262d").Sequence(true)
+	if got := listTitleStyle.Render("x"); !strings.Contains(got, accent) {
+		t.Errorf("listTitleStyle not rebuilt by the theme hook: %q", got)
+	}
+	if got := helpKeyStyle.Render("x"); !strings.Contains(got, accent) {
+		t.Errorf("helpKeyStyle not rebuilt by the theme hook: %q", got)
+	}
+
+	resolver, cfg, beans := newColorTestResolver(t)
+	const w, h = 140, 40
+	for name, view := range map[string]string{
+		"help":    newHelpOverlayModel(w, h).ModalView("background", w, h),
+		"preview": newPreviewModel(beans[1], 60, 30).View(),
+		"detail":  newDetailModel(beans[1], resolver, cfg, w, h).View(),
+	} {
+		if !strings.Contains(view, "38;2;") {
+			t.Errorf("%s: no theme (truecolor) colors: %q", name, view)
+		}
+	}
+
+	app := New(resolver.Core, cfg)
+	app.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	view := app.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) != h {
+		t.Errorf("painted view has %d lines, want %d", len(lines), h)
+	}
+	for i, l := range lines {
+		if !strings.HasPrefix(l, "\x1b["+bg) || lipgloss.Width(l) != w {
+			t.Fatalf("line %d not painted to full width: %q", i, l)
+		}
 	}
 }

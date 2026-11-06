@@ -129,6 +129,43 @@ beans start abc1 -w -x claude -- "Work on bean abc1"   # then launch an agent in
 
 A running `beans serve` picks up the new worktree and the in-progress bean by itself.
 
+### Color Themes
+
+By default the TUI (`beans tui`, `beans-tui`) and colored CLI output use your terminal's 16-color palette, so they follow your terminal theme. To make them look like your editor instead, pick a theme:
+
+```yaml
+tui:
+  theme: nvim                # terminal (default) | nvim | nvim:<colorscheme> | file:<path>
+  theme_background: true     # paint the theme's background behind the TUI (default for nvim/file themes)
+```
+
+Themes are a personal preference, so you can also set them for yourself without touching the project config: `BEANS_THEME` overrides `tui.theme` and `BEANS_THEME_BACKGROUND` (`true`/`false`) overrides `tui.theme_background`, e.g. `export BEANS_THEME=nvim` in your shell profile.
+
+- **`nvim`** uses the colorscheme your Neovim config loads by default; **`nvim:<colorscheme>`** a specific one (e.g. `nvim:kanso-mist`). Beans runs `nvim --headless` once with your normal config (so plugin colorschemes load, e.g. with LazyVim), reads the highlight groups (`Normal`, `Comment`, `Function`, `Visual`, `FloatBorder`, `Diagnostic*`, …) and `g:terminal_color_0..15`, and caches the result in your user cache directory (`beans/themes/`). The cache is refreshed when the colorscheme argument, the nvim binary, or your Neovim config (`init.lua`/`init.vim`, `lazy-lock.json`, `lazyvim.json`, `lua/`, `colors/`, `plugin/`, `after/`) changes.
+- **`file:<path>`** reads a palette file (YAML or JSON; relative paths are resolved against the directory of `.beans.yml`, or the current directory for `BEANS_THEME`). Every key is optional; missing roles are derived from the `ansi` slots and vice versa, so you can export a palette from any editor or terminal theme:
+
+  ```yaml
+  name: kanso-mist
+  background: dark
+  fg: "#c5c9c7"          # text
+  bg: "#22262d"          # background
+  muted: "#75797f"       # help, metadata
+  border: "#393b44"      # borders, tree lines
+  accent: "#8ba4b0"      # IDs, headings, focus
+  selection: "#393b44"   # selected row background
+  success: "#98bb6c"
+  warning: "#dca561"
+  danger: "#c34043"
+  info: "#658594"
+  hint: "#6a9589"
+  ansi: ["#22262d", "#c4746e", "#8a9a7b", "#c4b28a", "#8ba4b0", "#a292a3", "#c5c9c7", "#a4a7a4",
+         "#909398", "#e46876", "#87a987", "#e6c384", "#7fb4ca", "#938aa9", "#7aa89f", "#c5c9c7"]
+  ```
+
+With a theme, the color names used for statuses, types and priorities (`red`, `green`, `blue`, `purple`, `gray`, …) and palette indices (`0`–`15`) map to the theme's palette instead of the terminal's. Theme colors are true colors; on terminals without true color support they are approximated with the 256- or 16-color palette, and `NO_COLOR` or non-terminal output stays plain. With `theme_background: false` the TUI keeps your terminal's background and default text color and only uses the theme's accent colors.
+
+If a theme can't be loaded (e.g. nvim is not installed or the colorscheme doesn't exist), beans prints a warning and falls back to terminal colors. `beans check` reports unknown or broken themes as errors, and a missing nvim as a warning.
+
 ## Agent Configuration
 
 The most basic way to teach your agent about Beans is to simply add the following instruction to your `AGENTS.md`, `CLAUDE.md`, or equivalent file:

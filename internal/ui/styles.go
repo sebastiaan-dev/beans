@@ -1,25 +1,38 @@
 package ui
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
+	"github.com/alecthomas/chroma/v2"
+	chromastyles "github.com/alecthomas/chroma/v2/styles"
 	"github.com/charmbracelet/glamour/ansi"
 	glamourstyles "github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 // Color palette.
 //
-// All built-in colors use the terminal's standard 16-color ANSI palette
-// (indices "0".."15") rather than fixed truecolor hex values. The actual RGB
-// value of each index is defined by the user's terminal theme, so the UI follows
-// that theme and inherits the contrast the theme was designed for on both dark
-// and light backgrounds. Bright black ("8") is used for de-emphasized text.
+// With the default "terminal" theme, all built-in colors use the terminal's
+// standard 16-color ANSI palette (indices "0".."15") rather than fixed
+// truecolor hex values. The actual RGB value of each index is defined by the
+// user's terminal theme, so the UI follows that theme and inherits the
+// contrast the theme was designed for on both dark and light backgrounds.
+// Bright black ("8") is used for de-emphasized text.
+//
+// ApplyTheme replaces these values with a theme's hex colors (e.g. exported
+// from a Neovim colorscheme) and rebuilds every style derived from them, so
+// read the variables when rendering rather than capturing them at init.
 //
 // Under NO_COLOR or when output is not a terminal, lipgloss downgrades these to
-// plain text as usual.
+// plain text as usual; hex colors are degraded to the 256 or 16 color palette
+// on terminals without truecolor support.
 var (
 	ColorPrimary   = lipgloss.Color("5") // Magenta: IDs, headings, selection, focus
 	ColorSecondary = lipgloss.Color("8") // Bright black: archived/done states
@@ -32,12 +45,31 @@ var (
 	ColorCyan      = lipgloss.Color("6") // Cyan
 )
 
+// Additional theme roles.
+var (
+	// ColorFg is the theme's default text color. Empty ("") means the
+	// terminal's default foreground: the terminal theme, and themes whose
+	// background is not painted (so the text keeps contrasting with the
+	// terminal's own background).
+	ColorFg = lipgloss.Color("")
+	// ColorBg is the theme's background color. Empty ("") means the
+	// terminal's own background must be kept (terminal theme, or
+	// tui.theme_background: false). When set, views should fill their area
+	// with it; App views get it painted by PaintBackground.
+	ColorBg = lipgloss.Color("")
+	// ColorBorder is used for borders and separators.
+	ColorBorder = lipgloss.Color("8")
+	// ColorSelection is the background of the selected row. Empty ("") means
+	// the theme has none: use the Selected style (reverse video) instead.
+	ColorSelection = lipgloss.Color("")
+)
+
 // ColorDefault is the terminal's default foreground color (no color escape is
 // emitted). It is selected with the color name "default".
 var ColorDefault = lipgloss.Color("")
 
 // NamedColors maps the color names accepted in configuration to ANSI palette
-// colors.
+// colors (the theme's palette slots after ApplyTheme).
 var NamedColors = map[string]lipgloss.Color{
 	"default":        ColorDefault,
 	"black":          lipgloss.Color("0"),
@@ -72,7 +104,8 @@ func ResolveColor(color string) lipgloss.Color {
 		return lipgloss.Color(color)
 	}
 	if isANSIIndex(color) {
-		return lipgloss.Color(color)
+		n, _ := strconv.Atoi(color)
+		return ansiSlot(n)
 	}
 	if c, ok := NamedColors[strings.ToLower(color)]; ok {
 		return c
@@ -116,25 +149,91 @@ func badgeStyle(c lipgloss.TerminalColor) lipgloss.Style {
 		Padding(0, 1)
 }
 
-// Status badge styles (for inline use, like in show command)
+// Shared styles. They are built from the color palette by buildStyles and
+// rebuilt by ApplyTheme; don't copy them into package-level variables of
+// other packages (use OnThemeApplied to rebuild derived styles).
 var (
-	StatusOpen       = badgeStyle(ColorSuccess).Bold(true)
-	StatusDone       = badgeStyle(ColorSecondary)
+	// Status badge styles (for inline use, like in show command)
+	StatusOpen       lipgloss.Style
+	StatusDone       lipgloss.Style
+	StatusInProgress lipgloss.Style
+
+	// Status text styles (for table use, no background/padding)
+	StatusOpenText       lipgloss.Style
+	StatusDoneText       lipgloss.Style
+	StatusInProgressText lipgloss.Style
+
+	// TagBadge - reverse video of the default colors, so tags render as a
+	// neutral badge with maximum contrast in any theme.
+	TagBadge lipgloss.Style
+
+	// Text styles
+	Bold      lipgloss.Style
+	Muted     lipgloss.Style
+	Primary   lipgloss.Style
+	Success   lipgloss.Style
+	Warning   lipgloss.Style
+	Danger    lipgloss.Style
+	Secondary lipgloss.Style
+
+	// ID style - distinctive for bean IDs
+	ID lipgloss.Style
+	// TreeLine style - subtle for tree connectors
+	TreeLine lipgloss.Style
+	// Title style
+	Title lipgloss.Style
+	// Path style - subdued
+	Path lipgloss.Style
+	// Header style for section headers
+	Header lipgloss.Style
+	// Border style - foreground for borders and separators
+	Border lipgloss.Style
+	// Selected style for the selected row: the theme's selection background,
+	// or reverse video when the theme has none (terminal theme).
+	Selected lipgloss.Style
+)
+
+func init() { buildStyles() }
+
+// buildStyles (re)builds the shared styles from the current palette.
+func buildStyles() {
+	StatusOpen = badgeStyle(ColorSuccess).Bold(true)
+	StatusDone = badgeStyle(ColorSecondary)
 	StatusInProgress = badgeStyle(ColorWarning).Bold(true)
-)
 
-// Status text styles (for table use, no background/padding)
-var (
-	StatusOpenText       = lipgloss.NewStyle().Foreground(ColorSuccess).Bold(true)
-	StatusDoneText       = lipgloss.NewStyle().Foreground(ColorSecondary)
+	StatusOpenText = lipgloss.NewStyle().Foreground(ColorSuccess).Bold(true)
+	StatusDoneText = lipgloss.NewStyle().Foreground(ColorSecondary)
 	StatusInProgressText = lipgloss.NewStyle().Foreground(ColorWarning).Bold(true)
-)
 
-// Tag badge style - reverse video of the terminal's default colors, so tags
-// render as a neutral badge with maximum contrast in any theme.
-var TagBadge = lipgloss.NewStyle().
-	Reverse(true).
-	Padding(0, 1)
+	TagBadge = lipgloss.NewStyle().
+		Reverse(true).
+		Padding(0, 1)
+
+	Bold = lipgloss.NewStyle().Bold(true)
+	Muted = lipgloss.NewStyle().Foreground(ColorMuted)
+	Primary = lipgloss.NewStyle().Foreground(ColorPrimary)
+	Success = lipgloss.NewStyle().Foreground(ColorSuccess)
+	Warning = lipgloss.NewStyle().Foreground(ColorWarning)
+	Danger = lipgloss.NewStyle().Foreground(ColorDanger)
+	Secondary = lipgloss.NewStyle().Foreground(ColorSecondary)
+
+	ID = lipgloss.NewStyle().
+		Foreground(ColorPrimary).
+		Bold(true)
+	TreeLine = lipgloss.NewStyle().Foreground(ColorSubtle)
+	Title = lipgloss.NewStyle().Bold(true)
+	Path = lipgloss.NewStyle().Foreground(ColorMuted)
+	Header = lipgloss.NewStyle().
+		Foreground(ColorPrimary).
+		Bold(true).
+		MarginBottom(1)
+	Border = lipgloss.NewStyle().Foreground(ColorBorder)
+	if ColorSelection == "" {
+		Selected = lipgloss.NewStyle().Reverse(true)
+	} else {
+		Selected = lipgloss.NewStyle().Background(ColorSelection)
+	}
+}
 
 // RenderTag renders a single tag as a badge
 func RenderTag(tag string) string {
@@ -187,37 +286,6 @@ func RenderTagsCompact(tags []string, maxTags int) string {
 	}
 	return result
 }
-
-// Text styles
-var (
-	Bold      = lipgloss.NewStyle().Bold(true)
-	Muted     = lipgloss.NewStyle().Foreground(ColorMuted)
-	Primary   = lipgloss.NewStyle().Foreground(ColorPrimary)
-	Success   = lipgloss.NewStyle().Foreground(ColorSuccess)
-	Warning   = lipgloss.NewStyle().Foreground(ColorWarning)
-	Danger    = lipgloss.NewStyle().Foreground(ColorDanger)
-	Secondary = lipgloss.NewStyle().Foreground(ColorSecondary)
-)
-
-// ID style - distinctive for bean IDs
-var ID = lipgloss.NewStyle().
-	Foreground(ColorPrimary).
-	Bold(true)
-
-// TreeLine style - subtle for tree connectors
-var TreeLine = lipgloss.NewStyle().Foreground(ColorSubtle)
-
-// Title style
-var Title = lipgloss.NewStyle().Bold(true)
-
-// Path style - subdued
-var Path = lipgloss.NewStyle().Foreground(ColorMuted)
-
-// Header style for section headers
-var Header = lipgloss.NewStyle().
-	Foreground(ColorPrimary).
-	Bold(true).
-	MarginBottom(1)
 
 // RenderStatus returns a styled status badge based on the status string (legacy, uses hardcoded colors)
 func RenderStatus(status string) string {
@@ -647,7 +715,7 @@ func RenderBeanRow(id, status, typeName, title string, cfg BeanRowConfig) string
 	return cursor + idCol + " " + typeCol + " " + statusCol + " " + prioritySymbol + titleStyled + implicitAnnotation
 }
 
-// Chroma's "terminal16" formatter maps each syntax-highlighting color to the
+// With the terminal theme, chroma's "terminal16" formatter maps each syntax-highlighting color to the
 // nearest of these reference values and emits the corresponding ANSI palette
 // escape, so using them exactly yields the intended palette index.
 const (
@@ -659,13 +727,101 @@ const (
 )
 
 // MarkdownChromaFormatter is the chroma formatter to use together with
-// MarkdownStyleConfig; it emits 16-color ANSI palette escapes.
-const MarkdownChromaFormatter = "terminal16"
+// MarkdownStyleConfig for lipgloss's color profile. With the terminal theme it
+// is "terminal16", which emits 16-color ANSI palette escapes; ApplyTheme
+// updates it (see MarkdownChromaFormatterFor).
+var MarkdownChromaFormatter = "terminal16"
 
-// MarkdownStyleConfig returns a glamour style that only uses the terminal's
-// 16-color ANSI palette (and its default foreground), so rendered markdown
-// follows the user's theme on both dark and light backgrounds. It is based on
-// glamour's dark style layout. Use it with MarkdownChromaFormatter.
+// MarkdownChromaFormatterFor returns the chroma formatter to use together with
+// MarkdownStyleConfig when rendering for the given color profile.
+func MarkdownChromaFormatterFor(profile termenv.Profile) string {
+	if currentTheme == nil {
+		return "terminal16"
+	}
+	switch profile {
+	case termenv.TrueColor:
+		return "terminal16m"
+	case termenv.ANSI256:
+		return "terminal256"
+	case termenv.ANSI:
+		return "terminal16"
+	default:
+		// No colors (NO_COLOR, non-TTY): plain code text.
+		return "noop"
+	}
+}
+
+// markdownChromaStyle registers the chroma (syntax highlighting) style of
+// the current theme and returns its name. Styles are keyed by their content,
+// so re-applying a theme reuses the registered style.
+func markdownChromaStyle() string {
+	// Only hex colors are valid chroma colors; slots and roles the theme
+	// leaves to the terminal palette get the default text style.
+	hexOnly := func(c lipgloss.Color) string {
+		if strings.HasPrefix(string(c), "#") {
+			return string(c)
+		}
+		return ""
+	}
+	hexSlot := func(n int) string { return hexOnly(ansiSlot(n)) }
+	entries := chroma.StyleEntries{
+		chroma.Text:                hexOnly(ColorFg),
+		chroma.Error:               hexSlot(1),
+		chroma.Comment:             strings.TrimSpace("italic " + hexOnly(ColorMuted)),
+		chroma.CommentPreproc:      hexSlot(3),
+		chroma.Keyword:             hexSlot(5),
+		chroma.KeywordReserved:     hexSlot(5),
+		chroma.KeywordNamespace:    hexSlot(1),
+		chroma.KeywordType:         hexSlot(6),
+		chroma.NameBuiltin:         hexSlot(6),
+		chroma.NameTag:             hexSlot(5),
+		chroma.NameAttribute:       hexSlot(2),
+		chroma.NameClass:           "bold underline",
+		chroma.NameDecorator:       hexSlot(3),
+		chroma.NameFunction:        hexOnly(ColorPrimary),
+		chroma.LiteralNumber:       hexSlot(6),
+		chroma.LiteralString:       hexSlot(2),
+		chroma.LiteralStringEscape: hexSlot(6),
+		chroma.GenericDeleted:      hexSlot(1),
+		chroma.GenericEmph:         "italic",
+		chroma.GenericInserted:     hexSlot(2),
+		chroma.GenericStrong:       "bold",
+		chroma.GenericSubheading:   "bold",
+	}
+	for k, v := range entries {
+		if v == "" {
+			delete(entries, k)
+		}
+	}
+	keys := make([]string, 0, len(entries))
+	for k, v := range entries {
+		keys = append(keys, k.String()+"="+v)
+	}
+	sort.Strings(keys)
+	sum := sha256.Sum256([]byte(strings.Join(keys, ";")))
+	name := "beans-" + hex.EncodeToString(sum[:8])
+
+	chromaStylesMu.Lock()
+	defer chromaStylesMu.Unlock()
+	if _, ok := chromastyles.Registry[name]; !ok {
+		style, err := chroma.NewStyle(name, entries)
+		if err != nil {
+			return ""
+		}
+		chromastyles.Register(style)
+	}
+	return name
+}
+
+var chromaStylesMu sync.Mutex
+
+// MarkdownStyleConfig returns the glamour style for the current theme. It is
+// based on glamour's dark style layout. Use it with MarkdownChromaFormatter.
+//
+// With the terminal theme it only uses the terminal's 16-color ANSI palette
+// (and its default foreground), so rendered markdown follows the user's
+// terminal theme on both dark and light backgrounds. With another theme it
+// uses the theme's palette slots.
 func MarkdownStyleConfig() ansi.StyleConfig {
 	str := func(s string) *string { return &s }
 	yes := func() *bool { b := true; return &b }
@@ -673,6 +829,36 @@ func MarkdownStyleConfig() ansi.StyleConfig {
 	fg := func(c string) ansi.StylePrimitive { return ansi.StylePrimitive{Color: str(c)} }
 
 	s := glamourstyles.DarkStyleConfig
+
+	if currentTheme != nil {
+		slot := func(n int) *string { return str(string(ansiSlot(n))) }
+		s.Document.Color = nil
+		if ColorFg != "" {
+			s.Document.Color = str(string(ColorFg))
+		}
+		s.Heading.Color = str(string(ColorPrimary))
+		s.H1.StylePrimitive = ansi.StylePrimitive{
+			Prefix:  " ",
+			Suffix:  " ",
+			Color:   str(string(ColorPrimary)),
+			Inverse: yes(),
+			Bold:    yes(),
+		}
+		s.H6.Color = str(string(ColorMuted))
+		s.H6.Bold = no()
+		s.HorizontalRule.Color = str(string(ColorBorder))
+		s.Link.Color = slot(4)
+		s.LinkText.Color = slot(4)
+		s.Image.Color = slot(5)
+		s.ImageText.Color = str(string(ColorMuted))
+		s.Code.StylePrimitive = ansi.StylePrimitive{Color: slot(1)}
+		s.CodeBlock.Color = nil
+		// Glamour registers an inline Chroma config globally, once per
+		// process, so a theme uses its own registered chroma style instead.
+		s.CodeBlock.Chroma = nil
+		s.CodeBlock.Theme = markdownChromaStyle()
+		return s
+	}
 
 	s.Document.Color = nil
 	s.Heading.Color = str("6")
