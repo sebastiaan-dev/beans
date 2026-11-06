@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/hmans/beans/internal/gitutil"
@@ -25,39 +23,25 @@ var (
 	auditExitZero  bool
 )
 
-// auditGitInfo describes the git history scan behind landed-but-open.
-type auditGitInfo struct {
-	BaseRef        string `json:"base_ref"`
-	Since          string `json:"since,omitempty"`
-	CommitsScanned int    `json:"commits_scanned"`
-	// BookkeepingCommits counts commits that mention an open bean but only
-	// change bean files (e.g. "chore: create bean ..."); they are ignored.
-	BookkeepingCommits int `json:"bookkeeping_commits_ignored"`
-}
+// The audit itself runs in beancore (Core.RunAudit, shared with the TUI's
+// audit view); these names are the command's view of it.
+type (
+	auditParams  = beancore.AuditRunParams
+	auditResult  = beancore.AuditReport
+	auditGitInfo = beancore.AuditGitInfo
+)
 
-type auditResult struct {
-	Clean    bool                    `json:"clean"`
-	Count    int                     `json:"count"`
-	Findings []beancore.AuditFinding `json:"findings"`
-	// Notes explains checks that were skipped (e.g. not a git repository).
-	Notes []string      `json:"notes"`
-	Git   *auditGitInfo `json:"git,omitempty"`
-}
+var (
+	auditKindTitles = beancore.AuditKindTitles
+	auditKindHints  = beancore.AuditKindHints
 
-var auditKindTitles = map[beancore.AuditKind]string{
-	beancore.AuditLandedButOpen:             "Open beans already referenced on the base branch",
-	beancore.AuditContainerDoneChildrenOpen: "Completed/scrapped beans with open children",
-	beancore.AuditContainerReadyToClose:     "Open beans whose children are all done",
-	beancore.AuditStaleInProgress:           "Stale in-progress beans",
-	beancore.AuditBlockedByDone:             "Stale blocking links (all blockers done)",
-}
+	repoRelativePaths  = gitutil.RepoRelativePaths
+	bookkeepingCommits = gitutil.CommitsChangingOnly
+)
 
-var auditKindHints = map[beancore.AuditKind]string{
-	beancore.AuditLandedButOpen:             "If the work is done: beans update <id> -s completed",
-	beancore.AuditContainerDoneChildrenOpen: "Complete/scrap the children, or reopen the parent",
-	beancore.AuditContainerReadyToClose:     "If nothing is left: beans update <id> -s completed",
-	beancore.AuditStaleInProgress:           "Update, finish, or move back to todo",
-	beancore.AuditBlockedByDone:             "beans update <id> --remove-blocked-by <blocker> (or <blocker> --remove-blocking <id>)",
+// runAudit audits c (see beancore.Core.RunAudit).
+func runAudit(c *beancore.Core, p auditParams) (auditResult, error) {
+	return c.RunAudit(p)
 }
 
 var auditCmd = &cobra.Command{
@@ -133,140 +117,6 @@ error). Use --exit-zero to always exit 0 on success, e.g. in hooks.`,
 	},
 }
 
-// auditParams are the resolved inputs of runAudit.
-type auditParams struct {
-	BaseRef string
-	// BookkeepingPaths are files/directories (absolute paths) whose
-	// exclusive modification marks a commit as bean bookkeeping: typically
-	// the beans directory and the config file.
-	BookkeepingPaths []string
-	Since            string
-	StaleDays        int
-	NoGit            bool
-	Now              time.Time
-}
-
-// runAudit audits c, scanning the git history of the repository containing
-// c's beans directory when possible.
-func runAudit(c *beancore.Core, p auditParams) (auditResult, error) {
-	result := auditResult{Notes: []string{}}
-	opts := beancore.AuditOptions{
-		Now:        p.Now,
-		StaleAfter: time.Duration(p.StaleDays) * 24 * time.Hour,
-	}
-
-	dir := c.Root()
-	switch {
-	case p.NoGit:
-		result.Notes = append(result.Notes, "landed-but-open skipped: --no-git")
-	case !gitutil.IsRepo(dir):
-		result.Notes = append(result.Notes, "landed-but-open skipped: not a git repository")
-	case !gitutil.RefExists(dir, p.BaseRef):
-		result.Notes = append(result.Notes, fmt.Sprintf("landed-but-open skipped: base ref %q not found (set worktree.base_ref or use --base-ref)", p.BaseRef))
-	default:
-		info := &auditGitInfo{BaseRef: p.BaseRef, Since: p.Since}
-		result.Git = info
-		opts.Commits = func(yield func(beancore.AuditCommit) bool) error {
-			return gitutil.ScanCommits(dir, p.BaseRef, p.Since, func(gc gitutil.Commit) bool {
-				info.CommitsScanned++
-				return yield(beancore.AuditCommit{Hash: gc.Hash, ShortHash: gc.ShortHash, Subject: gc.Subject, Message: gc.Message})
-			})
-		}
-		if rules := repoRelativePaths(dir, p.BookkeepingPaths); len(rules) > 0 {
-			opts.IgnoreCommits = func(hashes []string) (map[string]bool, error) {
-				paths, err := gitutil.ChangedPaths(dir, hashes)
-				if err != nil {
-					return nil, err
-				}
-				ignored := bookkeepingCommits(paths, rules)
-				info.BookkeepingCommits = len(ignored)
-				return ignored, nil
-			}
-		}
-	}
-	if p.StaleDays <= 0 {
-		result.Notes = append(result.Notes, "stale-in-progress skipped: --stale-days 0")
-	}
-
-	findings, err := c.Audit(opts)
-	if err != nil {
-		return result, fmt.Errorf("scanning git history: %w", err)
-	}
-	if findings == nil {
-		findings = []beancore.AuditFinding{}
-	}
-	result.Findings = findings
-	result.Count = len(findings)
-	result.Clean = len(findings) == 0
-	return result, nil
-}
-
-// repoRelativePaths converts absolute paths to slash-separated paths
-// relative to the root of the git work tree containing dir, dropping paths
-// outside of it.
-func repoRelativePaths(dir string, paths []string) []string {
-	top, err := gitutil.TopLevel(dir)
-	if err != nil {
-		return nil
-	}
-	resolve := func(p string) string {
-		if abs, err := filepath.Abs(p); err == nil {
-			p = abs
-		}
-		if r, err := filepath.EvalSymlinks(p); err == nil {
-			return r
-		}
-		// The path may not exist (yet); resolve its parent instead.
-		if r, err := filepath.EvalSymlinks(filepath.Dir(p)); err == nil {
-			return filepath.Join(r, filepath.Base(p))
-		}
-		return p
-	}
-	top = resolve(top)
-	var rels []string
-	for _, p := range paths {
-		rel, err := filepath.Rel(top, resolve(p))
-		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			continue
-		}
-		rels = append(rels, filepath.ToSlash(rel))
-	}
-	return rels
-}
-
-// bookkeepingCommits returns the commits whose changed files all match one
-// of rules (repo-relative paths: a file, or a directory matching everything
-// below it). Commits with no reported paths (empty or merge commits) are not
-// considered bookkeeping.
-func bookkeepingCommits(paths map[string][]string, rules []string) map[string]bool {
-	matches := func(f string) bool {
-		for _, r := range rules {
-			r = strings.TrimSuffix(r, "/")
-			if f == r || strings.HasPrefix(f, r+"/") {
-				return true
-			}
-		}
-		return false
-	}
-	ignored := make(map[string]bool)
-	for hash, files := range paths {
-		if len(files) == 0 {
-			continue
-		}
-		all := true
-		for _, f := range files {
-			if !matches(f) {
-				all = false
-				break
-			}
-		}
-		if all {
-			ignored[hash] = true
-		}
-	}
-	return ignored
-}
-
 // printAuditReport prints findings grouped by kind.
 func printAuditReport(w io.Writer, result auditResult) {
 	byKind := make(map[beancore.AuditKind][]beancore.AuditFinding)
@@ -316,7 +166,7 @@ func printAuditReport(w io.Writer, result auditResult) {
 
 func RegisterAuditCmd(root *cobra.Command) {
 	auditCmd.Flags().BoolVar(&auditJSON, "json", false, "Output as JSON")
-	auditCmd.Flags().IntVar(&auditStaleDays, "stale-days", 14, "Flag in-progress beans not updated for more than this many days (0 disables)")
+	auditCmd.Flags().IntVar(&auditStaleDays, "stale-days", beancore.DefaultAuditStaleDays, "Flag in-progress beans not updated for more than this many days (0 disables)")
 	auditCmd.Flags().StringVar(&auditSince, "since", "", "Only scan commits newer than this date (passed to git log --since, e.g. 2024-01-01 or \"3 months ago\")")
 	auditCmd.Flags().StringVar(&auditBaseRef, "base-ref", "", "Git ref whose history is scanned (default: worktree.base_ref, or main)")
 	auditCmd.Flags().BoolVar(&auditNoGit, "no-git", false, "Skip the git history check (landed-but-open)")

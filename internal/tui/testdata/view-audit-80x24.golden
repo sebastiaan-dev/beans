@@ -1,0 +1,24 @@
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ beans: demo  1 Tree 2 Ready 3 Blocked [4 Audit]    / query · ? help · q quit │
+│ ──────────────────────────────────────────────────────────────────────────── │
+│ Filters none                                                             (F) │
+│ ╭─ Audit · 3 findings ─────────────────────────────────────────────────────╮ │
+│ │ Audited 12:00:00                                                         │ │
+│ │ ! landed-but-open skipped: not a git repository                          │ │
+│ │                                                                          │ │
+│ │ Completed/scrapped beans with open children (1) [container-done-children…│ │
+│ │   ✗ S M m002 Scrapped milestone — scrapped with 1 child open             │ │
+│ │▌      ↳ open child T T t007 Child of scrapped · todo                     │ │
+│ │                                                                          │ │
+│ │ Stale in-progress beans (2) [stale-in-progress]                          │ │
+│ │   ✗ I E e001 Login overhaul — in-progress, no updates for 29 days        │ │
+│ │   ✗ I F t001 Two-factor authentication for the login form — in-progress,…│ │
+│ │                                                                          │ │
+│ │                                                                          │ │
+│ │                                                                          │ │
+│ │                                                                          │ │
+│ ╰──────────────────────────────────────────────────────────────────── 2/4 ─╯ │
+│ ──────────────────────────────────────────────────────────────────────────── │
+│ enter open · s status · R re-run · p parent · b blocking · e edit · t type   │
+│ P priority · u undo · 1-4 views · w workspace · y copy id                    │
+╰──────────────────────────────────────────────────────────────────────────────╯

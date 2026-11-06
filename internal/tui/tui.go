@@ -86,6 +86,9 @@ type App struct {
 	height         int
 	program        *tea.Program // reference to program for sending messages from watcher
 
+	// Views beyond the tree: Ready, Blocked, Audit (views.go)
+	views viewsState
+
 	// Browse view state
 	focus        focusArea // pane receiving keys
 	detailPinned string    // bean opened from a relation that is not in the tree
@@ -136,6 +139,9 @@ func (a *App) Init() tea.Cmd {
 // Update handles messages
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmd := a.update(msg)
+	if vc := a.viewsCmd(); vc != nil {
+		cmd = tea.Batch(cmd, vc)
+	}
 	a.syncLayout()
 	return a, cmd
 }
@@ -166,7 +172,9 @@ func (a *App) handleChord(first string, msg tea.KeyMsg) tea.Cmd {
 	case "g w":
 		return a.openWorkspacesOverlay()
 	case "g g":
-		if a.focus == focusTree {
+		if l := a.activeList(); l != nil && a.focus == focusTree {
+			l.moveToEnd(-1)
+		} else if a.focus == focusTree {
 			a.list.moveCursor(-len(a.list.rows))
 		} else {
 			a.detail.scrollHome()
@@ -189,7 +197,7 @@ func (a *App) handleChord(first string, msg tea.KeyMsg) tea.Cmd {
 func (a *App) update(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 
-	if a.handleQuickActionMsg(msg) {
+	if a.handleQuickActionMsg(msg) || a.handleViewMsg(msg) {
 		return nil
 	}
 
@@ -228,7 +236,7 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 				a.pendingKey = "g"
 				return nil
 			case "z":
-				if a.focus == focusTree {
+				if a.focus == focusTree && a.views.active == viewTree {
 					a.pendingKey = "z"
 					return nil
 				}
@@ -241,6 +249,9 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		// Moving the focus between the panes and opening relations is
 		// handled here, synchronously, so that the keys that follow already
 		// go to the right pane.
+		if a.state == viewList && a.handleViewSearchKey(msg.String()) {
+			return nil
+		}
 		if a.state == viewList && !a.list.typing() {
 			if a.focus == focusFilter {
 				if cmd, handled := a.updateFilterBar(msg); handled {
@@ -248,6 +259,9 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 				}
 			}
 			if !a.typing() {
+				if cmd, handled := a.handleViewKey(msg); handled {
+					return cmd
+				}
 				if handled := a.handleFocusKey(msg.String()); handled {
 					return nil
 				}
@@ -290,6 +304,7 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 	case beansLoadedMsg:
 		a.list, cmd = a.list.Update(msg)
 		a.detailStale = true
+		a.onBeansLoaded()
 		if a.revealID != "" {
 			a.list.reveal(a.revealID)
 			a.revealID = ""
@@ -485,7 +500,10 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 				a.list, cmd = a.list.Update(msg)
 			}
 		default:
-			a.list, cmd = a.list.Update(msg)
+			// Outside the tree view, keys only reach the tree's query input.
+			if _, isKey := msg.(tea.KeyMsg); !isKey || a.views.active == viewTree || a.list.typing() {
+				a.list, cmd = a.list.Update(msg)
+			}
 		}
 	case viewParentPicker:
 		a.parentPicker, cmd = a.parentPicker.Update(msg)
@@ -581,7 +599,7 @@ func (a *App) handleFocusKey(key string) bool {
 // (relations, if any) or its last one (body), and reports whether there is a
 // bean to show.
 func (a *App) focusDetailPane(first bool) bool {
-	if a.list.currentBean() == nil {
+	if a.currentBean() == nil {
 		return false
 	}
 	a.focus = focusDetail
@@ -606,7 +624,7 @@ func (a *App) showBean(id string, record bool) {
 	if cur := a.detail.bean; cur != nil && record {
 		a.detail.history = append(a.detail.history, cur.ID)
 	}
-	if a.list.reveal(id) {
+	if a.selectInView(id) {
 		a.detailPinned = ""
 	} else {
 		a.detailPinned = id

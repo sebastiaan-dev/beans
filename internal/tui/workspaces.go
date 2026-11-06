@@ -329,7 +329,7 @@ func (a *App) workspaceKeyBean() *bean.Bean {
 	if a.focus == focusDetail && a.detail.bean != nil {
 		return a.detail.bean
 	}
-	return a.list.currentBean()
+	return a.currentBean()
 }
 
 // handleWorkspaceKey handles w and W in the browse view and reports whether
