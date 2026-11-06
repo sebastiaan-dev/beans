@@ -33,6 +33,7 @@ const (
 	viewPriorityPicker
 	viewHelpOverlay
 	viewWorkspaces
+	viewCommandPalette
 )
 
 // beansChangedMsg is sent when beans change on disk (via file watcher)
@@ -79,6 +80,8 @@ type App struct {
 	helpOverlay    helpOverlayModel
 	ws             *workspaces // workspace state (see workspaces.go)
 	wsOverlay      workspacesOverlay
+	palette        commandPalette // command palette (cmdpalette.go)
+	recentCommands []string       // IDs of the palette's recently run commands
 	core           *beancore.Core
 	resolver       *beangraph.CoreResolver
 	config         *config.Config
@@ -246,6 +249,10 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		// Clear pending key on any other key press
 		a.pendingKey = ""
 
+		if a.opensCommandPalette(msg.String()) {
+			return a.openCommandPalette()
+		}
+
 		// Moving the focus between the panes and opening relations is
 		// handled here, synchronously, so that the keys that follow already
 		// go to the right pane.
@@ -412,6 +419,10 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		a.state = a.previousState
 		return nil
 
+	case openCommandPaletteMsg:
+		a.state = viewList
+		return a.openCommandPalette()
+
 	case openBlockingPickerMsg:
 		a.previousState = a.state
 		a.blockingPicker = newBlockingPickerModel(msg.beanID, msg.beanTitle, msg.currentBlocking, a.resolver, a.config, a.width, a.height)
@@ -519,6 +530,8 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		a.helpOverlay, cmd = a.helpOverlay.Update(msg)
 	case viewWorkspaces:
 		cmd = a.updateWorkspacesOverlay(msg)
+	case viewCommandPalette:
+		cmd = a.updateCommandPalette(msg)
 	}
 
 	return cmd
@@ -672,6 +685,8 @@ func (a *App) acceptsTextInput() bool {
 		return a.priorityPicker.list.FilterState() == list.Filtering
 	case viewBlockingPicker:
 		return a.blockingPicker.list.FilterState() == list.Filtering
+	case viewCommandPalette:
+		return true
 	}
 	return false
 }
@@ -743,6 +758,8 @@ func (a *App) view() string {
 		return a.helpOverlay.ModalView(a.browseView(), a.width, a.height)
 	case viewWorkspaces:
 		return overlayModal(a.browseView(), a.workspacesOverlayView(), a.width, a.height)
+	case viewCommandPalette:
+		return overlayModal(a.browseView(), a.commandPaletteView(), a.width, a.height)
 	}
 	return ""
 }

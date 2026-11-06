@@ -164,14 +164,15 @@ func TestASCIIViews(t *testing.T) {
 func TestASCIIHelpFits(t *testing.T) {
 	withStableRendering(t)
 	withASCII(t)
-	app := newDemoApp(t, 70, 24)
+	// The help scrolls on small terminals; at 160x40 it shows everything.
+	app := newDemoApp(t, 160, 40)
 	pressKey(t, app, "?")
 	view := stripAnsi(app.View())
-	checkFrame(t, view, 70, 24)
-	for _, sec := range helpSections {
+	checkFrame(t, view, 160, 40)
+	for _, sec := range helpSections() {
 		for _, k := range sec.keys {
 			if !strings.Contains(view, glyphs().localize(k[1])) {
-				t.Errorf("70x24 ASCII help lacks %q:\n%s", k[1], view)
+				t.Errorf("160x40 ASCII help lacks %q:\n%s", k[1], view)
 			}
 		}
 	}

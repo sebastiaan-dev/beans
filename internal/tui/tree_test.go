@@ -386,18 +386,19 @@ func TestHelpOverlayListsNewKeys(t *testing.T) {
 	if app.state != viewHelpOverlay {
 		t.Fatalf("? should open the help, state = %v", app.state)
 	}
-	view := stripAnsi(app.View())
-	for _, want := range []string{"zR zM", "Collapse", "Focus details", "Open related bean", "New bean / child", "Rename", "Undo last change", "Next bean to do", "g t", "Focus filter bar", "Query, e.g. tag:ui"} {
+	view := scrolledHelp(t, app)
+	for _, want := range []string{"zR", "Collapse", "Focus details", "Open related bean", "New bean", "New child bean", "Rename", "Undo last change", "Next bean to do", "g t", "Focus filter bar", "Query, e.g. tag:ui", "Command palette"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("help lacks %q:\n%s", want, view)
 		}
 	}
-	// The help fits small terminals without cutting descriptions.
+	// The help fits small terminals without cutting descriptions; what
+	// doesn't fit on the screen is reached by scrolling.
 	small := newDemoApp(t, 70, 24)
 	pressKey(t, small, "?")
-	view = stripAnsi(small.View())
-	checkFrame(t, view, 70, 24)
-	for _, sec := range helpSections {
+	checkFrame(t, stripAnsi(small.View()), 70, 24)
+	view = scrolledHelp(t, small)
+	for _, sec := range helpSections() {
 		for _, k := range sec.keys {
 			if !strings.Contains(view, k[1]) {
 				t.Errorf("70x24 help lacks %q:\n%s", k[1], view)
