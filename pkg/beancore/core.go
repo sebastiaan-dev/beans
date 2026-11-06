@@ -32,9 +32,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hmans/beans/internal/search"
 	"github.com/hmans/beans/pkg/bean"
 	"github.com/hmans/beans/pkg/config"
-	"github.com/hmans/beans/internal/search"
 )
 
 const BeansDir = ".beans"
@@ -85,20 +85,20 @@ type Core struct {
 	config *config.Config // project configuration
 
 	// In-memory state
-	mu             sync.RWMutex
-	beans          map[string]*bean.Bean // ID -> Bean
-	dirty          map[string]bool       // IDs of beans modified in runtime but not yet persisted to disk
-	worktreeLinks  map[string]string     // bean ID -> worktree path (beans linked to a worktree)
+	mu            sync.RWMutex
+	beans         map[string]*bean.Bean // ID -> Bean
+	dirty         map[string]bool       // IDs of beans modified in runtime but not yet persisted to disk
+	worktreeLinks map[string]string     // bean ID -> worktree path (beans linked to a worktree)
 
 	// Search index (optional, lazy-initialized)
 	searchIndex *search.Index
 
 	// File watching (optional)
-	watching          bool
-	done              chan struct{}
-	onChange          func() // callback when beans change (legacy API)
+	watching               bool
+	done                   chan struct{}
+	onChange               func()                      // callback when beans change (legacy API)
 	worktreeWatchers       map[string]*worktreeWatcher // worktree path -> watcher
-	onWorktreeBeansChanged func() // called when worktree bean files change
+	onWorktreeBeansChanged func()                      // called when worktree bean files change
 
 	// Event subscribers (for channel-based API)
 	subscribers map[uint64]*subscription
@@ -112,13 +112,13 @@ type Core struct {
 // New creates a new Core with the given root path and configuration.
 func New(root string, cfg *config.Config) *Core {
 	return &Core{
-		root:        root,
-		config:      cfg,
+		root:          root,
+		config:        cfg,
 		beans:         make(map[string]*bean.Bean),
 		dirty:         make(map[string]bool),
 		worktreeLinks: make(map[string]string),
-		subscribers: make(map[uint64]*subscription),
-		warnWriter:  os.Stderr,
+		subscribers:   make(map[uint64]*subscription),
+		warnWriter:    os.Stderr,
 	}
 }
 
@@ -420,8 +420,8 @@ func (c *Core) normalizeIDLocked(id string) (string, bool) {
 type UpdateOption func(*updateOptions)
 
 type updateOptions struct {
-	persist      bool   // whether to write to disk (default: true)
-	worktreePath string // if set, write to this worktree's .beans/ dir instead of main
+	persist      bool    // whether to write to disk (default: true)
+	worktreePath string  // if set, write to this worktree's .beans/ dir instead of main
 	idPrefix     *string // Create only: overrides the configured ID prefix for generated IDs
 	validate     func(tx *Tx, b *bean.Bean) error
 }

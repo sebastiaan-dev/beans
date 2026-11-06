@@ -48,7 +48,7 @@ const thinkingPhrases = [
   'Comparing notes with beans...',
   'Claude is doing bean yoga...',
   'Beans are writing poetry...',
-  'Assembling the bean squad...',
+  'Assembling the bean squad...'
 ];
 
 export function pickThinkingPhrase(): string {

@@ -5,8 +5,8 @@ import (
 
 	"github.com/hmans/beans/internal/gitutil"
 	"github.com/hmans/beans/pkg/bean"
-	"github.com/hmans/beans/pkg/beangraph/model"
 	"github.com/hmans/beans/pkg/beancore"
+	"github.com/hmans/beans/pkg/beangraph/model"
 	"github.com/hmans/beans/pkg/config"
 )
 

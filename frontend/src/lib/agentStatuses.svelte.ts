@@ -12,21 +12,19 @@ class AgentStatusesStore {
 
     const { unsubscribe } = pipe(
       client.subscription(ActiveAgentStatusesDocument, {}),
-      subscribe(
-        (result) => {
-          if (result.error) {
-            console.error('Agent statuses subscription error:', result.error);
-            return;
-          }
-
-          const statuses = result.data?.activeAgentStatuses;
-          if (statuses) {
-            this.runningBeanIds = new Set(
-              statuses.filter((s) => s.status === AgentSessionStatus.Running).map((s) => s.beanId)
-            );
-          }
+      subscribe((result) => {
+        if (result.error) {
+          console.error('Agent statuses subscription error:', result.error);
+          return;
         }
-      )
+
+        const statuses = result.data?.activeAgentStatuses;
+        if (statuses) {
+          this.runningBeanIds = new Set(
+            statuses.filter((s) => s.status === AgentSessionStatus.Running).map((s) => s.beanId)
+          );
+        }
+      })
     );
 
     this.#unsubscribe = unsubscribe;

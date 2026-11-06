@@ -62,10 +62,9 @@
     if (redirectingFrom === id) return;
     redirectingFrom = id;
     const label = worktreeStore.labelFor(id);
-    toasts.show(
-      label ? `Workspace "${label}" was removed` : `Workspace "${id}" does not exist`,
-      { message: label ? 'Its worktree no longer exists, so you are back in Planning.' : undefined }
-    );
+    toasts.show(label ? `Workspace "${label}" was removed` : `Workspace "${id}" does not exist`, {
+      message: label ? 'Its worktree no longer exists, so you are back in Planning.' : undefined
+    });
     ui.forgetWorkspace(id);
     ui.navigateTo('planning');
   });

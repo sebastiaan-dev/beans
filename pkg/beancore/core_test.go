@@ -1868,7 +1868,6 @@ func TestNormalizeID(t *testing.T) {
 	})
 }
 
-
 func TestUpdateWithETag(t *testing.T) {
 	core, _ := setupTestCore(t)
 
@@ -1904,7 +1903,7 @@ func TestUpdateWithETag(t *testing.T) {
 		wrongETag := "wrongetag123"
 		b.Title = "Should Fail"
 		err := core.Update(b, &wrongETag)
-		
+
 		var mismatchErr *ETagMismatchError
 		if !errors.As(err, &mismatchErr) {
 			t.Errorf("Update() with wrong etag should return ETagMismatchError, got %T: %v", err, err)
@@ -1944,7 +1943,7 @@ func TestUpdateWithETagRequired(t *testing.T) {
 
 		b.Title = "Should Fail"
 		err := core.Update(b, nil)
-		
+
 		var requiredErr *ETagRequiredError
 		if !errors.As(err, &requiredErr) {
 			t.Errorf("Update() without etag should return ETagRequiredError when required, got %T: %v", err, err)
@@ -1964,7 +1963,7 @@ func TestUpdateWithETagRequired(t *testing.T) {
 		emptyETag := ""
 		b.Title = "Should Fail"
 		err := core.Update(b, &emptyETag)
-		
+
 		var requiredErr *ETagRequiredError
 		if !errors.As(err, &requiredErr) {
 			t.Errorf("Update() with empty etag should return ETagRequiredError when required, got %T: %v", err, err)

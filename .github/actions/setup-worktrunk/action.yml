@@ -1,0 +1,30 @@
+name: Set up worktrunk
+description: >-
+  Installs a pinned worktrunk (`wt`) release binary (Linux x86_64) so that the
+  worktrunk backend tests (Go and Playwright) run instead of skipping.
+inputs:
+  version:
+    description: worktrunk release tag
+    default: v0.80.0
+  sha256:
+    description: SHA-256 of worktrunk-x86_64-unknown-linux-musl.tar.xz for that release
+    default: 532ce3ed5eecb1be274c925b5887f61671e2434a4ca2561b9a8ac9379dbba199
+runs:
+  using: composite
+  steps:
+    - name: Install worktrunk ${{ inputs.version }}
+      shell: bash
+      env:
+        WT_VERSION: ${{ inputs.version }}
+        WT_SHA256: ${{ inputs.sha256 }}
+      run: |
+        set -euo pipefail
+        asset=worktrunk-x86_64-unknown-linux-musl
+        dir="$RUNNER_TEMP/worktrunk"
+        mkdir -p "$dir"
+        curl -fsSL --retry 3 -o "$dir/$asset.tar.xz" \
+          "https://github.com/max-sixty/worktrunk/releases/download/$WT_VERSION/$asset.tar.xz"
+        echo "$WT_SHA256  $dir/$asset.tar.xz" | sha256sum -c -
+        tar -xJf "$dir/$asset.tar.xz" -C "$dir"
+        echo "$dir/$asset" >> "$GITHUB_PATH"
+        "$dir/$asset/wt" --version

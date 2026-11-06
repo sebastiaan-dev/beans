@@ -14,18 +14,18 @@ func TestFindIncomingLinks(t *testing.T) {
 	// A -> C (parent)
 	// D -> B (blocks)
 	beanA := &bean.Bean{
-		ID:     "aaa1",
-		Title:  "Bean A",
-		Status: "todo",
+		ID:       "aaa1",
+		Title:    "Bean A",
+		Status:   "todo",
 		Blocking: []string{"bbb2"},
-		Parent: "ccc3",
+		Parent:   "ccc3",
 	}
 	beanB := &bean.Bean{ID: "bbb2", Title: "Bean B", Status: "todo"}
 	beanC := &bean.Bean{ID: "ccc3", Title: "Bean C", Status: "todo"}
 	beanD := &bean.Bean{
-		ID:     "ddd4",
-		Title:  "Bean D",
-		Status: "todo",
+		ID:       "ddd4",
+		Title:    "Bean D",
+		Status:   "todo",
 		Blocking: []string{"bbb2"},
 	}
 
@@ -84,15 +84,15 @@ func TestDetectCycle(t *testing.T) {
 
 	// Create a chain: A blocks B, B blocks C
 	beanA := &bean.Bean{
-		ID:     "aaa1",
-		Title:  "Bean A",
-		Status: "todo",
+		ID:       "aaa1",
+		Title:    "Bean A",
+		Status:   "todo",
 		Blocking: []string{"bbb2"},
 	}
 	beanB := &bean.Bean{
-		ID:     "bbb2",
-		Title:  "Bean B",
-		Status: "todo",
+		ID:       "bbb2",
+		Title:    "Bean B",
+		Status:   "todo",
 		Blocking: []string{"ccc3"},
 	}
 	beanC := &bean.Bean{
@@ -173,16 +173,16 @@ func TestCheckAllLinks(t *testing.T) {
 	// - Self-reference in blocks
 	// - Cycle (A -> B -> A via blocks)
 	beanA := &bean.Bean{
-		ID:     "aaa1",
-		Title:  "Bean A",
-		Status: "todo",
+		ID:       "aaa1",
+		Title:    "Bean A",
+		Status:   "todo",
 		Blocking: []string{"bbb2", "aaa1"}, // aaa1 is self-reference
-		Parent: "nonexistent",
+		Parent:   "nonexistent",
 	}
 	beanB := &bean.Bean{
-		ID:     "bbb2",
-		Title:  "Bean B",
-		Status: "todo",
+		ID:       "bbb2",
+		Title:    "Bean B",
+		Status:   "todo",
 		Blocking: []string{"aaa1"}, // creates cycle
 	}
 
@@ -251,9 +251,9 @@ func TestCheckAllLinksClean(t *testing.T) {
 
 	// Create clean beans with no issues
 	beanA := &bean.Bean{
-		ID:     "aaa1",
-		Title:  "Bean A",
-		Status: "todo",
+		ID:       "aaa1",
+		Title:    "Bean A",
+		Status:   "todo",
 		Blocking: []string{"bbb2"},
 	}
 	beanB := &bean.Bean{
@@ -281,16 +281,16 @@ func TestRemoveLinksTo(t *testing.T) {
 
 	// Create beans where multiple beans link to one target
 	beanA := &bean.Bean{
-		ID:     "aaa1",
-		Title:  "Bean A",
-		Status: "todo",
+		ID:       "aaa1",
+		Title:    "Bean A",
+		Status:   "todo",
 		Blocking: []string{"target"},
-		Parent: "target",
+		Parent:   "target",
 	}
 	beanB := &bean.Bean{
-		ID:     "bbb2",
-		Title:  "Bean B",
-		Status: "todo",
+		ID:       "bbb2",
+		Title:    "Bean B",
+		Status:   "todo",
 		Blocking: []string{"target"},
 	}
 	target := &bean.Bean{
@@ -332,11 +332,11 @@ func TestFixBrokenLinks(t *testing.T) {
 
 	// Create bean with broken link and self-reference
 	beanA := &bean.Bean{
-		ID:     "aaa1",
-		Title:  "Bean A",
-		Status: "todo",
+		ID:       "aaa1",
+		Title:    "Bean A",
+		Status:   "todo",
 		Blocking: []string{"bbb2", "aaa1"}, // bbb2 is valid, aaa1 is self-reference
-		Parent: "nonexistent",             // broken
+		Parent:   "nonexistent",            // broken
 	}
 	beanB := &bean.Bean{
 		ID:     "bbb2",

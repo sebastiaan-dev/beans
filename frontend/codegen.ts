@@ -18,12 +18,12 @@ const config: CodegenConfig = {
         { add: { content: documentNodeTypePreamble } },
         'typescript',
         'typescript-operations',
-        'typed-document-node',
+        'typed-document-node'
       ],
       config: {
         // Use 'string' for the Time scalar (ISO 8601 strings from the backend)
         scalars: {
-          Time: 'string',
+          Time: 'string'
         },
         // Avoid __typename pollution since urql doesn't require it
         skipTypename: true,
@@ -31,16 +31,16 @@ const config: CodegenConfig = {
         declarationKind: 'type',
         // Prevent the typed-document-node plugin from importing from
         // @graphql-typed-document-node/core. We prepend our own definition above.
-        documentNodeImport: '__PLACEHOLDER_DO_NOT_IMPORT__#TypedDocumentNode',
-      },
-    },
+        documentNodeImport: '__PLACEHOLDER_DO_NOT_IMPORT__#TypedDocumentNode'
+      }
+    }
   },
   hooks: {
     afterOneFileWrite: [
       // Remove the placeholder import that the plugin generates
-      'perl -i -ne \'print unless /^import.*__PLACEHOLDER_DO_NOT_IMPORT__/\'',
-    ],
-  },
+      "perl -i -ne 'print unless /^import.*__PLACEHOLDER_DO_NOT_IMPORT__/'"
+    ]
+  }
 };
 
 export default config;

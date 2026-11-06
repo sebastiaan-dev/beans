@@ -110,83 +110,87 @@
 
   <div class="flex min-h-0 flex-1 overflow-hidden">
     {#snippet backlogBoard()}
-        <div class="flex h-full flex-col bg-surface">
-          {#if planningView === 'backlog'}
-            <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="min-h-0 flex-1 overflow-auto bg-surface-alt" onclick={handlePlanningClick}>
-              {#snippet backlogSection(beans: typeof filteredTodoBeans, status: string, label: string)}
+      <div class="flex h-full flex-col bg-surface">
+        {#if planningView === 'backlog'}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="min-h-0 flex-1 overflow-auto bg-surface-alt" onclick={handlePlanningClick}>
+            {#snippet backlogSection(
+              beans: typeof filteredTodoBeans,
+              status: string,
+              label: string
+            )}
+              <div
+                class="p-3"
+                data-backlog-section={status}
+                ondragover={(e) => backlogDrag.hoverList(e, null, beans.length, status)}
+                ondragleave={(e) => backlogDrag.leaveList(e, e.currentTarget, null)}
+                ondrop={(e) => backlogDrag.drop(e, null, beans)}
+                role="list"
+              >
+                <h3 class="mb-2 px-1 text-xs font-semibold tracking-wide text-text-faint uppercase">
+                  {label}
+                  <span class="font-normal">{beans.length}</span>
+                </h3>
+                {#each beans as bean, i (bean.id)}
+                  <BeanItem
+                    {bean}
+                    parentId={null}
+                    index={i}
+                    selectedId={ui.currentBean?.id}
+                    onSelect={(b) => ui.selectBean(b)}
+                    filter={planningFilter.tree}
+                    sectionStatus={status}
+                    showParentContext
+                  />
+                {:else}
+                  {#if !beansStore.loading}
+                    <p class="text-center py-4 text-sm text-text-muted">No beans</p>
+                  {/if}
+                {/each}
+
                 <div
-                  class="p-3"
-                  data-backlog-section={status}
-                  ondragover={(e) => backlogDrag.hoverList(e, null, beans.length, status)}
-                  ondragleave={(e) => backlogDrag.leaveList(e, e.currentTarget, null)}
-                  ondrop={(e) => backlogDrag.drop(e, null, beans)}
-                  role="list"
-                >
-                  <h3 class="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-text-faint">
-                    {label}
-                    <span class="font-normal">{beans.length}</span>
-                  </h3>
-                  {#each beans as bean, i (bean.id)}
-                    <BeanItem
-                      {bean}
-                      parentId={null}
-                      index={i}
-                      selectedId={ui.currentBean?.id}
-                      onSelect={(b) => ui.selectBean(b)}
-                      filter={planningFilter.tree}
-                      sectionStatus={status}
-                      showParentContext
-                    />
-                  {:else}
-                    {#if !beansStore.loading}
-                      <p class="text-center py-4 text-sm text-text-muted">No beans</p>
-                    {/if}
-                  {/each}
+                  class={[
+                    'mx-1 rounded-full transition-colors',
+                    backlogDrag.showEndIndicator(null, beans.length, status)
+                      ? 'h-0.5 bg-accent'
+                      : 'h-0'
+                  ]}
+                ></div>
+              </div>
+            {/snippet}
 
-                  <div
-                    class={[
-                      'mx-1 rounded-full transition-colors',
-                      backlogDrag.showEndIndicator(null, beans.length, status)
-                        ? 'h-0.5 bg-accent'
-                        : 'h-0'
-                    ]}
-                  ></div>
-                </div>
-              {/snippet}
-
-              {@render backlogSection(filteredTodoBeans, 'todo', 'Todo')}
-              {@render backlogSection(filteredDraftBeans, 'draft', 'Draft')}
-            </div>
-          {:else}
-            <BoardView onSelect={(b) => ui.selectBean(b)} selectedId={ui.currentBean?.id} />
-          {/if}
-        </div>
-      {/snippet}
-
-      {#snippet detailPanel()}
-        {#if ui.currentBean}
-          <BeanPane
-            bean={ui.currentBean}
-            onSelect={(b) => ui.selectBean(b)}
-            onEdit={(b) => ui.openEditForm(b)}
-            onClose={() => ui.clearSelection()}
-          />
+            {@render backlogSection(filteredTodoBeans, 'todo', 'Todo')}
+            {@render backlogSection(filteredDraftBeans, 'draft', 'Draft')}
+          </div>
+        {:else}
+          <BoardView onSelect={(b) => ui.selectBean(b)} selectedId={ui.currentBean?.id} />
         {/if}
-      {/snippet}
+      </div>
+    {/snippet}
 
-      <SplitPane
-        direction="horizontal"
-        panels={[
-          { content: backlogBoard },
-          {
-            content: detailPanel,
-            size: 480,
-            collapsed: !ui.currentBean,
-            persistKey: 'detail-width'
-          }
-        ]}
-      />
+    {#snippet detailPanel()}
+      {#if ui.currentBean}
+        <BeanPane
+          bean={ui.currentBean}
+          onSelect={(b) => ui.selectBean(b)}
+          onEdit={(b) => ui.openEditForm(b)}
+          onClose={() => ui.clearSelection()}
+        />
+      {/if}
+    {/snippet}
+
+    <SplitPane
+      direction="horizontal"
+      panels={[
+        { content: backlogBoard },
+        {
+          content: detailPanel,
+          size: 480,
+          collapsed: !ui.currentBean,
+          persistKey: 'detail-width'
+        }
+      ]}
+    />
   </div>
 </div>

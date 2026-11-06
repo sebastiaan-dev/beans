@@ -709,7 +709,7 @@ func TestSetActMode_TogglesExisting(t *testing.T) {
 	m.sessions["test"] = &Session{
 		ID:        "test",
 		Status:    StatusIdle,
-		ActMode:  true,
+		ActMode:   true,
 		SessionID: "sess-123",
 	}
 
@@ -733,8 +733,8 @@ func TestSetActMode_NoopWhenSame(t *testing.T) {
 	defer m.Unsubscribe("test", ch)
 
 	m.sessions["test"] = &Session{
-		ID:       "test",
-		Status:   StatusIdle,
+		ID:      "test",
+		Status:  StatusIdle,
 		ActMode: true,
 	}
 
@@ -760,8 +760,8 @@ func TestSetActMode_NoopWhenSame(t *testing.T) {
 func TestSetActMode_IncludedInSnapshot(t *testing.T) {
 	m := NewManager("", nil)
 	m.sessions["test"] = &Session{
-		ID:       "test",
-		Status:   StatusIdle,
+		ID:      "test",
+		Status:  StatusIdle,
 		ActMode: true,
 	}
 
@@ -912,7 +912,6 @@ func TestSetEffort_NoopWhenSame(t *testing.T) {
 		// expected
 	}
 }
-
 
 func TestGlobalSubscribeUnsubscribe(t *testing.T) {
 	m := NewManager("", nil)

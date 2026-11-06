@@ -334,7 +334,10 @@ export function linkifyBeanIds(text: string): string | undefined {
   if (!pattern.test(text)) return undefined;
   pattern.lastIndex = 0;
   const escaped = escapeHtml(text);
-  return escaped.replace(pattern, (match) => `<a data-bean-id="${match}" class="bean-link">${match}</a>`);
+  return escaped.replace(
+    pattern,
+    (match) => `<a data-bean-id="${match}" class="bean-link">${match}</a>`
+  );
 }
 
 /**
@@ -343,4 +346,3 @@ export function linkifyBeanIds(text: string): string | undefined {
 export function preloadHighlighter(): void {
   getHighlighter().catch(console.error);
 }
-

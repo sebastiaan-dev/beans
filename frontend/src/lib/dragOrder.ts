@@ -29,7 +29,9 @@ export function ensureOrdered(beans: Bean[]): Bean[] {
       const newOrder = orderBetween(key, nextKey);
       result[i] = { ...result[i], order: newOrder };
       beansStore.optimisticUpdate(result[i].id, { order: newOrder });
-      client.mutation(UpdateBeanOrderDocument, { id: result[i].id, input: { order: newOrder } }).toPromise();
+      client
+        .mutation(UpdateBeanOrderDocument, { id: result[i].id, input: { order: newOrder } })
+        .toPromise();
     }
     key = result[i].order;
   }

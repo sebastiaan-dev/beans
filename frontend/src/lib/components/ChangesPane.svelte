@@ -53,7 +53,9 @@
     if (selectedFile) {
       const list = activeTab === 'all' ? changesStore.allChanges : changesStore.changes;
       const stillExists = list.some(
-        (c) => c.path === selectedFile!.path && (activeTab === 'all' || c.staged === selectedFile!.staged)
+        (c) =>
+          c.path === selectedFile!.path &&
+          (activeTab === 'all' || c.staged === selectedFile!.staged)
       );
       if (!stillExists) {
         diffSelectionStore.clear();
@@ -73,14 +75,18 @@
   const stagedChanges = $derived(changesStore.changes.filter((c) => c.staged));
   const unstagedChanges = $derived(changesStore.changes.filter((c) => !c.staged));
   const hasUnstagedChanges = $derived(changesStore.changes.length > 0);
-  const displayChanges = $derived(activeTab === 'all' ? changesStore.allChanges : changesStore.changes);
+  const displayChanges = $derived(
+    activeTab === 'all' ? changesStore.allChanges : changesStore.changes
+  );
   const totalCount = $derived(displayChanges.length);
 
   let confirmingDiscard = $state<{ path: string; staged: boolean } | null>(null);
 
   async function discardChange(filePath: string, staged: boolean) {
     confirmingDiscard = null;
-    await client.mutation(DiscardFileChangeDocument, { filePath, staged, path: path ?? null }).toPromise();
+    await client
+      .mutation(DiscardFileChangeDocument, { filePath, staged, path: path ?? null })
+      .toPromise();
     // Clear selection if the discarded file was selected
     if (selectedFile?.path === filePath) {
       diffSelectionStore.clear();
@@ -135,8 +141,6 @@
     }
     return selectedFile?.path === change.path && selectedFile?.staged === change.staged;
   }
-
-
 </script>
 
 {#snippet fileRow(change: FileChange)}
@@ -148,24 +152,36 @@
     role="button"
     tabindex="0"
     onclick={() => selectFile(change)}
-    onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectFile(change); } }}
+    onkeydown={(e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        selectFile(change);
+      }
+    }}
   >
     <span class={['w-3 shrink-0 text-center font-mono font-bold', statusColor(change.status)]}>
       {statusLabel(change.status)}
     </span>
     <span class="min-w-0 flex-1 truncate" title={change.path}>
-      <span class="text-text-muted">{dirName(change.path)}</span><span class="text-text">{fileName(change.path)}</span>
+      <span class="text-text-muted">{dirName(change.path)}</span><span class="text-text"
+        >{fileName(change.path)}</span
+      >
     </span>
     {#if change.additions > 0 || change.deletions > 0}
       <span class="shrink-0 font-mono">
         {#if change.additions > 0}<span class="text-success">+{change.additions}</span>{/if}
-        {#if change.deletions > 0}<span class={[change.additions > 0 && 'ml-1', 'text-danger']}>-{change.deletions}</span>{/if}
+        {#if change.deletions > 0}<span class={[change.additions > 0 && 'ml-1', 'text-danger']}
+            >-{change.deletions}</span
+          >{/if}
       </span>
     {/if}
     <button
-      class="shrink-0 cursor-pointer rounded px-1 text-text-faint opacity-0 transition-opacity hover:text-text group-hover:opacity-100"
+      class="shrink-0 cursor-pointer rounded px-1 text-text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-text"
       title="Discard change"
-      onclick={(e) => { e.stopPropagation(); confirmingDiscard = { path: change.path, staged: change.staged }; }}
+      onclick={(e) => {
+        e.stopPropagation();
+        confirmingDiscard = { path: change.path, staged: change.staged };
+      }}
     >
       <span class="icon-[eva--undo-fill] size-3.5"></span>
     </button>
@@ -208,7 +224,9 @@
           'btn-tab-sm flex-1 rounded-l-md',
           activeTab === 'all' ? 'btn-tab-active' : 'btn-tab-inactive'
         ]}
-        onclick={() => { activeTab = 'all'; }}
+        onclick={() => {
+          activeTab = 'all';
+        }}
       >
         All Changes
         {#if changesStore.allChanges.length > 0}
@@ -222,10 +240,12 @@
             ? 'btn-tab-active'
             : hasUnstagedChanges
               ? 'btn-tab-inactive'
-              : 'btn-tab-inactive opacity-50 cursor-not-allowed'
+              : 'btn-tab-inactive cursor-not-allowed opacity-50'
         ]}
         disabled={!hasUnstagedChanges}
-        onclick={() => { activeTab = 'unstaged'; }}
+        onclick={() => {
+          activeTab = 'unstaged';
+        }}
       >
         Unstaged
         {#if changesStore.changes.length > 0}
@@ -282,6 +302,8 @@
     confirmLabel="Discard"
     danger
     onConfirm={() => discardChange(confirmingDiscard!.path, confirmingDiscard!.staged)}
-    onCancel={() => { confirmingDiscard = null; }}
+    onCancel={() => {
+      confirmingDiscard = null;
+    }}
   />
 {/if}

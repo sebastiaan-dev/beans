@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hmans/beans/pkg/config"
-	"github.com/hmans/beans/pkg/beangraph"
-	"github.com/hmans/beans/pkg/beangraph/model"
 	"github.com/hmans/beans/internal/output"
 	"github.com/hmans/beans/internal/ui"
+	"github.com/hmans/beans/pkg/beangraph"
+	"github.com/hmans/beans/pkg/beangraph/model"
+	"github.com/hmans/beans/pkg/config"
 	"github.com/spf13/cobra"
 )
 

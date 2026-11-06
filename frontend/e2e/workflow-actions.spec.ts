@@ -31,17 +31,16 @@ test.describe('Workflow action buttons', () => {
     await expect(detail.getByRole('button', { name: 'Complete' })).not.toBeVisible();
   });
 
-  test('in-progress bean shows Complete and Scrap buttons', async ({
-    beans,
-    boardPage,
-    page
-  }) => {
+  test('in-progress bean shows Complete and Scrap buttons', async ({ beans, boardPage, page }) => {
     beans.create('Active Bean', { status: 'in-progress', type: 'task' });
 
     await boardPage.goto();
     await boardPage.waitForBeanInColumn('Active Bean', 'in-progress');
     // Click the bean in the board to select it
-    await page.locator('[data-status="in-progress"] [role="listitem"]', { hasText: 'Active Bean' }).locator('[role="button"]').click();
+    await page
+      .locator('[data-status="in-progress"] [role="listitem"]', { hasText: 'Active Bean' })
+      .locator('[role="button"]')
+      .click();
 
     const detail = page.locator('h1', { hasText: 'Active Bean' }).locator('..');
 
@@ -55,7 +54,10 @@ test.describe('Workflow action buttons', () => {
 
     await boardPage.goto();
     await boardPage.waitForBeanInColumn('Done Bean', 'completed');
-    await page.locator('[data-status="completed"] [role="listitem"]', { hasText: 'Done Bean' }).locator('[role="button"]').click();
+    await page
+      .locator('[data-status="completed"] [role="listitem"]', { hasText: 'Done Bean' })
+      .locator('[role="button"]')
+      .click();
 
     const detail = page.locator('h1', { hasText: 'Done Bean' }).locator('..');
 
@@ -103,7 +105,10 @@ test.describe('Workflow action buttons', () => {
 
     await boardPage.goto();
     await boardPage.waitForBeanInColumn('Active Task', 'in-progress');
-    await page.locator('[data-status="in-progress"] [role="listitem"]', { hasText: 'Active Task' }).locator('[role="button"]').click();
+    await page
+      .locator('[data-status="in-progress"] [role="listitem"]', { hasText: 'Active Task' })
+      .locator('[role="button"]')
+      .click();
 
     const detail = page.locator('h1', { hasText: 'Active Task' }).locator('..');
 

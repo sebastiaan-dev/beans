@@ -155,8 +155,9 @@ test.describe('Workspace destroy warnings', () => {
     });
 
     await openDestroyModal(page, wsName);
-    const confirm = page.getByRole('button', { name: 'Checking…', exact: true });
+    const confirm = page.getByRole('button', { name: 'Destroy', exact: true });
     await expect(confirm).toBeDisabled();
+    await expect(page.locator('.fixed').locator('p')).toContainText('Checking the worktree status');
 
     releaseStatus();
     const destroy = page.getByRole('button', { name: 'Destroy', exact: true });

@@ -13,7 +13,12 @@
     scrollToBottomTrigger?: number;
   }
 
-  let { beanId, store: externalStore, setupRunning = false, scrollToBottomTrigger = 0 }: Props = $props();
+  let {
+    beanId,
+    store: externalStore,
+    setupRunning = false,
+    scrollToBottomTrigger = 0
+  }: Props = $props();
   let internalScrollTrigger = $state(0);
   const combinedScrollTrigger = $derived(scrollToBottomTrigger + internalScrollTrigger);
 
@@ -63,7 +68,14 @@
 </script>
 
 <div class="flex h-full flex-col bg-surface">
-  <AgentMessages {messages} {isRunning} {activityLabel} {subagentActivities} {setupRunning} scrollToBottomTrigger={combinedScrollTrigger} />
+  <AgentMessages
+    {messages}
+    {isRunning}
+    {activityLabel}
+    {subagentActivities}
+    {setupRunning}
+    scrollToBottomTrigger={combinedScrollTrigger}
+  />
 
   <!-- Error banner -->
   {#if sessionError || store.error}
@@ -90,7 +102,10 @@
     {subagentActivities}
     {quickReplies}
     workspaceId={beanId}
-    onSend={(text, images, attachments) => { internalScrollTrigger++; store.sendMessage(beanId, text, images, attachments); }}
+    onSend={(text, images, attachments) => {
+      internalScrollTrigger++;
+      store.sendMessage(beanId, text, images, attachments);
+    }}
     onStop={() => store.stop(beanId)}
     onSetMode={setAgentMode}
     onSetEffort={(effort) => store.setEffort(beanId, effort)}

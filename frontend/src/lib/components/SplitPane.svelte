@@ -116,10 +116,10 @@
     {:else if vi > 0}
       <button
         class={[
-          'group relative z-10 shrink-0 border-0 rounded-none bg-transparent p-0',
+          'group relative z-10 shrink-0 rounded-none border-0 bg-transparent p-0',
           isHorizontal
-            ? 'flex w-3 -mx-[5.5px] cursor-col-resize justify-center'
-            : 'flex h-3 -my-[5.5px] cursor-row-resize items-center'
+            ? '-mx-[5.5px] flex w-3 cursor-col-resize justify-center'
+            : '-my-[5.5px] flex h-3 cursor-row-resize items-center'
         ]}
         aria-label="Resize"
         onmousedown={(e) => startDrag(visibleIndices[vi - 1], panelIdx, e)}
@@ -127,7 +127,7 @@
         <span
           class={[
             'block transition-colors',
-            isHorizontal ? 'h-full w-px' : 'w-full h-px',
+            isHorizontal ? 'h-full w-px' : 'h-px w-full',
             isDragging ? 'bg-surface-dim' : 'bg-border group-hover:bg-surface-dim'
           ]}
         ></span>
@@ -142,7 +142,8 @@
     {:else}
       <div
         class="flex shrink-0 flex-col overflow-hidden"
-        style="{isHorizontal ? 'width' : 'height'}: {panels[panelIdx].fixedSize ?? sizes[panelIdx]}px"
+        style="{isHorizontal ? 'width' : 'height'}: {panels[panelIdx].fixedSize ??
+          sizes[panelIdx]}px"
       >
         {@render panels[panelIdx].content()}
       </div>

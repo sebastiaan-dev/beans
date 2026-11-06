@@ -38,12 +38,12 @@ type entryImage struct {
 // entry is a single line in the JSONL file.
 type entry struct {
 	Type        string       `json:"type"`                  // "message" or "meta"
-	Role        string       `json:"role,omitempty"`         // for messages: "user" or "assistant"
-	Content     string       `json:"content,omitempty"`      // for messages
-	Images      []entryImage `json:"images,omitempty"`       // for messages with image attachments
-	Diff        string       `json:"diff,omitempty"`         // for tool messages: unified diff output
-	Attachments []string     `json:"attachments,omitempty"`  // file paths from @-mentions
-	SessionID   string       `json:"session_id,omitempty"`   // for meta
+	Role        string       `json:"role,omitempty"`        // for messages: "user" or "assistant"
+	Content     string       `json:"content,omitempty"`     // for messages
+	Images      []entryImage `json:"images,omitempty"`      // for messages with image attachments
+	Diff        string       `json:"diff,omitempty"`        // for tool messages: unified diff output
+	Attachments []string     `json:"attachments,omitempty"` // file paths from @-mentions
+	SessionID   string       `json:"session_id,omitempty"`  // for meta
 }
 
 // newStore creates the conversations directory if needed.

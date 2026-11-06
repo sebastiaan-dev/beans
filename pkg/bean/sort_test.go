@@ -140,4 +140,3 @@ func TestSortByStatusPriorityAndType(t *testing.T) {
 		}
 	})
 }
-

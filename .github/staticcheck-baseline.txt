@@ -1,0 +1,16 @@
+# Pre-existing staticcheck findings tolerated by .github/scripts/staticcheck.sh
+# (format: "file: message (CHECK)"). Do not add entries; fix new findings.
+internal/agent/store.go: should convert img (type ImageRef) to entryImage instead of using struct literal (S1016)
+internal/agent/store.go: should convert img (type entryImage) to ImageRef instead of using struct literal (S1016)
+internal/commands/content.go: func mergeTags is unused (U1000)
+internal/commands/roadmap_test.go: func (*mockConfig).IsArchiveStatus is unused (U1000)
+internal/commands/roadmap_test.go: func (*mockConfig).StatusNames is unused (U1000)
+internal/commands/roadmap_test.go: type mockConfig is unused (U1000)
+internal/graph/central_prompt_test.go: github.com/vektah/gqlparser/v2.LoadQuery is deprecated: use LoadQueryWithRules instead.  (SA1019)
+internal/tui/commands.go: const scopeGlobal is unused (U1000)
+internal/tui/detail.go: func boxGrid is unused (U1000)
+internal/tui/filterbar.go: func barField.isMulti is unused (U1000)
+internal/tui/mouse.go: func (*detailModel).scrollBody is unused (U1000)
+internal/tui/quickactions_test.go: should use !strings.Contains(strings.Join(got, " "), "demo-t003 demo-t002") instead (S1003)
+internal/tui/view_blocked.go: type blocked is unused (U1000)
+internal/tui/workspaces.go: error strings should not be capitalized (ST1005)

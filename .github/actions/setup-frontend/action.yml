@@ -1,0 +1,25 @@
+name: Set up frontend
+description: Installs pnpm and Node.js (with the pnpm store cached) and the frontend dependencies.
+inputs:
+  pnpm-version:
+    description: pnpm major version
+    # pnpm >= 11 rejects frontend/pnpm-workspace.yaml's build-script settings (repos-17ug).
+    default: "10"
+  node-version:
+    description: Node.js version
+    default: "24"
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v6
+      with:
+        version: ${{ inputs.pnpm-version }}
+    - uses: actions/setup-node@v7
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: pnpm
+        cache-dependency-path: frontend/pnpm-lock.yaml
+    - name: Install frontend dependencies
+      shell: bash
+      working-directory: frontend
+      run: pnpm install --frozen-lockfile
