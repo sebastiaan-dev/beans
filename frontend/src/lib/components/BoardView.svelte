@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Bean } from '$lib/beans.svelte';
-  import { beansStore, sortBeans } from '$lib/beans.svelte';
+  import { sortBeans } from '$lib/beans.svelte';
+  import { isArchived } from '$lib/filter';
   import { applyDrop } from '$lib/dragOrder';
   import { planningFilter } from '$lib/planningFilter.svelte';
   import { client } from '$lib/graphqlClient';
@@ -22,8 +23,7 @@
 
   async function archiveAll() {
     archivingAll = true;
-    const completedBeans = beansForStatus('completed');
-    for (const bean of completedBeans) {
+    for (const bean of archivableBeans) {
       await client.mutation(ArchiveBeanDocument, { id: bean.id }).toPromise();
     }
     archivingAll = false;
@@ -47,11 +47,14 @@
   function beansForStatus(status: string): Bean[] {
     // sortBeans already handles order → priority → type → title sorting
     return sortBeans(
-      beansStore.all.filter(
+      planningFilter.beans.filter(
         (b) => b.status === status && b.status !== 'scrapped' && planningFilter.predicate(b)
       )
     );
   }
+
+  // The completed column also lists archived beans when the filter asks for them.
+  const archivableBeans = $derived(beansForStatus('completed').filter((b) => !isArchived(b)));
 
   // Drag and drop
   let draggedBeanId = $state<string | null>(null);
@@ -123,7 +126,7 @@
         <div class="sticky top-0 z-10 mb-3 flex items-center gap-2 bg-surface-alt px-1 pb-1">
           <span class={['badge', col.color]}>{col.label}</span>
           <span class="text-xs text-text-faint">{beans.length}</span>
-          {#if col.status === 'completed' && beans.length > 0}
+          {#if col.status === 'completed' && archivableBeans.length > 0}
             <button
               class="cursor-pointer text-text-faint transition-colors hover:text-text-muted"
               title="Archive all completed beans"
@@ -196,7 +199,7 @@
 </div>
 
 {#if confirmingArchiveAll}
-  {@const completedCount = beansForStatus('completed').length}
+  {@const completedCount = archivableBeans.length}
   <ConfirmModal
     title="Archive All Completed"
     message="Are you sure you want to archive all {completedCount} completed beans? This will move them to the archive directory."

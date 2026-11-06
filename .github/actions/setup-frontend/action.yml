@@ -2,18 +2,33 @@ name: Set up frontend
 description: Installs pnpm and Node.js (with the pnpm store cached) and the frontend dependencies.
 inputs:
   pnpm-version:
-    description: pnpm major version
-    # pnpm >= 11 rejects frontend/pnpm-workspace.yaml's build-script settings (repos-17ug).
-    default: "10"
+    description: pnpm version (default, and the one to change, is mise.toml's `pnpm`, which local development uses as well)
+    default: ""
   node-version:
     description: Node.js version
     default: "24"
 runs:
   using: composite
   steps:
+    - name: Resolve pnpm version
+      id: pnpm
+      shell: bash
+      env:
+        PNPM_VERSION: ${{ inputs.pnpm-version }}
+      run: |
+        set -euo pipefail
+        version=$PNPM_VERSION
+        if [ -z "$version" ]; then
+          version=$(sed -nE 's/^pnpm *= *"([^"]+)".*/\1/p' mise.toml)
+        fi
+        if [ -z "$version" ] || [ "$version" = latest ]; then
+          echo "::error::mise.toml must pin an exact pnpm version (found '${version}')"
+          exit 1
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
     - uses: pnpm/action-setup@v6
       with:
-        version: ${{ inputs.pnpm-version }}
+        version: ${{ steps.pnpm.outputs.version }}
     - uses: actions/setup-node@v7
       with:
         node-version: ${{ inputs.node-version }}
@@ -22,4 +37,6 @@ runs:
     - name: Install frontend dependencies
       shell: bash
       working-directory: frontend
-      run: pnpm install --frozen-lockfile
+      run: |
+        pnpm --version
+        pnpm install --frozen-lockfile

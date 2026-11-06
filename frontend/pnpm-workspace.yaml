@@ -1,2 +1,10 @@
-onlyBuiltDependencies:
-  - esbuild
+# pnpm settings (pnpm >= 11 ignores non-auth settings in .npmrc). The pnpm
+# version is pinned in ../mise.toml, which CI's setup-frontend action also reads.
+
+# Dependencies allowed to run install scripts. `allowBuilds` replaces
+# `onlyBuiltDependencies` (ignored since pnpm 11); recent pnpm 10 releases
+# understand it too (checked with 10.34, 11.28 and 12.18).
+allowBuilds:
+  esbuild: true
+
+engineStrict: true

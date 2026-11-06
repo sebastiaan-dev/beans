@@ -20,8 +20,16 @@
 
   // Section roots: top-level backlog beans plus backlog beans whose ancestors
   // are not in the backlog (e.g. todo children of an in-progress parent).
-  const todoRoots = $derived(backlogRoots(beansStore.all, 'todo'));
-  const draftRoots = $derived(backlogRoots(beansStore.all, 'draft'));
+  // Archived beans requested by the filter (archived:yes) are never nested
+  // (BeanItem only renders non-archived children), so they are extra roots.
+  function sectionRoots(status: string) {
+    return [
+      ...backlogRoots(beansStore.all, status),
+      ...planningFilter.archivedMatches.filter((b) => b.status === status)
+    ];
+  }
+  const todoRoots = $derived(sectionRoots('todo'));
+  const draftRoots = $derived(sectionRoots('draft'));
 
   // Keep roots that match the filter or have a matching descendant.
   function filterBeans(beans: Bean[]) {

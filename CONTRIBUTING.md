@@ -3,6 +3,13 @@
 Tools (Go, Node.js, pnpm) are managed with [mise](https://mise.jdx.dev): run
 `mise install`, then `mise setup` to install dependencies and generate code.
 
+pnpm is pinned to an exact version in `mise.toml`; CI's
+`.github/actions/setup-frontend` reads it from there, so bump it only in
+`mise.toml`. Frontend pnpm settings live in `frontend/pnpm-workspace.yaml`
+(pnpm 11+ ignores non-auth settings in `.npmrc`): dependencies that may run
+install scripts are listed under `allowBuilds`; when `pnpm install` fails with
+`ERR_PNPM_IGNORED_BUILDS` after adding a dependency, add it there.
+
 | Task            | What it does                                                                |
 | --------------- | --------------------------------------------------------------------------- |
 | `mise build`    | Build `./beans`, `./beans-serve` and `./beans-tui` (with embedded frontend) |

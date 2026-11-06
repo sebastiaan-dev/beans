@@ -18,18 +18,18 @@
 //	milestone:<id|title>   like parent:, but the ancestor must be a milestone
 //	epic:<id|title>        like parent:, but the ancestor must be an epic
 //	blocked:yes|no         bean is (not) blocked, directly or via an ancestor
-//	-status:completed      a leading "-" negates a field term
-//	"some words"           quotes group values/text containing spaces
-//	anything else          free-text search on title, id, type, status and tags
-//
-// Extensions used by the terminal UI and the CLI (the Beans UI treats them as
-// free text for now):
-//
 //	ready:yes|no           bean is (not) ready to start, like `beans list --ready`:
 //	                       not blocked, not draft/in-progress/completed/scrapped
 //	                       and no completed/scrapped ancestor
 //	done:yes|no            bean is (not) completed/scrapped, itself or via an ancestor
 //	archived:yes|no        bean is (not) stored in the archive directory
+//	-status:completed      a leading "-" negates a field term
+//	"some words"           quotes group values/text containing spaces
+//	anything else          free-text search on title, id, type, status and tags
+//
+// Which beans a query is matched against is up to the caller. The Beans UI's
+// planning views hide archived beans unless the query has an archived: clause
+// (see mentionsArchived in frontend/src/lib/filter.ts).
 package filterquery
 
 import (
