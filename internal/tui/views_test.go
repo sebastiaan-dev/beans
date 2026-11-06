@@ -227,11 +227,11 @@ func TestReadyView(t *testing.T) {
 	// Actions work on the selected bean.
 	pressKey(t, app, "j")
 	pressKey(t, app, "s")
-	if app.state != viewStatusPicker || !reflect.DeepEqual(app.statusPicker.beanIDs, []string{"demo-t002"}) {
-		t.Fatalf("s should open the status picker for t002: state %v ids %v", app.state, app.statusPicker.beanIDs)
+	if app.state != viewPicker || app.picker.kind != pickStatus || !reflect.DeepEqual(app.picker.beanIDs, []string{"demo-t002"}) {
+		t.Fatalf("s should open the status picker for t002: state %v ids %v", app.state, app.picker.beanIDs)
 	}
 	pressKey(t, app, "esc")
-	if b := app.workspaceKeyBean(); b == nil || b.ID != "demo-t002" {
+	if b := app.focusedBean(); b == nil || b.ID != "demo-t002" {
 		t.Errorf("w would act on %v", b)
 	}
 	// Tree-only actions explain themselves and change nothing.

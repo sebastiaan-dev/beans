@@ -125,6 +125,37 @@ func (a *App) syncDetail() {
 	}
 }
 
+// showBean shows a bean in the detail pane, moving the tree cursor to it if
+// it is in the (filtered) tree. record adds the current bean to the detail
+// history.
+func (a *App) showBean(id string, record bool) {
+	if cur := a.detail.bean; cur != nil && record {
+		a.detail.history = append(a.detail.history, cur.ID)
+	}
+	if a.selectInView(id) {
+		a.detailPinned = ""
+	} else {
+		a.detailPinned = id
+	}
+	a.syncDetail()
+}
+
+// focusDetailPane moves the focus to the detail pane, on its first section
+// (relations, if any) or its last one (body), and reports whether there is a
+// bean to show.
+func (a *App) focusDetailPane(first bool) bool {
+	if a.currentBean() == nil {
+		return false
+	}
+	a.focus = focusDetail
+	a.syncDetail()
+	a.detail.focus()
+	if !first {
+		a.detail.section = sectionBody
+	}
+	return true
+}
+
 func (a *App) focusTree() {
 	a.focus = focusTree
 	a.detail.blur()
@@ -307,21 +338,18 @@ func (a *App) browseView() string {
 	l := a.layout()
 	// Content lines start inside the frame at column 2, line 1.
 	rec := a.hits.recorder().at(2, 1)
-	defer func() { a.rec = hitRecorder{} }()
 	var content []string
 	content = append(content, a.headerLine(l.inner))
 	content = append(content, borderStyle().Render(strings.Repeat(glyphs().Horizontal, l.inner)))
 	if l.showBar {
-		a.rec = rec.at(0, len(content))
-		content = append(content, a.filterBar(l.inner)...)
+		content = append(content, a.filterBar(l.inner, rec.at(0, len(content)))...)
 	} else {
 		line, xs := a.filterSummaryLine(l.inner)
 		a.recordSummaryLine(rec.at(0, len(content)), l.inner, xs)
 		content = append(content, line)
 	}
 	content = append(content, a.paneLines(l, rec.at(0, len(content)))...)
-	a.rec = rec
-	content = a.overlayDropdown(content, len(content)-l.paneH, l.inner, !l.showBar)
+	content = a.overlayDropdown(content, len(content)-l.paneH, l.inner, !l.showBar, rec)
 	content = append(content, borderStyle().Render(strings.Repeat(glyphs().Horizontal, l.inner)))
 	content = append(content, l.footer...)
 	return strings.Join(frameLines(content, a.width, a.height), "\n")

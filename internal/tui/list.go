@@ -745,56 +745,14 @@ func (m listModel) updateKey(msg tea.KeyMsg) (listModel, tea.Cmd) {
 			}
 			m.moveCursor(1)
 		}
-	case "p":
-		ids, b := m.selectionOrCurrent()
-		if len(ids) == 0 {
-			break
+	case "s", "t", "P", "p":
+		// The selection, or the bean under the cursor.
+		if ids, b := m.selectionOrCurrent(); len(ids) > 0 {
+			return m, openPickerCmd(pickerKeys[msg.String()], ids, b)
 		}
-		msg := openParentPickerMsg{beanIDs: ids}
-		if b != nil {
-			msg.beanTitle, msg.beanTypes, msg.currentParent = b.Title, []string{b.Type}, b.Parent
-		} else {
-			msg.beanTitle = fmt.Sprintf("%d selected beans", len(ids))
-			for _, id := range ids {
-				msg.beanTypes = append(msg.beanTypes, m.byID[id].Type)
-			}
-		}
-		return m, func() tea.Msg { return msg }
-	case "s":
-		ids, b := m.selectionOrCurrent()
-		if len(ids) == 0 {
-			break
-		}
-		msg := openStatusPickerMsg{beanIDs: ids, beanTitle: fmt.Sprintf("%d selected beans", len(ids))}
-		if b != nil {
-			msg.beanTitle, msg.currentStatus = b.Title, b.Status
-		}
-		return m, func() tea.Msg { return msg }
-	case "t":
-		ids, b := m.selectionOrCurrent()
-		if len(ids) == 0 {
-			break
-		}
-		msg := openTypePickerMsg{beanIDs: ids, beanTitle: fmt.Sprintf("%d selected beans", len(ids))}
-		if b != nil {
-			msg.beanTitle, msg.currentType = b.Title, b.Type
-		}
-		return m, func() tea.Msg { return msg }
-	case "P":
-		ids, b := m.selectionOrCurrent()
-		if len(ids) == 0 {
-			break
-		}
-		msg := openPriorityPickerMsg{beanIDs: ids, beanTitle: fmt.Sprintf("%d selected beans", len(ids))}
-		if b != nil {
-			msg.beanTitle, msg.currentPriority = b.Title, b.Priority
-		}
-		return m, func() tea.Msg { return msg }
 	case "b":
 		if b := m.currentBean(); b != nil {
-			return m, func() tea.Msg {
-				return openBlockingPickerMsg{beanID: b.ID, beanTitle: b.Title, currentBlocking: b.Blocking}
-			}
+			return m, openPickerCmd(pickBlocking, []string{b.ID}, b)
 		}
 	case "H":
 		// Toggle hiding of completed/scrapped beans
@@ -865,13 +823,8 @@ func (m listModel) renderRow(i, width int) []string {
 	marked := m.selectedBeans[b.ID]
 	dim := !r.matched
 
-	bg := lipgloss.Color("")
-	if selected {
-		bg = colSelection()
-	}
-	st := func(s lipgloss.Style) lipgloss.Style { return withBackground(s, bg) }
-	plain := st(lipgloss.NewStyle())
-	muted := st(mutedStyle())
+	rs := newRowStyler(selected)
+	st, plain, muted := rs.st, rs.plain(), rs.muted()
 
 	colors := m.config.GetBeanColors(b.Status, b.Type, b.Priority)
 	statusStyle := st(fg(colNamed(colors.StatusColor)))
@@ -882,17 +835,14 @@ func (m listModel) renderRow(i, width int) []string {
 		statusStyle, typeStyle, titleStyle = muted, muted, muted
 	}
 	if selected {
-		titleStyle = st(accentStyle().Bold(true))
+		titleStyle = rs.titleStyle()
 	}
 	if marked {
 		idStyle = st(fg(colWarning()).Bold(true))
 	}
 
-	bar := plain.Render(" ")
-	switch {
-	case selected:
-		bar = st(accentStyle()).Render(glyphs().Cursor)
-	case marked:
+	bar := rs.bar()
+	if marked && !selected {
 		bar = st(fg(colWarning())).Render(glyphs().Marked)
 	}
 	chevron := "  "
@@ -1035,7 +985,7 @@ func (m listModel) treeHints(wide bool) []keyHint {
 		return m.inlineHints()
 	}
 	if m.searching {
-		return []keyHint{{"enter", "apply"}, {"esc", "cancel"}, {glyphs().KeyUpDown, "move"}}
+		return searchHints()
 	}
 	hideLabel := "hide done"
 	if m.doneHidden() {

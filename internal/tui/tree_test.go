@@ -356,8 +356,8 @@ func TestDetailEditKeysTargetDetailBean(t *testing.T) {
 
 	_, cmd := app.Update(keyRunes("s"))
 	msg := cmd()
-	open, ok := msg.(openStatusPickerMsg)
-	if !ok || !reflect.DeepEqual(open.beanIDs, []string{"demo-t003"}) {
+	open, ok := msg.(openPickerMsg)
+	if !ok || open.kind != pickStatus || !reflect.DeepEqual(open.beanIDs, []string{"demo-t003"}) {
 		t.Errorf("s in the detail pane should edit the shown bean: %#v", msg)
 	}
 	_, cmd = app.Update(keyRunes("y"))

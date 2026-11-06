@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/hmans/beans/internal/ui"
@@ -78,13 +77,24 @@ func TestTUIViewsUseANSIPalette(t *testing.T) {
 			ids := []string{beans[1].ID}
 			const w, h = 140, 40
 
+			pickerApp := newBrowseTestApp(t, resolver, cfg)
+			pickerApp.Update(tea.WindowSizeMsg{Width: w, Height: h})
+			picker := func(kind pickerKind, keys ...string) string {
+				pickerApp.openPicker(openPickerMsg{kind: kind, beanIDs: ids, bean: beans[1]})
+				pressKeys(t, pickerApp, keys...)
+				view := pickerApp.View()
+				pickerApp.closeOverlay()
+				return view
+			}
 			views := map[string]string{
-				"help":     newHelpOverlayModel(w, h).ModalView("background", w, h),
-				"status":   newStatusPickerModel(ids, "t", "todo", cfg, w, h).ModalView("bg", w, h),
-				"type":     newTypePickerModel(ids, "t", "task", cfg, w, h).ModalView("bg", w, h),
-				"priority": newPriorityPickerModel(ids, "t", "high", cfg, w, h).ModalView("bg", w, h),
-				"parent":   newParentPickerModel(ids, "t", []string{"task"}, beans[0].ID, resolver, cfg, w, h).ModalView("bg", w, h),
-				"blocking": newBlockingPickerModel(beans[1].ID, "t", beans[1].Blocking, resolver, cfg, w, h).ModalView("bg", w, h),
+				"help":     overlayModal("background", newHelpOverlayModel(w, h).View(), w, h),
+				"status":   picker(pickStatus),
+				"type":     picker(pickType),
+				"priority": picker(pickPriority),
+				"parent":   picker(pickParent),
+				"blocking": picker(pickBlocking),
+				// The type-to-filter input.
+				"status-filtering": picker(pickStatus, "/", "t", "o"),
 			}
 
 			// The browse view: wide (tree and detail side by side, with the
@@ -110,12 +120,6 @@ func TestTUIViewsUseANSIPalette(t *testing.T) {
 			views["browse-dropdown-short"] = sizedView(t, app, 70, 24)
 			pressKey(t, app, "esc")
 			pressKey(t, app, "esc")
-
-			// The filter input is styled from the list theme; render it too.
-			sp := newStatusPickerModel(ids, "t", "todo", cfg, w, h)
-			sp.list.SetFilterText("to")
-			sp.list.SetFilterState(list.Filtering)
-			views["status-filtering"] = sp.View()
 
 			for name, view := range views {
 				if !strings.Contains(view, "\x1b[") {
@@ -186,13 +190,13 @@ func TestTUIViewsUseTheme(t *testing.T) {
 	if got := listTitleStyle().Render("x"); !strings.Contains(got, accent) {
 		t.Errorf("listTitleStyle doesn't use the theme accent: %q", got)
 	}
-	if got := helpKeyStyle().Render("x"); !strings.Contains(got, accent) {
-		t.Errorf("helpKeyStyle doesn't use the theme accent: %q", got)
+	if got := keyStyle().Render("x"); !strings.Contains(got, accent) {
+		t.Errorf("keyStyle doesn't use the theme accent: %q", got)
 	}
 
 	resolver, cfg, _ := newColorTestResolver(t)
 	const w, h = 140, 40
-	if view := newHelpOverlayModel(w, h).ModalView("background", w, h); !strings.Contains(view, "38;2;") {
+	if view := overlayModal("background", newHelpOverlayModel(w, h).View(), w, h); !strings.Contains(view, "38;2;") {
 		t.Errorf("help: no theme (truecolor) colors: %q", view)
 	}
 

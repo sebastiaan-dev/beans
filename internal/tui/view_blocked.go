@@ -109,7 +109,7 @@ func (a *App) blockedRow(b *bean.Bean, bs []blockerInfo, width int, selected boo
 		// The own blockers come first, so all blockers are inherited.
 		note = "implicitly, via " + a.shortID(bs[0].via.ID)
 	}
-	return rowLine(r.bar()+a.beanRef(b, r)+r.muted().Render(" "+glyphs().sep()+note), width, r)
+	return rowLine(r.bar()+beanRef(a.config, b, r)+r.muted().Render(" "+glyphs().sep()+note), width, r)
 }
 
 // blockerRow renders a blocker beneath the bean it blocks:
@@ -123,5 +123,5 @@ func (a *App) blockerRow(info blockerInfo, width int, selected bool) string {
 		label = glyphs().SubItem + " via " + a.shortID(info.via.ID) + ": "
 	}
 	b := info.blocker
-	return rowLine(r.bar()+r.plain().Render("    ")+r.muted().Render(label)+a.beanRef(b, r)+r.muted().Render(glyphs().sep()+b.Status), width, r)
+	return rowLine(r.bar()+r.plain().Render("    ")+r.muted().Render(label)+beanRef(a.config, b, r)+r.muted().Render(glyphs().sep()+b.Status), width, r)
 }

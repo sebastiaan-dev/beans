@@ -83,7 +83,7 @@ func buildCommands() []command {
 		// Navigate
 		{id: "move", section: "Navigate", keys: []string{"up", "k", "down", "j"}, label: "↑↓ j k", help: "Move", hintKey: "↑↓", hint: "move", scope: scopeTree},
 		{id: "page", section: "Navigate", keys: []string{"pgup", "pgdown", "ctrl+b", "ctrl+f", "ctrl+u", "ctrl+d"}, label: "pgup pgdn", help: "Page up / down", scope: scopeTree},
-		{id: "views", section: "Navigate", keys: []string{"1", "2", "3", "4"}, label: "1 2 3 4", help: "Switch view"},
+		{id: "views", section: "Navigate", keys: []string{"1", "2", "3", "4"}, label: "1 2 3 4", help: "Switch view", hintKey: "1-4", hint: "views"},
 		{id: "view-tree", section: "Navigate", keys: []string{"1"}, help: "Tree view", title: "Show the tree", noHelp: true, run: press},
 		{id: "view-ready", section: "Navigate", keys: []string{"2"}, help: "Ready view", title: "Show ready beans", noHelp: true, run: press},
 		{id: "view-blocked", section: "Navigate", keys: []string{"3"}, help: "Blocked view", title: "Show blocked beans", noHelp: true, run: press},
@@ -243,6 +243,11 @@ func cmdHint(id string, desc ...string) keyHint {
 	return h
 }
 
+// searchHints are the footer hints while the filter query is typed.
+func searchHints() []keyHint {
+	return []keyHint{{"enter", "apply"}, {"esc", "cancel"}, {glyphs().KeyUpDown, "move"}}
+}
+
 // cmdPairHint returns one footer hint for two commands, e.g. "K J move".
 func cmdPairHint(desc, first, second string) keyHint {
 	return keyHint{key: cmdHint(first).key + " " + cmdHint(second).key, desc: desc}
@@ -311,12 +316,14 @@ func keyMsgFor(k string) tea.KeyMsg {
 
 const noBeanReason = "No bean selected"
 
-// focusedBean returns the bean the focused pane's commands act on.
+// focusedBean returns the bean the focused pane's commands act on: the
+// one shown in the detail pane while it has the focus, else the one
+// selected in the active view.
 func (a *App) focusedBean() *bean.Bean {
 	if a.focus == focusDetail && a.detail.bean != nil {
 		return a.detail.bean
 	}
-	return a.list.currentBean()
+	return a.currentBean()
 }
 
 func needsBean(a *App) string {

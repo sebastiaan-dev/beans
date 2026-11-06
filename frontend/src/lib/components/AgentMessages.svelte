@@ -2,7 +2,7 @@
   import type { AgentMessage, SubagentActivity } from '$lib/agentChat.svelte';
   import { beansStore } from '$lib/beans.svelte';
   import { ui } from '$lib/uiState.svelte';
-  import { renderMarkdown, linkifyBeanIds, escapeHtml } from '$lib/markdown';
+  import { renderMarkdown, linkifyBeanIds } from '$lib/markdown';
   import { fade } from 'svelte/transition';
   import { decryptText } from '$lib/actions/decryptText';
 
@@ -87,10 +87,9 @@
 
       const key = `${i}:${msg.content.length}`;
       if (!renderedMessages.has(key)) {
-        // Escape HTML in user messages so angle brackets render as text
-        // instead of being interpreted as HTML tags by the markdown parser.
-        const content = msg.role === 'USER' ? escapeHtml(msg.content) : msg.content;
-        renderMarkdown(content).then((html) => {
+        // HTML typed in user messages renders as text instead of being
+        // interpreted as HTML tags by the markdown parser.
+        renderMarkdown(msg.content, { escapeRawHtml: msg.role === 'USER' }).then((html) => {
           // Replace {{file:path}} markers with inline pills for user messages
           if (msg.role === 'USER') {
             html = html.replace(

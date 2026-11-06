@@ -493,26 +493,8 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 		m.scrollHome()
 	case "end", "G":
 		m.scrollEnd()
-	case "p":
-		return m, func() tea.Msg {
-			return openParentPickerMsg{beanIDs: []string{b.ID}, beanTitle: b.Title, beanTypes: []string{b.Type}, currentParent: b.Parent}
-		}
-	case "s":
-		return m, func() tea.Msg {
-			return openStatusPickerMsg{beanIDs: []string{b.ID}, beanTitle: b.Title, currentStatus: b.Status}
-		}
-	case "t":
-		return m, func() tea.Msg {
-			return openTypePickerMsg{beanIDs: []string{b.ID}, beanTitle: b.Title, currentType: b.Type}
-		}
-	case "P":
-		return m, func() tea.Msg {
-			return openPriorityPickerMsg{beanIDs: []string{b.ID}, beanTitle: b.Title, currentPriority: b.Priority}
-		}
-	case "b":
-		return m, func() tea.Msg {
-			return openBlockingPickerMsg{beanID: b.ID, beanTitle: b.Title, currentBlocking: b.Blocking}
-		}
+	case "s", "t", "P", "p", "b":
+		return m, openPickerCmd(pickerKeys[key.String()], []string{b.ID}, b)
 	case "e":
 		return m, func() tea.Msg { return openEditorMsg{beanID: b.ID, beanPath: b.Path} }
 	case "y":
@@ -556,16 +538,6 @@ func (m detailModel) hints() []keyHint {
 
 // Rendering --------------------------------------------------------------------
 
-// beanLine renders a compact one-line reference to a bean: status and type
-// glyphs, short ID and title.
-func (m detailModel) beanLine(b *bean.Bean, titleStyle lipgloss.Style) string {
-	colors := m.config.GetBeanColors(b.Status, b.Type, b.Priority)
-	return fg(colNamed(colors.StatusColor)).Render(glyph(b.Status, ui.ShortStatus)) + " " +
-		fg(colNamed(colors.TypeColor)).Render(glyph(b.Type, ui.ShortType)) + " " +
-		mutedStyle().Render(shortID(b.ID, m.config.Beans.Prefix)) + " " +
-		titleStyle.Render(b.Title)
-}
-
 // relationLines renders all relation entries.
 func (m detailModel) relationLines(width int) []string {
 	if len(m.links) == 0 {
@@ -586,12 +558,11 @@ func (m detailModel) relationLines(width int) []string {
 		prev = label
 		selected := m.focused && m.section == sectionRelations && i == m.relCursor
 		cursor := "  "
-		titleStyle := lipgloss.NewStyle()
 		if selected {
 			cursor = accentStyle().Render(glyphs().Cursor + " ")
-			titleStyle = accentStyle().Bold(true)
 		}
-		ref := m.beanLine(l.bean, titleStyle)
+		// Highlighted without a background inside the box.
+		ref := beanRef(m.config, l.bean, rowStyler{selected: selected})
 		if l.linkType == "implicit" {
 			ref = mutedStyle().Render(l.bean.Status+" "+glyphs().Sep) + " " + ref
 		}

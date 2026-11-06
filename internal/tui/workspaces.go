@@ -323,22 +323,13 @@ func (w *workspaces) apply(msg workspacesLoadedMsg, core *beancore.Core) tea.Cmd
 
 // Starting work ----------------------------------------------------------------
 
-// workspaceKeyBean returns the bean w/W act on: the one shown in the
-// focused pane.
-func (a *App) workspaceKeyBean() *bean.Bean {
-	if a.focus == focusDetail && a.detail.bean != nil {
-		return a.detail.bean
-	}
-	return a.currentBean()
-}
-
 // handleWorkspaceKey handles w and W in the browse view and reports whether
 // key was one of them.
 func (a *App) handleWorkspaceKey(key string) (tea.Cmd, bool) {
 	if key != "w" && key != "W" {
 		return nil, false
 	}
-	b := a.workspaceKeyBean()
+	b := a.focusedBean()
 	if b == nil {
 		return nil, true
 	}
@@ -537,20 +528,34 @@ func (a *App) openWorkspacesOverlay() tea.Cmd {
 		a.list.statusMessage = workspacesUnavailable
 		return nil
 	}
-	a.previousState = a.state
 	a.state = viewWorkspaces
 	a.wsOverlay = workspacesOverlay{}
 	return a.ws.refreshCmd(a.core)
 }
 
-// updateWorkspacesOverlay handles keys in the workspace list.
-func (a *App) updateWorkspacesOverlay(msg tea.Msg) tea.Cmd {
+func (o *workspacesOverlay) acceptsText() bool { return false }
+
+// click jumps to workspace i.
+func (o *workspacesOverlay) click(a *App, i int) tea.Cmd {
+	if i < 0 || i >= len(a.ws.list) {
+		return nil
+	}
+	o.cursor = i
+	return o.update(a, tea.KeyMsg{Type: tea.KeyEnter})
+}
+
+// scroll moves the cursor.
+func (o *workspacesOverlay) scroll(a *App, delta int) {
+	o.cursor = max(0, min(o.cursor+delta, len(a.ws.list)-1))
+}
+
+// update handles keys in the workspace list.
+func (o *workspacesOverlay) update(a *App, msg tea.Msg) tea.Cmd {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return nil
 	}
 	n := len(a.ws.list)
-	o := &a.wsOverlay
 	switch key.String() {
 	case "esc", "q":
 		a.state = viewList
@@ -586,8 +591,8 @@ func (a *App) selectedWorkspace() (workspaceInfo, bool) {
 	return workspaceInfo{}, false
 }
 
-// workspacesOverlayView renders the workspace list as a modal.
-func (a *App) workspacesOverlayView() string {
+// view renders the workspace list as a modal.
+func (o *workspacesOverlay) view(a *App, rec hitRecorder) string {
 	modalWidth := min(max(a.width-4, 30), 90)
 	inner := modalWidth - 4
 	var body []string
@@ -600,11 +605,11 @@ func (a *App) workspacesOverlayView() string {
 		body = append(body, mutedStyle().Render(truncateText("No workspaces. Press w on a bean to start one.", inner)))
 	}
 	maxRows := max((a.height-8)/2, 1)
-	offset := max(0, a.wsOverlay.cursor-maxRows+1)
+	offset := max(0, o.cursor-maxRows+1)
 	for i := offset; i < len(a.ws.list) && i < offset+maxRows; i++ {
 		// Below the border, the title and a blank line; inside border and padding.
-		a.rec.add(2, 3+len(body), inner, 2, hitTarget{kind: hitModalItem, index: i})
-		body = append(body, a.workspaceLines(a.ws.list[i], i == a.wsOverlay.cursor, inner)...)
+		rec.add(2, 3+len(body), inner, 2, hitTarget{kind: hitModalItem, index: i})
+		body = append(body, a.workspaceLines(a.ws.list[i], i == o.cursor, inner)...)
 	}
 
 	backend := "git"
@@ -614,13 +619,8 @@ func (a *App) workspacesOverlayView() string {
 	title := lipgloss.NewStyle().Bold(true).Foreground(colAccent()).Render("Workspaces") +
 		mutedStyle().Render(fmt.Sprintf("%s%d%s%s", glyphs().sep(), len(a.ws.list), glyphs().sep(), backend))
 	footer := renderHints([]keyHint{{"enter", "jump to bean"}, {"y", "copy path"}, {"esc", "close"}}, nil, inner)
-	content := title + "\n\n" + strings.Join(body, "\n") + "\n\n" + footer
-	return lipgloss.NewStyle().
-		Border(glyphs().border()).
-		BorderForeground(colAccent()).
-		Padding(0, 1).
-		Width(modalWidth - 2).
-		Render(content)
+	lines := append(append([]string{title, ""}, body...), "", footer)
+	return strings.Join(box{lines: lines, width: modalWidth, focused: true, padding: 1}.render(), "\n")
 }
 
 // workspaceLines renders a workspace as two lines: name, branch, status and
