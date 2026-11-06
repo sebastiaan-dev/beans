@@ -52,9 +52,10 @@ Key packages:
 # Bean Ownership (pkg/beancore)
 
 - Beans stored in `beancore.Core` are **immutable snapshots** (copy-on-write): a stored `*bean.Bean` is never modified; every change stores a new bean under the write lock. Never modify a bean you got from Core in place.
-- `Core.Get` (and `Mutate`, `LoadAndUnarchive`) return copies the caller owns. `All`, `Search`, `FindIncomingLinks`, `FindActiveBlockers`/`FindAllBlockers` and `BeanEvent.Bean` return the shared snapshots (copying 8000 beans per `All` would cost ~16x) — treat them as read-only and `Clone()` before modifying.
+- `Core.Get` (and `Mutate`, `LoadAndUnarchive`) return copies the caller owns. `All`, `Search`, `FindIncomingLinks`, `FindActiveBlockers`/`FindAllBlockers`, the relation lookups `Parent`/`Children`/`Blocking`/`BlockedBy` and `BeanEvent.Bean` return the shared snapshots (copying 8000 beans per `All` would cost ~16x) — treat them as read-only and `Clone()` before modifying.
 - Change beans with `Core.Mutate(id, ifMatch, func(tx *beancore.Tx, b *bean.Bean) error, opts...)`: it checks `ifMatch` against the current version, applies the function to a copy, validates and writes, all under one lock; on any error nothing changes. Validation (parent, blockers, cycles) must go through the `Tx` (or `beancore.WithValidation`), never through `Core` methods, which would deadlock. `Core.Update`/`Create` store a copy of the given bean.
-- The GraphQL `blocking`/`blockedBy` fields are symmetric: each combines the bean's own list with the other beans' inverse links (`blocked_by`/`blocking`).
+- Core keeps an incoming-link index (parent, blocking, blocked_by) up to date under the lock; every change to the stored beans must go through `setBeanLocked`/`deleteBeanLocked`/`resetBeansLocked`.
+- The GraphQL `blocking`/`blockedBy` fields (and the `hasBlocking`/`blockingId`/... filters) are symmetric: each combines the bean's own list with the other beans' inverse links (`blocked_by`/`blocking`).
 
 # Worktree State Architecture
 

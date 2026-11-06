@@ -242,10 +242,7 @@ test.describe('Structured filter', () => {
     );
   });
 
-  // fixme: beans-serve drops beans archived while it runs from its state (the
-  // watcher deletes them on the old file's Remove event; local bean
-  // repos-oisp). Passes against a server with that fixed.
-  test.fixme('shows archived beans only when the query has an archived: clause', async ({
+  test('shows archived beans only when the query has an archived: clause', async ({
     beans,
     boardPage,
     backlogPage,

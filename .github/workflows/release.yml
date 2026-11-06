@@ -17,7 +17,7 @@ jobs:
     # Publishes to hmans/homebrew-beans with HOMEBREW_TAP_TOKEN, which only the
     # upstream repository has; forks skip the job instead of failing.
     if: github.repository == 'hmans/beans'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,18 +34,9 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: stable
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "24"
-          cache: "pnpm"
-          cache-dependency-path: "frontend/pnpm-lock.yaml"
-      - name: Install dependencies
-        run: mise deps
+      - uses: ./.github/actions/setup-frontend
+      - name: Install Go dependencies
+        run: mise deps:backend
       - name: Build frontend
         run: mise build:frontend
       # More assembly might be required: Docker logins, GPG, etc.

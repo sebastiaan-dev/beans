@@ -148,7 +148,7 @@ test.describe('Workspace destroy warnings', () => {
       const request = route.request();
       const query =
         new URL(request.url()).searchParams.get('query') ?? request.postDataJSON()?.query ?? '';
-      if (query.includes('query Worktrees')) {
+      if (query.includes('query WorktreeStatus')) {
         await statusHeld;
       }
       await route.fallback();

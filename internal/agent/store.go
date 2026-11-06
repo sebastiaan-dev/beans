@@ -90,7 +90,7 @@ func (s *store) load(beanID string) ([]Message, string, error) {
 				Attachments: e.Attachments,
 			}
 			for _, img := range e.Images {
-				msg.Images = append(msg.Images, ImageRef{ID: img.ID, MediaType: img.MediaType})
+				msg.Images = append(msg.Images, ImageRef(img))
 			}
 			messages = append(messages, msg)
 		case "meta":
@@ -113,7 +113,7 @@ func (s *store) appendMessage(beanID string, msg Message) error {
 		Attachments: msg.Attachments,
 	}
 	for _, img := range msg.Images {
-		e.Images = append(e.Images, entryImage{ID: img.ID, MediaType: img.MediaType})
+		e.Images = append(e.Images, entryImage(img))
 	}
 	return s.appendEntry(beanID, e)
 }

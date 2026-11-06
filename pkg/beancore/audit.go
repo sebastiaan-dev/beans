@@ -74,9 +74,9 @@ type AuditOptions struct {
 	// disregard (e.g. bookkeeping commits that only edit bean files and so
 	// do not indicate that the work has landed).
 	IgnoreCommits func(hashes []string) (map[string]bool, error)
-	// Beans, if non-nil, are audited instead of the core's current beans:
-	// e.g. copies taken on the goroutine that modifies beans, so that the
-	// audit can run on another one.
+	// Beans, if non-nil, are audited instead of the core's current beans,
+	// e.g. a snapshot from Core.All (stored beans are never modified, so a
+	// snapshot is safe to audit on another goroutine).
 	Beans []*bean.Bean
 }
 

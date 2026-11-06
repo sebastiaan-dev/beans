@@ -3,6 +3,7 @@ package beancore
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -204,6 +205,30 @@ func (c *Core) watchLoop(watcher *fsnotify.Watcher) {
 				return
 			}
 
+			// New subdirectories (e.g. archive/, created by the first archive)
+			// must be watched too; files moved into them before the watch was
+			// added are picked up by scanning the directory.
+			if event.Op&fsnotify.Create != 0 {
+				if added := c.watchNewDir(watcher, event.Name); len(added) > 0 {
+					pendingMu.Lock()
+					for _, f := range added {
+						pendingChanges[f] |= fsnotify.Create
+					}
+					pendingMu.Unlock()
+					if debounceTimer != nil {
+						debounceTimer.Stop()
+					}
+					debounceTimer = time.AfterFunc(debounceDelay, func() {
+						pendingMu.Lock()
+						changes := pendingChanges
+						pendingChanges = make(map[string]fsnotify.Op)
+						pendingMu.Unlock()
+						c.handleChanges(changes)
+					})
+					continue
+				}
+			}
+
 			// Only care about .md files within the .beans directory tree
 			if !strings.HasSuffix(event.Name, ".md") {
 				continue
@@ -275,14 +300,37 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 
 	var events []BeanEvent
 
-	for path, op := range changes {
+	// Handle creates/writes before removes, so that a bean moved between
+	// directories (e.g. archived) is re-pointed at its new file first and the
+	// remove of the old path is recognized as stale below.
+	paths := make([]string, 0, len(changes))
+	for path := range changes {
+		paths = append(paths, path)
+	}
+	sort.Slice(paths, func(i, j int) bool {
+		ri := changes[paths[i]]&(fsnotify.Remove|fsnotify.Rename) != 0 && !c.fileExists(paths[i])
+		rj := changes[paths[j]]&(fsnotify.Remove|fsnotify.Rename) != 0 && !c.fileExists(paths[j])
+		if ri != rj {
+			return !ri
+		}
+		return paths[i] < paths[j]
+	})
+
+	for _, path := range paths {
+		op := changes[path]
 		filename := filepath.Base(path)
 		id, _ := bean.ParseFilename(filename)
 
 		// Handle removes/renames (file is gone)
 		if op&fsnotify.Remove != 0 || op&fsnotify.Rename != 0 {
-			if _, exists := c.beans[id]; exists {
-				// Only delete if it was in our map and file is actually gone
+			if stored, exists := c.beans[id]; exists {
+				// Only delete if the removed file is the bean's file (a moved
+				// bean, e.g. archived, lives on at its new path) and it is
+				// actually gone.
+				rel, relErr := filepath.Rel(c.root, path)
+				if relErr == nil && stored.Path != "" && filepath.Clean(stored.Path) != filepath.Clean(rel) {
+					continue
+				}
 				if !c.fileExists(path) {
 					// A linked bean keeps showing its worktree change.
 					if _, linked := c.worktreeLinks[id]; linked {
@@ -377,6 +425,51 @@ func (c *Core) handleChanges(changes map[string]fsnotify.Op) {
 }
 
 // fileExists checks if a file exists at the given path.
+// watchNewDir adds a newly created bean subdirectory to the watcher and
+// returns the .md files already in it. It returns nil for anything that is
+// not a watchable bean subdirectory.
+func (c *Core) watchNewDir(watcher *fsnotify.Watcher, path string) []string {
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	rel, err := filepath.Rel(c.root, path)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return nil
+	}
+	if top, _, _ := strings.Cut(rel, string(filepath.Separator)); strings.HasPrefix(top, ".") {
+		return nil
+	}
+	if err := watcher.Add(path); err != nil {
+		c.logWarn("failed to watch %s: %v", path, err)
+		return nil
+	}
+	var files []string
+	_ = filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if p != path {
+				if strings.HasPrefix(d.Name(), ".") {
+					return filepath.SkipDir
+				}
+				_ = watcher.Add(p)
+			}
+			return nil
+		}
+		if strings.HasSuffix(d.Name(), ".md") {
+			files = append(files, p)
+		}
+		return nil
+	})
+	// An empty new directory still counts as handled (nothing to load).
+	if files == nil {
+		files = []string{}
+	}
+	return files
+}
+
 func (c *Core) fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
