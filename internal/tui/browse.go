@@ -77,6 +77,9 @@ func (a *App) layout() browseLayout {
 	l.treeW = l.inner
 	if l.wide {
 		l.treeW = max(36, l.inner*2/5)
+		if a.activeList() != nil {
+			l.treeW = max(36, l.inner/2) // view rows carry more columns
+		}
 		l.detailW = l.inner - l.treeW - 1
 	}
 	return l
@@ -94,6 +97,7 @@ func (a *App) syncLayout() {
 		rowsH--
 	}
 	a.list.setSize(max(l.treeW-2, 1), max(rowsH, 1))
+	a.syncView(max(l.treeW-2, 1), a.viewRowsHeight(l.paneH))
 	if l.wide {
 		a.detail.setSize(max(l.detailW-4, 1), max(l.paneH-2, 1))
 	} else {
@@ -103,8 +107,8 @@ func (a *App) syncLayout() {
 	a.list.ensureVisible()
 }
 
-// syncDetail shows the bean under the tree cursor in the detail pane, or the
-// bean opened from a relation if it is not in the (filtered) tree.
+// syncDetail shows the bean selected in the active view in the detail pane,
+// or the bean opened from a relation if the view does not list it.
 func (a *App) syncDetail() {
 	force := a.detailStale
 	a.detailStale = false
@@ -115,7 +119,7 @@ func (a *App) syncDetail() {
 		a.detail.setBean(a.list.byID[a.detailPinned], force)
 		return
 	}
-	a.detail.setBean(a.list.currentBean(), force)
+	a.detail.setBean(a.currentBean(), force)
 	if a.detail.bean == nil && a.focus == focusDetail {
 		a.focusTree()
 	}
@@ -254,12 +258,14 @@ func (a *App) footerLines(width int, wide bool) []string {
 		hints = a.filterBarHints()
 	case a.focus == focusDetail && a.detail.bean != nil:
 		hints = a.detail.hints()
+	case a.activeList() != nil:
+		hints = a.viewHints(wide)
 	default:
 		hints = a.list.treeHints(wide)
 	}
 
 	prefix := ""
-	if n := len(a.list.selectedBeans); n > 0 && a.focus == focusTree {
+	if n := len(a.list.selectedBeans); n > 0 && a.focus == focusTree && a.views.active == viewTree {
 		prefix = fg(colWarning()).Bold(true).Render(pluralize(n, "bean", "beans")+" selected") + mutedStyle().Render(footerHintSeparator())
 	}
 
@@ -358,11 +364,15 @@ func frameLines(content []string, width, height int) []string {
 	return out
 }
 
-// headerLine renders "beans: <project>" and the global key hints.
+// headerLine renders "beans: <project>", the view tabs and the global key
+// hints.
 func (a *App) headerLine(width int) string {
 	left := accentStyle().Bold(true).Render("beans:")
 	if name := a.projectName(); name != "" {
 		left += " " + accentStyle().Render(name)
+	}
+	if tabs := a.headerTabs(left, width); tabs != "" {
+		left += "  " + tabs
 	}
 	left = clampWidth(left, width)
 	room := width - lipgloss.Width(left) - 2
@@ -386,6 +396,9 @@ func (a *App) paneLines(l browseLayout) []string {
 	if !l.wide && a.focus == focusDetail {
 		return a.detail.viewLines()
 	}
+	if a.activeList() != nil {
+		return a.joinDetail(l, a.viewPaneLines(l))
+	}
 	var rows []string
 	if a.list.showSearchLine() {
 		rows = append(rows, a.list.searchLine(l.treeW-2))
@@ -399,6 +412,11 @@ func (a *App) paneLines(l browseLayout) []string {
 		height:   l.paneH,
 		focused:  a.focus == focusTree,
 	}.render()
+	return a.joinDetail(l, tree)
+}
+
+// joinDetail places the detail pane beside the list pane on wide terminals.
+func (a *App) joinDetail(l browseLayout, tree []string) []string {
 	if !l.wide {
 		return tree
 	}

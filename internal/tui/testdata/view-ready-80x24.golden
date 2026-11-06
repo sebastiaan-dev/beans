@@ -1,0 +1,24 @@
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ beans: demo  1 Tree [2 Ready] 3 Blocked 4 Audit    / query · ? help · q quit │
+│ ──────────────────────────────────────────────────────────────────────────── │
+│ Filters none                                                             (F) │
+│ ╭─ Ready 5 ────────────────────────────────────────────────────────────────╮ │
+│ │▌1  ‼ critical  task       t005 Export as CSV  Release 1.0 › Export       │ │
+│ │ 2    normal    task       t002 Check the error texts of the login mask  …│ │
+│ │ 3    normal    task       t008 Loose task without parent                 │ │
+│ │ 4    normal    epic       e002 Export  Release 1.0                       │ │
+│ │ 5    normal    milestone  m001 Release 1.0                               │ │
+│ │                                                                          │ │
+│ │                                                                          │ │
+│ │                                                                          │ │
+│ │                                                                          │ │
+│ │                                                                          │ │
+│ │                                                                          │ │
+│ │                                                                          │ │
+│ │                                                                          │ │
+│ │                                                                          │ │
+│ ╰──────────────────────────────────────────────────────────────────── 1/5 ─╯ │
+│ ──────────────────────────────────────────────────────────────────────────── │
+│ enter open · n next · s status · w workspace · e edit · t type · P priority  │
+│ p parent · b blocking · u undo · 1-4 views · / query · F filters · y copy id │
+╰──────────────────────────────────────────────────────────────────────────────╯

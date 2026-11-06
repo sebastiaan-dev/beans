@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hmans/beans/internal/gitutil"
 	"github.com/hmans/beans/pkg/bean"
 )
 
@@ -73,6 +74,10 @@ type AuditOptions struct {
 	// disregard (e.g. bookkeeping commits that only edit bean files and so
 	// do not indicate that the work has landed).
 	IgnoreCommits func(hashes []string) (map[string]bool, error)
+	// Beans, if non-nil, are audited instead of the core's current beans:
+	// e.g. copies taken on the goroutine that modifies beans, so that the
+	// audit can run on another one.
+	Beans []*bean.Bean
 }
 
 // AuditBlocker describes a resolved blocker in a blocked-by-done finding.
@@ -125,6 +130,9 @@ type AuditFinding struct {
 // findings from the other checks still are.
 func (c *Core) Audit(opts AuditOptions) ([]AuditFinding, error) {
 	beans := c.All()
+	if opts.Beans != nil {
+		beans = append([]*bean.Bean(nil), opts.Beans...)
+	}
 	sort.Slice(beans, func(i, j int) bool { return beans[i].ID < beans[j].ID })
 
 	byID := make(map[string]*bean.Bean, len(beans))
@@ -382,6 +390,130 @@ func auditBlockedByDone(beans []*bean.Bean, byID map[string]*bean.Bean, incoming
 		})
 	}
 	return findings
+}
+
+// Running audits against the git history -------------------------------------
+
+// DefaultAuditStaleDays is the default inactivity threshold (in days) of the
+// stale-in-progress check.
+const DefaultAuditStaleDays = 14
+
+// AuditKindTitles are the headings of the finding kinds in reports.
+var AuditKindTitles = map[AuditKind]string{
+	AuditLandedButOpen:             "Open beans already referenced on the base branch",
+	AuditContainerDoneChildrenOpen: "Completed/scrapped beans with open children",
+	AuditContainerReadyToClose:     "Open beans whose children are all done",
+	AuditStaleInProgress:           "Stale in-progress beans",
+	AuditBlockedByDone:             "Stale blocking links (all blockers done)",
+}
+
+// AuditKindHints suggest how to resolve the findings of a kind (CLI commands).
+var AuditKindHints = map[AuditKind]string{
+	AuditLandedButOpen:             "If the work is done: beans update <id> -s completed",
+	AuditContainerDoneChildrenOpen: "Complete/scrap the children, or reopen the parent",
+	AuditContainerReadyToClose:     "If nothing is left: beans update <id> -s completed",
+	AuditStaleInProgress:           "Update, finish, or move back to todo",
+	AuditBlockedByDone:             "beans update <id> --remove-blocked-by <blocker> (or <blocker> --remove-blocking <id>)",
+}
+
+// AuditGitInfo describes the git history scan behind landed-but-open.
+type AuditGitInfo struct {
+	BaseRef        string `json:"base_ref"`
+	Since          string `json:"since,omitempty"`
+	CommitsScanned int    `json:"commits_scanned"`
+	// BookkeepingCommits counts commits that mention an open bean but only
+	// change bean files (e.g. "chore: create bean ..."); they are ignored.
+	BookkeepingCommits int `json:"bookkeeping_commits_ignored"`
+}
+
+// AuditReport is the outcome of Core.RunAudit (the JSON shape of
+// `beans audit --json`).
+type AuditReport struct {
+	Clean    bool           `json:"clean"`
+	Count    int            `json:"count"`
+	Findings []AuditFinding `json:"findings"`
+	// Notes explains checks that were skipped (e.g. not a git repository).
+	Notes []string      `json:"notes"`
+	Git   *AuditGitInfo `json:"git,omitempty"`
+}
+
+// AuditRunParams are the inputs of Core.RunAudit.
+type AuditRunParams struct {
+	// BaseRef is the git ref whose history is scanned for landed-but-open.
+	BaseRef string
+	// BookkeepingPaths are files/directories (absolute paths) whose
+	// exclusive modification marks a commit as bean bookkeeping: typically
+	// the beans directory and the config file.
+	BookkeepingPaths []string
+	// Since limits the scan to newer commits (git log --since).
+	Since string
+	// StaleDays is the stale-in-progress threshold; <= 0 disables the check.
+	StaleDays int
+	// NoGit skips the git history check.
+	NoGit bool
+	Now   time.Time
+	// Beans, if non-nil, are audited instead of the core's current beans
+	// (see AuditOptions.Beans).
+	Beans []*bean.Bean
+}
+
+// RunAudit runs Audit, scanning the git history of the repository
+// containing the beans directory when possible: outside a git repository, or
+// when the base ref does not exist, the git-based check is skipped with a
+// note and the other checks still run. Commits that only change
+// BookkeepingPaths are ignored.
+func (c *Core) RunAudit(p AuditRunParams) (AuditReport, error) {
+	report := AuditReport{Notes: []string{}}
+	opts := AuditOptions{
+		Now:        p.Now,
+		StaleAfter: time.Duration(p.StaleDays) * 24 * time.Hour,
+		Beans:      p.Beans,
+	}
+
+	dir := c.Root()
+	switch {
+	case p.NoGit:
+		report.Notes = append(report.Notes, "landed-but-open skipped: --no-git")
+	case !gitutil.IsRepo(dir):
+		report.Notes = append(report.Notes, "landed-but-open skipped: not a git repository")
+	case !gitutil.RefExists(dir, p.BaseRef):
+		report.Notes = append(report.Notes, fmt.Sprintf("landed-but-open skipped: base ref %q not found (set worktree.base_ref or use --base-ref)", p.BaseRef))
+	default:
+		info := &AuditGitInfo{BaseRef: p.BaseRef, Since: p.Since}
+		report.Git = info
+		opts.Commits = func(yield func(AuditCommit) bool) error {
+			return gitutil.ScanCommits(dir, p.BaseRef, p.Since, func(gc gitutil.Commit) bool {
+				info.CommitsScanned++
+				return yield(AuditCommit{Hash: gc.Hash, ShortHash: gc.ShortHash, Subject: gc.Subject, Message: gc.Message})
+			})
+		}
+		if rules := gitutil.RepoRelativePaths(dir, p.BookkeepingPaths); len(rules) > 0 {
+			opts.IgnoreCommits = func(hashes []string) (map[string]bool, error) {
+				paths, err := gitutil.ChangedPaths(dir, hashes)
+				if err != nil {
+					return nil, err
+				}
+				ignored := gitutil.CommitsChangingOnly(paths, rules)
+				info.BookkeepingCommits = len(ignored)
+				return ignored, nil
+			}
+		}
+	}
+	if p.StaleDays <= 0 {
+		report.Notes = append(report.Notes, "stale-in-progress skipped: --stale-days 0")
+	}
+
+	findings, err := c.Audit(opts)
+	if err != nil {
+		return report, fmt.Errorf("scanning git history: %w", err)
+	}
+	if findings == nil {
+		findings = []AuditFinding{}
+	}
+	report.Findings = findings
+	report.Count = len(findings)
+	report.Clean = len(findings) == 0
+	return report, nil
 }
 
 func typeLabel(b *bean.Bean) string {

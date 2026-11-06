@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -156,4 +157,73 @@ func ChangedPaths(dir string, hashes []string) (map[string][]string, error) {
 		result[hash] = paths
 	}
 	return result, nil
+}
+
+// RepoRelativePaths converts paths to slash-separated paths relative to the
+// root of the git work tree containing dir, dropping empty paths and paths
+// outside of it. Relative paths are resolved against the working directory.
+func RepoRelativePaths(dir string, paths []string) []string {
+	top, err := TopLevel(dir)
+	if err != nil {
+		return nil
+	}
+	resolve := func(p string) string {
+		if abs, err := filepath.Abs(p); err == nil {
+			p = abs
+		}
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return r
+		}
+		// The path may not exist (yet); resolve its parent instead.
+		if r, err := filepath.EvalSymlinks(filepath.Dir(p)); err == nil {
+			return filepath.Join(r, filepath.Base(p))
+		}
+		return p
+	}
+	top = resolve(top)
+	var rels []string
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		rel, err := filepath.Rel(top, resolve(p))
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		rels = append(rels, filepath.ToSlash(rel))
+	}
+	return rels
+}
+
+// CommitsChangingOnly returns the commits (keys of paths, as returned by
+// ChangedPaths) whose changed files all match one of rules: repo-relative
+// paths of a file, or of a directory matching everything below it. Commits
+// with no reported paths (empty or merge commits) never match.
+func CommitsChangingOnly(paths map[string][]string, rules []string) map[string]bool {
+	matches := func(f string) bool {
+		for _, r := range rules {
+			r = strings.TrimSuffix(r, "/")
+			if f == r || strings.HasPrefix(f, r+"/") {
+				return true
+			}
+		}
+		return false
+	}
+	result := make(map[string]bool)
+	for hash, files := range paths {
+		if len(files) == 0 {
+			continue
+		}
+		all := true
+		for _, f := range files {
+			if !matches(f) {
+				all = false
+				break
+			}
+		}
+		if all {
+			result[hash] = true
+		}
+	}
+	return result
 }

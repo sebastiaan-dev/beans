@@ -72,6 +72,13 @@ type glyphSet struct {
 	Blocking    string
 	NotBlocking string
 
+	// Views (Ready, Blocked, Audit).
+	SubItem string // sub-row under a finding or blocked bean ("↳ blocked by")
+	Check   string // clean audit
+	Cross   string // audit finding
+	Dash    string // separates a reference from its explanation
+	Crumb   string // separates breadcrumb items
+
 	// Pagination dots of the pickers.
 	PageActive, PageInactive string
 
@@ -121,6 +128,8 @@ var unicodeGlyphs = glyphSet{
 	Blocking:    "●",
 	NotBlocking: "○",
 
+	SubItem: "↳", Check: "✓", Cross: "✗", Dash: "—", Crumb: "›",
+
 	PageActive: "•", PageInactive: "○",
 
 	CheckboxMarkers: []string{"▶", "►", "➤", "⮞"},
@@ -166,6 +175,8 @@ var asciiGlyphs = glyphSet{
 
 	Blocking:    "*",
 	NotBlocking: "o",
+
+	SubItem: ">", Check: "ok", Cross: "x", Dash: "-", Crumb: ">",
 
 	PageActive: "*", PageInactive: ".",
 

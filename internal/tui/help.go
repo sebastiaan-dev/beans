@@ -67,6 +67,7 @@ var helpSections = []helpSection{
 		{"zR zM", "Open/close all"},
 		{"gg G", "First / last bean"},
 		{"n", "Next bean to do"},
+		{"1 2 3 4", "Views: tree…audit"},
 		{"enter tab", "Focus details"},
 		{"g w", "Workspaces"},
 	}},
