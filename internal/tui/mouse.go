@@ -7,7 +7,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -24,8 +23,9 @@ import (
 //   - filter bar: click a field focuses it and opens its dropdown (or flips
 //     a toggle); click an option toggles or chooses it; the wheel scrolls
 //     the dropdown; a click elsewhere closes it
-//   - overlays: click an item chooses it, a click outside closes the
-//     overlay, the wheel moves the cursor
+//   - overlays (overlay.go): click an item chooses it (the blocking picker
+//     toggles it), a click outside closes the overlay, the wheel moves the
+//     cursor (or scrolls the help)
 //
 // Mouse reporting is on by default; BEANS_TUI_MOUSE=0 turns it off. While it
 // is on, terminals select text only with Shift (or Option on macOS) held.
@@ -94,8 +94,8 @@ func (a *App) handleMouse(msg tea.MouseMsg) tea.Cmd {
 	case tea.MouseButtonLeft:
 		a.pendingKey = ""
 		a.list.statusMessage = ""
-		if a.state != viewList {
-			return a.clickOverlay(msg.X, msg.Y)
+		if o := a.activeOverlay(); o != nil {
+			return a.clickOverlay(o, msg.X, msg.Y)
 		}
 		return a.clickBrowse(msg.X, msg.Y)
 	}
@@ -303,8 +303,8 @@ func (a *App) clickDropdownOption(i int) {
 
 // handleWheel scrolls what is under the mouse by delta steps.
 func (a *App) handleWheel(x, y, delta int) tea.Cmd {
-	if a.state != viewList {
-		a.scrollOverlay(delta)
+	if o := a.activeOverlay(); o != nil {
+		o.scroll(a, delta)
 		return nil
 	}
 	reg, ok := a.hits.find(x, y, hitDropdown, hitTreePane, hitDetailPane)
@@ -374,101 +374,6 @@ func (m *detailModel) scrollBody(delta int) {
 	m.bodyOffset = max(0, min(m.bodyOffset+delta, len(m.body)-m.layout().bodyRows))
 }
 
-// Overlays -------------------------------------------------------------------
-
-// pickerList returns the list of the open picker, if any.
-func (a *App) pickerList() *list.Model {
-	switch a.state {
-	case viewParentPicker:
-		return &a.parentPicker.list
-	case viewStatusPicker:
-		return &a.statusPicker.list
-	case viewTypePicker:
-		return &a.typePicker.list
-	case viewPriorityPicker:
-		return &a.priorityPicker.list
-	case viewBlockingPicker:
-		return &a.blockingPicker.list
-	}
-	return nil
-}
-
-// clickOverlay handles a click while an overlay is open: a click outside
-// closes it, a click on an item chooses it.
-func (a *App) clickOverlay(x, y int) tea.Cmd {
-	reg, ok := a.hits.find(x, y, hitModalItem, hitModal)
-	if !ok {
-		return a.closeOverlay()
-	}
-	if reg.kind == hitModalItem {
-		return a.clickOverlayItem(reg.index)
-	}
-	return nil
-}
-
-// closeOverlay closes the open overlay like esc.
-func (a *App) closeOverlay() tea.Cmd {
-	switch a.state {
-	case viewParentPicker, viewStatusPicker, viewTypePicker, viewPriorityPicker, viewBlockingPicker:
-		return a.closePicker(false)
-	case viewHelpOverlay:
-		a.state = a.previousState
-	case viewWorkspaces, viewCommandPalette:
-		a.state = viewList
-	}
-	return nil
-}
-
-// clickOverlayItem chooses item i of the open overlay: pickers select it
-// (the blocking picker toggles it), the workspace list jumps to it.
-func (a *App) clickOverlayItem(i int) tea.Cmd {
-	if a.state == viewWorkspaces {
-		if i < 0 || i >= len(a.ws.list) {
-			return nil
-		}
-		a.wsOverlay.cursor = i
-		return a.updateWorkspacesOverlay(tea.KeyMsg{Type: tea.KeyEnter})
-	}
-	l := a.pickerList()
-	if l == nil || l.FilterState() == list.Filtering || i < 0 || i >= len(l.VisibleItems()) {
-		return nil
-	}
-	l.Select(i)
-	key := tea.KeyMsg{Type: tea.KeyEnter}
-	var cmd tea.Cmd
-	switch a.state {
-	case viewParentPicker:
-		a.parentPicker, cmd = a.parentPicker.Update(key)
-	case viewStatusPicker:
-		a.statusPicker, cmd = a.statusPicker.Update(key)
-	case viewTypePicker:
-		a.typePicker, cmd = a.typePicker.Update(key)
-	case viewPriorityPicker:
-		a.priorityPicker, cmd = a.priorityPicker.Update(key)
-	case viewBlockingPicker:
-		a.blockingPicker, cmd = a.blockingPicker.Update(tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}})
-	}
-	return cmd
-}
-
-// scrollOverlay moves the cursor of the open overlay's list.
-func (a *App) scrollOverlay(delta int) {
-	if a.state == viewWorkspaces {
-		a.wsOverlay.cursor = max(0, min(a.wsOverlay.cursor+delta, len(a.ws.list)-1))
-		return
-	}
-	l := a.pickerList()
-	if l == nil || l.FilterState() == list.Filtering {
-		return
-	}
-	for ; delta < 0; delta++ {
-		l.CursorUp()
-	}
-	for ; delta > 0; delta-- {
-		l.CursorDown()
-	}
-}
-
 // Recording ------------------------------------------------------------------
 
 // recordRow records tree row i, rendered as n lines at line y of the rows
@@ -515,65 +420,6 @@ func (a *App) recordSummaryLine(rec hitRecorder, width int, xs map[barField]int)
 			}
 		}
 		rec.add(x, 0, end-x, 1, hitTarget{kind: hitBarField, index: int(f)})
-	}
-}
-
-// recordModal records an overlay placed on the screen by overlayModal and
-// returns its origin.
-func (a *App) recordModal(modal string) (int, int) {
-	x, y := modalOrigin(modal, a.width, a.height)
-	a.hits.recorder().add(x, y, lipgloss.Width(modal), len(strings.Split(modal, "\n")), hitTarget{kind: hitModal})
-	return x, y
-}
-
-// recordPicker records a picker modal and the rows of its list's shown
-// items. The list renders its title bar, then one line per item (all picker
-// delegates render single lines without spacing). The modal may wrap long
-// item lines, so each item is looked up in the modal below the list's
-// title.
-func (a *App) recordPicker(modal string, l *list.Model) {
-	x, y := a.recordModal(modal)
-	items := l.VisibleItems()
-	listLines := strings.Split(stripAnsi(l.View()), "\n")
-	title := strings.TrimSpace(listLines[0])
-	if len(items) == 0 || title == "" {
-		return
-	}
-	// The modal's lines without border and padding.
-	rows := strings.Split(stripAnsi(modal), "\n")
-	for i, r := range rows {
-		rows[i] = strings.TrimSpace(strings.Trim(strings.TrimSpace(r), "│|"))
-	}
-	row := -1
-	for i, r := range rows {
-		if r == title {
-			row = i + 1
-			break
-		}
-	}
-	if row < 0 {
-		return
-	}
-	first := 1 + l.Styles.TitleBar.GetVerticalFrameSize()
-	start, end := l.Paginator.GetSliceBounds(len(items))
-	w := lipgloss.Width(modal)
-	rec := a.hits.recorder()
-	for i := start; i < end && first+i-start < len(listLines); i++ {
-		want := strings.TrimSpace(listLines[first+i-start])
-		for row < len(rows) && (rows[row] == "" || !strings.HasPrefix(want, rows[row])) {
-			row++
-		}
-		if row >= len(rows) {
-			return
-		}
-		// Continuation lines of a wrapped item.
-		h, covered := 1, len(rows[row])
-		for row+h < len(rows) && covered < len(want) && rows[row+h] != "" && strings.Contains(want[covered:], rows[row+h]) {
-			covered += len(rows[row+h]) + 1
-			h++
-		}
-		rec.add(x+2, y+row, w-4, h, hitTarget{kind: hitModalItem, index: i})
-		row += h
 	}
 }
 

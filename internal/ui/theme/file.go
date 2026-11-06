@@ -13,21 +13,21 @@ import (
 // paletteFile is the on-disk palette format (JSON or YAML; JSON is valid
 // YAML). It mirrors Theme's JSON form, but allows fewer than 16 ANSI slots.
 type paletteFile struct {
-	Name        string   `yaml:"name"`
-	Background  string   `yaml:"background"`
-	Fg          string   `yaml:"fg"`
-	Bg          string   `yaml:"bg"`
-	Muted       string   `yaml:"muted"`
-	Border      string   `yaml:"border"`
-	FocusBorder string   `yaml:"focus_border"`
-	Accent      string   `yaml:"accent"`
-	Selection   string   `yaml:"selection"`
-	Success     string   `yaml:"success"`
-	Warning     string   `yaml:"warning"`
-	Danger      string   `yaml:"danger"`
-	Info        string   `yaml:"info"`
-	Hint        string   `yaml:"hint"`
-	ANSI        []string `yaml:"ansi"`
+	Name        string    `yaml:"name"`
+	Background  string    `yaml:"background"`
+	Fg          string    `yaml:"fg"`
+	Bg          string    `yaml:"bg"`
+	Muted       string    `yaml:"muted"`
+	Border      string    `yaml:"border"`
+	FocusBorder string    `yaml:"focus_border"`
+	Accent      string    `yaml:"accent"`
+	Selection   string    `yaml:"selection"`
+	Success     string    `yaml:"success"`
+	Warning     string    `yaml:"warning"`
+	Danger      string    `yaml:"danger"`
+	Info        string    `yaml:"info"`
+	Hint        string    `yaml:"hint"`
+	ANSI        []*string `yaml:"ansi"` // pointers: a null entry keeps its slot (unset)
 }
 
 // LoadFile reads a palette file. Example (YAML):
@@ -46,7 +46,7 @@ type paletteFile struct {
 //	danger: "#c34043"
 //	info: "#658594"
 //	hint: "#6a9589"
-//	ansi: ["#22262d", "#c4746e", ...]   # up to 16 slots, 0-15
+//	ansi: ["#22262d", "#c4746e", ...]   # up to 16 slots, 0-15; null = unset
 //
 // Every key is optional; unset roles and slots are derived from each other.
 // Unknown keys and invalid colors are errors. A border whose contrast with
@@ -85,7 +85,11 @@ func ParsePalette(data []byte) (*Theme, error) {
 		Selection: p.Selection, Success: p.Success, Warning: p.Warning,
 		Danger: p.Danger, Info: p.Info, Hint: p.Hint,
 	}
-	copy(t.ANSI[:], p.ANSI)
+	for i, c := range p.ANSI {
+		if c != nil {
+			t.ANSI[i] = *c
+		}
+	}
 	if err := t.normalize(); err != nil {
 		return nil, err
 	}

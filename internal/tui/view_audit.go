@@ -62,7 +62,7 @@ func (a *App) openAudit() {
 func (a *App) rerunAudit() {
 	s := &a.views.auditRun
 	s.dirty, s.immediate = true, true
-	a.list.statusMessage = "Running the audit"+glyphs().Loading
+	a.list.statusMessage = "Running the audit" + glyphs().Loading
 }
 
 // auditBeansChanged marks the audit result as outdated after beans changed.
@@ -252,7 +252,7 @@ func (a *App) findingRows(f beancore.AuditFinding) []flatRow {
 				continue
 			}
 			sub(rid, rid, func(r rowStyler) string {
-				return r.muted().Render(glyphs().SubItem+" "+label+" ") + a.beanRef(b, r) + r.muted().Render(glyphs().sep()+b.Status)
+				return r.muted().Render(glyphs().SubItem+" "+label+" ") + beanRef(a.config, b, r) + r.muted().Render(glyphs().sep()+b.Status)
 			})
 		}
 	}
@@ -289,7 +289,7 @@ func (a *App) findingRow(f beancore.AuditFinding, width int, selected bool) stri
 	id := f.BeanIDs[0]
 	ref := r.muted().Render(a.shortID(id)) + r.plain().Render(" ") + r.title(f.Details.Title)
 	if b := a.list.byID[id]; b != nil {
-		ref = a.beanRef(b, r)
+		ref = beanRef(a.config, b, r)
 	}
 	return rowLine(r.bar()+r.plain().Render("  ")+r.st(fg(colDanger())).Render(glyphs().Cross)+r.plain().Render(" ")+ref+r.muted().Render(" "+glyphs().Dash+" "+findingReason(f)), width, r)
 }

@@ -231,15 +231,44 @@ function beanLinkExtension(): MarkedExtension {
   };
 }
 
+export interface RenderMarkdownOptions {
+  /**
+   * Show raw HTML in the source (tags, HTML blocks) as text instead of
+   * rendering it, e.g. for messages typed by the user. Code is escaped by the
+   * code renderers, so the source must not be escaped beforehand (that would
+   * escape code twice).
+   */
+  escapeRawHtml?: boolean;
+}
+
+/**
+ * Marked extension rendering raw HTML tokens as escaped text.
+ */
+function escapeRawHtmlExtension(): MarkedExtension {
+  return {
+    renderer: {
+      html({ text }) {
+        return escapeHtml(text);
+      }
+    }
+  };
+}
+
 /**
  * Render markdown to HTML with syntax highlighting.
  * Falls back to plain code blocks during SSR.
  */
-export async function renderMarkdown(content: string): Promise<string> {
+export async function renderMarkdown(
+  content: string,
+  options: RenderMarkdownOptions = {}
+): Promise<string> {
   if (!content) return '';
 
   const md = new Marked();
   md.use({ gfm: true, breaks: true });
+  if (options.escapeRawHtml) {
+    md.use(escapeRawHtmlExtension());
+  }
   md.use(beanLinkExtension());
   md.use({
     renderer: {

@@ -297,14 +297,14 @@ func TestMouseWheelScrollsTree(t *testing.T) {
 func TestMouseDetailFieldRunsAction(t *testing.T) {
 	withStableRendering(t)
 	cases := []struct {
-		key   string
-		state viewState
+		key  string
+		kind pickerKind
 	}{
-		{"s", viewStatusPicker},
-		{"t", viewTypePicker},
-		{"P", viewPriorityPicker},
-		{"p", viewParentPicker},
-		{"b", viewBlockingPicker},
+		{"s", pickStatus},
+		{"t", pickType},
+		{"P", pickPriority},
+		{"p", pickParent},
+		{"b", pickBlocking},
 	}
 	for _, size := range mouseSizes {
 		for _, tc := range cases {
@@ -312,8 +312,8 @@ func TestMouseDetailFieldRunsAction(t *testing.T) {
 			revealBean(t, app, "demo-t002")
 			pressKey(t, app, "enter")
 			click(t, app, region(t, app, hitDetailField, withKey(tc.key)).r)
-			if app.state != tc.state {
-				t.Errorf("%v: clicking the %s field: state %v, want %v", size, tc.key, app.state, tc.state)
+			if app.state != viewPicker || app.picker.kind != tc.kind {
+				t.Errorf("%v: clicking the %s field: state %v kind %v, want picker %v", size, tc.key, app.state, app.picker.kind, tc.kind)
 			}
 		}
 	}
@@ -354,7 +354,8 @@ func TestMousePickerItemsMatchScreen(t *testing.T) {
 			t.Fatalf("%v: no picker items recorded", size)
 		}
 		for _, reg := range items {
-			want := app.statusPicker.list.VisibleItems()[reg.index].(statusItem).name
+			item, _ := app.picker.visibleItem(reg.index)
+			want := item.value
 			if got := cellText(screen, reg.r); !strings.Contains(got, want) {
 				t.Errorf("%v: item %d region shows %q, want %s", size, reg.index, got, want)
 			}
@@ -602,13 +603,13 @@ func TestMouseOverlays(t *testing.T) {
 	}
 
 	pressKey(t, app, "t")
-	if app.state != viewTypePicker {
+	if app.state != viewPicker || app.picker.kind != pickType {
 		t.Fatalf("state %v", app.state)
 	}
-	before := app.typePicker.list.Index()
+	before := app.picker.cursor
 	wheel(t, app, region(t, app, hitModal, nil).r, true)
-	if app.typePicker.list.Index() != before+1 {
-		t.Errorf("wheel moved the picker cursor from %d to %d", before, app.typePicker.list.Index())
+	if app.picker.cursor != before+1 {
+		t.Errorf("wheel moved the picker cursor from %d to %d", before, app.picker.cursor)
 	}
 	click(t, app, rect{x: 0, y: 0})
 	if app.state != viewList {
@@ -636,7 +637,7 @@ func TestMouseBlockingPickerToggles(t *testing.T) {
 		t.Fatalf("no item shows demo-t007:\n%s", strings.Join(screen, "\n"))
 	}
 	click(t, app, target.r)
-	if app.state != viewBlockingPicker {
+	if app.state != viewPicker {
 		t.Fatalf("clicking an item closed the blocking picker")
 	}
 	pressKey(t, app, "enter")

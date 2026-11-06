@@ -1,11 +1,5 @@
 package tui
 
-import (
-	"strings"
-
-	"github.com/charmbracelet/lipgloss"
-)
-
 // Screen geometry for mouse support.
 //
 // The renderers record the rectangles of what they draw (panes, tree rows,
@@ -153,15 +147,6 @@ func (r hitRecorder) place(o *hitMap, x, y int) {
 	for _, reg := range o.regions {
 		r.add(x+reg.r.x, y+reg.r.y, reg.r.w, reg.r.h, reg.hitTarget)
 	}
-}
-
-// modalOrigin returns the top-left cell of a modal centered on a width x
-// height screen (see overlayModal).
-func modalOrigin(modal string, width, height int) (int, int) {
-	lines := strings.Split(modal, "\n")
-	x := max((width-lipgloss.Width(modal))/2, 0)
-	y := max((height-len(lines))/2, 0)
-	return x, y
 }
 
 // boxGridCells lays out field boxes in rows that fit width (see boxGrid) and

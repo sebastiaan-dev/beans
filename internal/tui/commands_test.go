@@ -294,7 +294,7 @@ func TestPaletteRunsActionWithPicker(t *testing.T) {
 	moveTo(t, app, "demo-t002")
 	typePalette(t, app, "set status")
 	pressKey(t, app, "enter")
-	if app.state != viewStatusPicker || app.statusPicker.beanIDs[0] != "demo-t002" {
+	if app.state != viewPicker || app.picker.kind != pickStatus || app.picker.beanIDs[0] != "demo-t002" {
 		t.Fatalf("Set status should open the status picker for the bean: state=%v", app.state)
 	}
 	pressKey(t, app, "esc")

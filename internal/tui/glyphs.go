@@ -79,9 +79,6 @@ type glyphSet struct {
 	Dash    string // separates a reference from its explanation
 	Crumb   string // separates breadcrumb items
 
-	// Pagination dots of the pickers.
-	PageActive, PageInactive string
-
 	// CheckboxMarkers are candidate markers of the current checkbox in a
 	// rendered body; the first one not occurring in the body is used.
 	CheckboxMarkers []string
@@ -130,8 +127,6 @@ var unicodeGlyphs = glyphSet{
 
 	SubItem: "↳", Check: "✓", Cross: "✗", Dash: "—", Crumb: "›",
 
-	PageActive: "•", PageInactive: "○",
-
 	CheckboxMarkers: []string{"▶", "►", "➤", "⮞"},
 }
 
@@ -177,8 +172,6 @@ var asciiGlyphs = glyphSet{
 	NotBlocking: "o",
 
 	SubItem: ">", Check: "ok", Cross: "x", Dash: "-", Crumb: ">",
-
-	PageActive: "*", PageInactive: ".",
 
 	CheckboxMarkers: []string{"=>", "->", ">>", "*>"},
 }

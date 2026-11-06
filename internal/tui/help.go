@@ -8,12 +8,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// openHelpMsg requests opening the help overlay
-type openHelpMsg struct{}
-
-// closeHelpMsg is sent when the help overlay is closed
-type closeHelpMsg struct{}
-
 // helpOverlayModel displays the keyboard shortcuts of the command registry
 // (commands.go) by section, scrollable when they don't fit.
 type helpOverlayModel struct {
@@ -29,41 +23,44 @@ func newHelpOverlayModel(width, height int) helpOverlayModel {
 	}
 }
 
-func (m helpOverlayModel) Init() tea.Cmd {
+func (m *helpOverlayModel) acceptsText() bool       { return false }
+func (m *helpOverlayModel) click(*App, int) tea.Cmd { return nil }
+
+func (m *helpOverlayModel) scroll(_ *App, delta int) { m.scrollBy(delta) }
+
+func (m *helpOverlayModel) update(a *App, msg tea.Msg) tea.Cmd {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return nil
+	}
+	page := max(m.bodyRows()-1, 1)
+	switch key.String() {
+	case "?", "esc":
+		return a.closeOverlay()
+	case ":", "ctrl+p":
+		return a.openCommandPalette()
+	case "q":
+		return tea.Quit
+	case "up", "k":
+		m.scrollBy(-1)
+	case "down", "j":
+		m.scrollBy(1)
+	case "pgup", "ctrl+u", "ctrl+b":
+		m.scrollBy(-page)
+	case "pgdown", "ctrl+d", "ctrl+f", " ":
+		m.scrollBy(page)
+	case "home", "g":
+		m.offset = 0
+	case "end", "G":
+		m.scrollBy(len(m.bodyLines()))
+	}
 	return nil
 }
 
-func (m helpOverlayModel) Update(msg tea.Msg) (helpOverlayModel, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-
-	case tea.KeyMsg:
-		page := max(m.bodyRows()-1, 1)
-		switch msg.String() {
-		case "?", "esc":
-			return m, func() tea.Msg {
-				return closeHelpMsg{}
-			}
-		case ":", "ctrl+p":
-			return m, func() tea.Msg { return openCommandPaletteMsg{} }
-		case "up", "k":
-			m.scroll(-1)
-		case "down", "j":
-			m.scroll(1)
-		case "pgup", "ctrl+u", "ctrl+b":
-			m.scroll(-page)
-		case "pgdown", "ctrl+d", "ctrl+f", " ":
-			m.scroll(page)
-		case "home", "g":
-			m.offset = 0
-		case "end", "G":
-			m.scroll(len(m.bodyLines()))
-		}
-	}
-
-	return m, nil
+// view renders the help at the terminal size.
+func (m *helpOverlayModel) view(a *App, _ hitRecorder) string {
+	m.width, m.height = a.width, a.height
+	return m.View()
 }
 
 // helpSection is a titled group of shortcuts in the help overlay.
@@ -171,7 +168,7 @@ func (m helpOverlayModel) bodyRows() int {
 	return max(min(m.height-2-4, len(m.bodyLines())), 1)
 }
 
-func (m *helpOverlayModel) scroll(delta int) {
+func (m *helpOverlayModel) scrollBy(delta int) {
 	maxOffset := max(len(m.bodyLines())-m.bodyRows(), 0)
 	m.offset = max(0, min(m.offset+delta, maxOffset))
 }
@@ -185,7 +182,7 @@ func (m helpOverlayModel) View() string {
 	inner := modalWidth - 4 // border and padding
 	all := m.bodyLines()
 	rows := m.bodyRows()
-	m.scroll(0)
+	m.scrollBy(0)
 	body := all[m.offset:min(m.offset+rows, len(all))]
 
 	title := lipgloss.NewStyle().Bold(true).Foreground(colAccent()).Render("Keyboard Shortcuts")
@@ -207,15 +204,8 @@ func (m helpOverlayModel) View() string {
 		footer = renderHints(hints, []keyHint{{"q", "quit"}}, max(inner-lipgloss.Width(pos)-1, 1))
 		footer = fitWidth(footer, inner-lipgloss.Width(pos), lipgloss.NewStyle()) + pos
 	}
-	content := title + "\n" + strings.Join(body, "\n") + "\n" + footer
-
-	border := lipgloss.NewStyle().
-		Border(glyphs().border()).
-		BorderForeground(colAccent()).
-		Padding(0, 1).
-		Width(modalWidth - 2)
-
-	return border.Render(content)
+	lines := append(append([]string{title}, body...), footer)
+	return strings.Join(box{lines: lines, width: modalWidth, focused: true, padding: 1}.render(), "\n")
 }
 
 // padLines pads lines to width cells.
@@ -225,10 +215,4 @@ func padLines(lines []string, width int) []string {
 		out[i] = fitWidth(l, width, lipgloss.NewStyle())
 	}
 	return out
-}
-
-// ModalView returns the help overlay as a centered modal on top of the background
-func (m helpOverlayModel) ModalView(bgView string, fullWidth, fullHeight int) string {
-	modal := m.View()
-	return overlayModal(bgView, modal, fullWidth, fullHeight)
 }

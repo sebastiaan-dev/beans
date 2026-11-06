@@ -97,7 +97,7 @@ func TestFilterBarAndQueryStayInSync(t *testing.T) {
 		pressKey(t, app, string(r))
 	}
 	pressKey(t, app, "enter")
-	bar := stripAnsi(strings.Join(app.filterBar(156), "\n"))
+	bar := stripAnsi(strings.Join(app.filterBar(156, hitRecorder{}), "\n"))
 	if !strings.Contains(bar, "task, epic") {
 		t.Errorf("the bar should show the typed types:\n%s", bar)
 	}
@@ -241,7 +241,7 @@ func TestFilterBarPriority(t *testing.T) {
 		t.Errorf("space should select the level, query = %q", got)
 	}
 	pressKey(t, app, "enter")
-	bar := stripAnsi(strings.Join(app.filterBar(156), "\n"))
+	bar := stripAnsi(strings.Join(app.filterBar(156, hitRecorder{}), "\n"))
 	if !strings.Contains(bar, "low") {
 		t.Errorf("the bar should show the priority:\n%s", bar)
 	}

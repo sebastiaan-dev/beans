@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/hmans/beans/internal/ui"
 	"github.com/hmans/beans/pkg/bean"
 	"github.com/hmans/beans/pkg/beangraph/filterquery"
 )
@@ -57,7 +56,6 @@ func (a *App) openCommandPalette() tea.Cmd {
 	ti.Placeholder = "command or bean" + glyphs().Ellipsis
 	ti.Cursor.SetMode(cursor.CursorStatic)
 	a.palette = commandPalette{input: ti}
-	a.previousState = a.state
 	a.state = viewCommandPalette
 	a.pendingKey = ""
 	a.refreshPalette()
@@ -211,25 +209,39 @@ func (a *App) rememberCommand(id string) {
 	}
 }
 
-// updateCommandPalette handles messages while the palette is open.
-func (a *App) updateCommandPalette(msg tea.Msg) tea.Cmd {
-	p := &a.palette
+func (p *commandPalette) acceptsText() bool { return true }
+
+// click runs entry i.
+func (p *commandPalette) click(a *App, i int) tea.Cmd {
+	if i < 0 || i >= len(p.entries) {
+		return nil
+	}
+	p.cursor = i
+	return a.runPaletteEntry()
+}
+
+// scroll moves the cursor.
+func (p *commandPalette) scroll(_ *App, delta int) { p.move(delta) }
+
+func (p *commandPalette) move(delta int) {
+	if n := len(p.entries); n > 0 {
+		p.cursor = max(0, min(p.cursor+delta, n-1))
+	}
+	p.message = ""
+}
+
+// update handles messages while the palette is open.
+func (p *commandPalette) update(a *App, msg tea.Msg) tea.Cmd {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
 		var cmd tea.Cmd
 		p.input, cmd = p.input.Update(msg)
 		return cmd
 	}
-	move := func(delta int) {
-		if n := len(p.entries); n > 0 {
-			p.cursor = max(0, min(p.cursor+delta, n-1))
-		}
-		p.message = ""
-	}
+	move := p.move
 	switch key.String() {
 	case "esc":
-		a.state = viewList
-		return nil
+		return a.closeOverlay()
 	case "up", "ctrl+p", "ctrl+k":
 		move(-1)
 		return nil
@@ -325,37 +337,18 @@ func (a *App) paletteDisplayRows(inner int) ([]string, []int) {
 
 // paletteEntryLine renders an entry as a line of exactly width cells.
 func (a *App) paletteEntryLine(e paletteEntry, selected bool, width int) string {
-	bg := lipgloss.Color("")
-	if selected {
-		bg = colSelection()
-	}
-	st := func(s lipgloss.Style) lipgloss.Style { return withBackground(s, bg) }
-	plain := st(lipgloss.NewStyle())
-	muted := st(mutedStyle())
-	bar := plain.Render(" ")
-	if selected {
-		bar = st(accentStyle()).Render(glyphs().Cursor)
-	}
-	titleStyle := plain
-	if selected {
-		titleStyle = st(accentStyle().Bold(true))
-	}
-
+	r := newRowStyler(selected)
+	plain, muted := r.plain(), r.muted()
 	var left, right string
 	if c := e.cmd; c != nil {
-		right = st(keyStyle()).Render(glyphs().localize(c.paletteKey()))
-		left = titleStyle.Render(glyphs().localize(c.paletteTitle()))
+		right = r.st(keyStyle()).Render(glyphs().localize(c.paletteKey()))
+		left = r.titleStyle().Render(glyphs().localize(c.paletteTitle()))
 		if e.reason != "" {
 			left = muted.Render(glyphs().localize(c.paletteTitle())) + muted.Render(" "+glyphs().Dash+" "+e.reason)
 			right = muted.Render(glyphs().localize(c.paletteKey()))
 		}
 	} else {
-		b := e.bean
-		colors := a.config.GetBeanColors(b.Status, b.Type, b.Priority)
-		left = st(fg(colNamed(colors.StatusColor))).Render(glyph(b.Status, ui.ShortStatus)) + plain.Render(" ") +
-			st(fg(colNamed(colors.TypeColor))).Render(glyph(b.Type, ui.ShortType)) + plain.Render(" ") +
-			muted.Render(shortID(b.ID, a.config.Beans.Prefix)) + plain.Render(" ") +
-			titleStyle.Render(b.Title)
+		left = beanRef(a.config, e.bean, r)
 		if e.hidden != "" {
 			right = muted.Render(e.hidden)
 		}
@@ -363,12 +356,11 @@ func (a *App) paletteEntryLine(e paletteEntry, selected bool, width int) string 
 	rightW := lipgloss.Width(right)
 	leftW := max(width-1-rightW-1, 1)
 	left = fitWidth(truncateText(left, leftW), leftW, plain)
-	return fitWidth(bar+left+plain.Render(" ")+right, width, plain)
+	return fitWidth(r.bar()+left+plain.Render(" ")+right, width, plain)
 }
 
-// commandPaletteView renders the palette as a modal.
-func (a *App) commandPaletteView() string {
-	p := &a.palette
+// view renders the palette as a modal.
+func (p *commandPalette) view(a *App, rec hitRecorder) string {
 	modalWidth := a.paletteModalWidth()
 	inner := modalWidth - 4
 	rowsH := a.paletteRows()
@@ -403,6 +395,12 @@ func (a *App) commandPaletteView() string {
 		body = append(body, mutedStyle().Render("No matching commands or beans"))
 	} else {
 		body = rows[p.offset:min(p.offset+rowsH, len(rows))]
+		for i, r := range entryRow {
+			if r >= p.offset && r < p.offset+rowsH {
+				// Below the border and the input and its rule.
+				rec.add(2, 3+r-p.offset, inner, 1, hitTarget{kind: hitModalItem, index: i})
+			}
+		}
 	}
 	body = padLines(body, inner)
 	for len(body) < rowsH {
@@ -410,12 +408,13 @@ func (a *App) commandPaletteView() string {
 	}
 
 	rule := borderStyle().Render(strings.Repeat(glyphs().Horizontal, inner))
-	footer := renderHints([]keyHint{{glyphs().KeyUpDown, "move"}, {"enter", "run"}, {"esc", "close"}}, nil, inner)
+	hints := []keyHint{{glyphs().KeyUpDown, "move"}, {"enter", "run"}, {"esc", "close"}}
+	footer := renderHints(hints, nil, inner)
 	if p.message != "" {
 		footer = clampWidth(fg(colWarning()).Bold(true).Render(p.message), inner)
 	} else if n := len(p.entries); n > 0 {
 		pos := mutedStyle().Render(fmt.Sprintf("%d/%d", p.cursor+1, n))
-		footer = renderHints([]keyHint{{glyphs().KeyUpDown, "move"}, {"enter", "run"}, {"esc", "close"}}, nil, max(inner-lipgloss.Width(pos)-1, 1))
+		footer = renderHints(hints, nil, max(inner-lipgloss.Width(pos)-1, 1))
 		footer = fitWidth(footer, inner-lipgloss.Width(pos), lipgloss.NewStyle()) + pos
 	}
 
@@ -431,9 +430,6 @@ func (a *App) commandPaletteView() string {
 		padding: 1,
 	}.render(), "\n")
 }
-
-// openCommandPaletteMsg asks the App to open the palette (e.g. from the help).
-type openCommandPaletteMsg struct{}
 
 // opensCommandPalette reports whether key opens the palette in the current
 // state. Text inputs and open dropdowns keep their meaning of ctrl+p (up).

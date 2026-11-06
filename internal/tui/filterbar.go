@@ -687,15 +687,16 @@ func filterBarWidths(width int, values []string) []int {
 // filterBarFocused reports whether the bar has the focus in the browse view.
 func (a *App) filterBarFocused() bool { return a.focus == focusFilter }
 
-// filterBar renders the filter bar as a row of labelled boxes (3 lines).
-func (a *App) filterBar(width int) []string {
+// filterBar renders the filter bar as a row of labelled boxes (3 lines),
+// recording the fields at rec.
+func (a *App) filterBar(width int, rec hitRecorder) []string {
 	values := a.barFieldValues()
 	ws := filterBarWidths(width, values)
 	hotkeys := map[barField]string{barStatus: "F", barTags: "g t", barDone: "H"}
 	blocks := make([][]string, barFieldCount)
 	x := 0
 	for f := barField(0); f < barFieldCount; f++ {
-		a.rec.add(x, 0, ws[f], 3, hitTarget{kind: hitBarField, index: int(f)})
+		rec.add(x, 0, ws[f], 3, hitTarget{kind: hitBarField, index: int(f)})
 		x += ws[f] + 1
 		label := f.label()
 		if f == barClear {
@@ -855,8 +856,9 @@ func extraFilterTerms(q filterquery.Query) []string {
 	return out
 }
 
-// dropdownLines renders the open dropdown.
-func (a *App) dropdownLines(maxWidth int) []string {
+// dropdownLines renders the open dropdown, recording its options at rec
+// (relative to the dropdown).
+func (a *App) dropdownLines(maxWidth int, rec hitRecorder) []string {
 	f := a.bar.field
 	q := a.list.filter()
 	opts := a.barOptions(f, q, a.bar.typed)
@@ -914,7 +916,7 @@ func (a *App) dropdownLines(maxWidth int) []string {
 		if o.count > 0 {
 			label += " " + mutedStyle().Render(fmt.Sprint(o.count))
 		}
-		a.rec.add(1, 1+len(lines), width-2, 1, hitTarget{kind: hitDropdownItem, index: i})
+		rec.add(1, 1+len(lines), width-2, 1, hitTarget{kind: hitDropdownItem, index: i})
 		lines = append(lines, cursor+mark+" "+label)
 	}
 	pos := ""
@@ -931,8 +933,9 @@ func (a *App) dropdownLines(maxWidth int) []string {
 }
 
 // overlayDropdown draws the open dropdown onto the content lines of the
-// browse view, below the filter bar starting at line top.
-func (a *App) overlayDropdown(content []string, top, inner int, collapsed bool) []string {
+// browse view, below the filter bar starting at line top, and records it at
+// rec.
+func (a *App) overlayDropdown(content []string, top, inner int, collapsed bool, rec hitRecorder) []string {
 	if !a.bar.open || a.focus != focusFilter {
 		return content
 	}
@@ -944,10 +947,8 @@ func (a *App) overlayDropdown(content []string, top, inner int, collapsed bool) 
 		x = a.barFieldX(inner, a.bar.field)
 	}
 	// Record the dropdown's items relative to it, then place them.
-	rec, local := a.rec, &hitMap{}
-	a.rec = local.recorder()
-	dd := a.dropdownLines(inner)
-	a.rec = rec
+	local := &hitMap{}
+	dd := a.dropdownLines(inner, local.recorder())
 	w := lipgloss.Width(dd[0])
 	x = max(0, min(x, inner-w))
 	rec.add(x, top, w, len(dd), hitTarget{kind: hitDropdown})
@@ -1032,13 +1033,14 @@ func (a *App) filterBarHints() []keyHint {
 	case f.isToggle():
 		action = keyHint{"enter", "toggle"}
 	}
+	// The hints refer to the command registry (commands.go).
 	return []keyHint{
 		action,
-		{glyphs().KeyLeftRight, "field"},
-		{"bksp", "clear field"},
-		{"esc", "tree"},
+		cmdHint("filter-fields"),
+		cmdHint("filter-clear-field"),
+		cmdHint("filter-leave"),
 		{"tab", "next pane"},
-		{"/", "query"},
-		{"H", "hide done"},
+		cmdHint("query"),
+		cmdHint("hide-done"),
 	}
 }

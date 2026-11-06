@@ -6,7 +6,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/hmans/beans/internal/ui"
 	"github.com/hmans/beans/pkg/bean"
 )
 
@@ -541,42 +540,44 @@ func (a *App) headerTabs(title string, width int) string {
 // viewHints returns the footer hints of the active view's list.
 func (a *App) viewHints(wide bool) []keyHint {
 	if a.list.searching {
-		return []keyHint{{"enter", "apply"}, {"esc", "cancel"}, {glyphs().KeyUpDown, "move"}}
+		return searchHints()
 	}
 	detail := "details"
 	if !wide {
 		detail = "open"
 	}
+	// The hints refer to the command registry (commands.go).
 	var hints []keyHint
 	if a.viewFilterApplies() && a.list.search.Value() != "" {
-		hints = append(hints, keyHint{"esc", "clear filter"})
+		hints = append(hints, cmdHint("clear-filters"))
 	}
 	if r, ok := a.activeList().current(); ok && r.jumpID != "" {
-		hints = append(hints, keyHint{"enter", "jump to " + a.shortID(r.jumpID)})
+		hints = append(hints, cmdHint("focus-detail", "jump to "+a.shortID(r.jumpID)))
 	} else {
-		hints = append(hints, keyHint{"enter", detail})
+		hints = append(hints, cmdHint("focus-detail", detail))
 	}
+	workspace := cmdHint("start-workspace", "workspace")
 	switch a.views.active {
 	case viewReady:
-		hints = append(hints, keyHint{"n", "next"}, keyHint{"s", "status"}, keyHint{"w", "workspace"})
+		hints = append(hints, cmdHint("next"), cmdHint("status"), workspace)
 	case viewBlocked:
-		hints = append(hints, keyHint{"b", "blocking"}, keyHint{"s", "status"})
+		hints = append(hints, cmdHint("blocking"), cmdHint("status"))
 	case viewAudit:
-		hints = append(hints, keyHint{"s", "status"}, keyHint{"R", "re-run"}, keyHint{"p", "parent"}, keyHint{"b", "blocking"})
+		hints = append(hints, cmdHint("status"), cmdHint("audit-rerun", "re-run"), cmdHint("parent"), cmdHint("blocking"))
 	}
 	hints = append(hints,
-		keyHint{"e", "edit"},
-		keyHint{"t", "type"},
-		keyHint{"P", "priority"},
-		keyHint{"p", "parent"},
-		keyHint{"b", "blocking"},
-		keyHint{"u", "undo"},
-		keyHint{"1-4", "views"},
+		cmdHint("edit"),
+		cmdHint("type"),
+		cmdHint("priority"),
+		cmdHint("parent"),
+		cmdHint("blocking"),
+		cmdHint("undo"),
+		cmdHint("views"),
 	)
 	if a.viewFilterApplies() {
-		hints = append(hints, keyHint{"/", "query"}, keyHint{"F", "filters"})
+		hints = append(hints, cmdHint("query"), cmdHint("focus-filter"))
 	}
-	hints = append(hints, keyHint{"w", "workspace"}, keyHint{"y", "copy id"})
+	hints = append(hints, workspace, cmdHint("copy-id"))
 	return dedupeHints(hints)
 }
 
@@ -593,63 +594,7 @@ func dedupeHints(hints []keyHint) []keyHint {
 	return out
 }
 
-// Rendering helpers --------------------------------------------------------------
-
-// rowStyler styles the parts of a selected or unselected row.
-type rowStyler struct {
-	selected bool
-	bg       lipgloss.Color
-}
-
-func newRowStyler(selected bool) rowStyler {
-	r := rowStyler{selected: selected}
-	if selected {
-		r.bg = colSelection()
-	}
-	return r
-}
-
-func (r rowStyler) st(s lipgloss.Style) lipgloss.Style { return withBackground(s, r.bg) }
-func (r rowStyler) plain() lipgloss.Style              { return r.st(lipgloss.NewStyle()) }
-func (r rowStyler) muted() lipgloss.Style              { return r.st(mutedStyle()) }
-
-// bar renders the cursor bar starting a row.
-func (r rowStyler) bar() string {
-	if r.selected {
-		return r.st(accentStyle()).Render(glyphs().Cursor)
-	}
-	return r.plain().Render(" ")
-}
-
-// title renders a bean title (accent when selected).
-func (r rowStyler) title(t string) string {
-	if t == "" {
-		return r.muted().Render("(untitled)")
-	}
-	if r.selected {
-		return r.st(accentStyle().Bold(true)).Render(t)
-	}
-	return r.plain().Render(t)
-}
-
-// beanRef renders "S T id title" for a bean: colored status and type
-// glyphs, short ID and title.
-func (a *App) beanRef(b *bean.Bean, r rowStyler) string {
-	colors := a.config.GetBeanColors(b.Status, b.Type, b.Priority)
-	sp := r.plain().Render(" ")
-	return r.st(fg(colNamed(colors.StatusColor))).Render(glyph(b.Status, ui.ShortStatus)) + sp +
-		r.st(fg(colNamed(colors.TypeColor))).Render(glyph(b.Type, ui.ShortType)) + sp +
-		r.muted().Render(a.shortID(b.ID)) + sp + r.title(b.Title)
-}
-
-// rowLine fits a rendered row to width: cut with an ellipsis or padded with
-// the row's background.
-func rowLine(s string, width int, r rowStyler) string {
-	if lipgloss.Width(s) > width && width > 1 {
-		return clampWidth(s, width-1) + r.muted().Render(glyphs().Ellipsis)
-	}
-	return fitWidth(s, width, r.plain())
-}
+// Rendering ----------------------------------------------------------------------
 
 // viewPaneLines renders the active view's list pane of the given outer size.
 func (a *App) viewPaneLines(l browseLayout, rec hitRecorder) []string {

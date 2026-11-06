@@ -277,20 +277,20 @@ func TestBrowseHeader(t *testing.T) {
 func TestBrowseFilterBar(t *testing.T) {
 	withStableRendering(t)
 	app := newDemoApp(t, 120, 40)
-	bar := stripAnsi(strings.Join(app.filterBar(116), "\n"))
+	bar := stripAnsi(strings.Join(app.filterBar(116, hitRecorder{}), "\n"))
 	for _, want := range []string{"Status", "Type", "Priority", "Tags", "Archived", "Ready", "Done", "any", "shown", "✕", "(F)", "(g t)", "(H)"} {
 		if !strings.Contains(bar, want) {
 			t.Errorf("filter bar lacks %q:\n%s", want, bar)
 		}
 	}
-	for _, l := range app.filterBar(116) {
+	for _, l := range app.filterBar(116, hitRecorder{}) {
 		if w := lipgloss.Width(l); w != 116 {
 			t.Errorf("filter bar line is %d wide, want 116: %q", w, stripAnsi(l))
 		}
 	}
 
 	setQuery(app, "status:todo,draft tag:auth done:no priority:>=high -type:bug archived:no ready:yes")
-	bar = stripAnsi(strings.Join(app.filterBar(116), "\n"))
+	bar = stripAnsi(strings.Join(app.filterBar(116, hitRecorder{}), "\n"))
 	for _, want := range []string{"todo, draft", "auth", "hidden", "≥high", "not bug", "yes"} {
 		if !strings.Contains(bar, want) {
 			t.Errorf("filter bar lacks %q:\n%s", want, bar)

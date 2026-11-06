@@ -59,6 +59,32 @@ test.describe('Agent chat', () => {
     await expect(clearBtn).toBeDisabled();
   });
 
+  test('User messages show HTML and code verbatim', async ({ page, beans }) => {
+    await agentSession('__central__', beans)
+      .withMessages([
+        { role: 'user', content: 'hello agent' },
+        { role: 'assistant', content: 'Hi!' },
+        {
+          role: 'user',
+          content:
+            'Why does <b>this</b> fail? `a<b && c`\n\n```go\nif a < b && c > d {}\n```\n\n```\nx <= y & z\n```'
+        },
+        { role: 'assistant', content: 'Let me look.' }
+      ])
+      .open(page);
+
+    const message = page.locator('.agent-prose', { hasText: 'Why does' });
+    await expect(message).toContainText('Why does <b>this</b> fail?', { timeout: 5000 });
+    // Typed HTML is text, not markup.
+    await expect(message.locator('b')).toHaveCount(0);
+    // Code is escaped once: no entities show up as text.
+    await expect(message.locator('code', { hasText: 'a<b && c' })).toHaveCount(1);
+    await expect(message.locator('pre', { hasText: 'if a < b && c > d {}' })).toHaveCount(1);
+    await expect(message.locator('pre', { hasText: 'x <= y & z' })).toHaveCount(1);
+    await expect(message).not.toContainText('&lt;');
+    await expect(message).not.toContainText('&amp;');
+  });
+
   test('Image attachments are displayed inline in user messages', async ({ page, beans }) => {
     // Create a tiny 1x1 red PNG for testing
     const pngData = Buffer.from(

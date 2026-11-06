@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/atotto/clipboard"
-	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/hmans/beans/internal/ui"
 	"github.com/hmans/beans/pkg/bean"
@@ -19,21 +18,6 @@ import (
 	"github.com/hmans/beans/pkg/beangraph"
 	"github.com/hmans/beans/pkg/beangraph/model"
 	"github.com/hmans/beans/pkg/config"
-)
-
-// viewState represents which view is currently active
-type viewState int
-
-const (
-	viewList viewState = iota
-	viewParentPicker
-	viewStatusPicker
-	viewTypePicker
-	viewBlockingPicker
-	viewPriorityPicker
-	viewHelpOverlay
-	viewWorkspaces
-	viewCommandPalette
 )
 
 // beansChangedMsg is sent when beans change on disk (via file watcher)
@@ -58,36 +42,28 @@ type editorFinishedMsg struct {
 	err error
 }
 
-// openParentPickerMsg requests opening the parent picker for bean(s)
-type openParentPickerMsg struct {
-	beanIDs       []string // IDs of beans to update
-	beanTitle     string   // Display title (single title or "N selected beans")
-	beanTypes     []string // Types of the beans (to filter eligible parents)
-	currentParent string   // Only meaningful for single bean
-}
-
 // App is the main TUI application model
 type App struct {
+	// The panes of the browse view (browse.go).
+	list   listModel      // the bean tree and the filter query (list.go)
+	detail detailModel    // the detail pane (detail.go)
+	bar    filterBarModel // the filter bar (filterbar.go)
+
+	// The open overlay (overlay.go) and the overlays' state.
 	state          viewState
-	list           listModel
-	detail         detailModel
-	bar            filterBarModel
-	parentPicker   parentPickerModel
-	statusPicker   statusPickerModel
-	typePicker     typePickerModel
-	blockingPicker blockingPickerModel
-	priorityPicker priorityPickerModel
-	helpOverlay    helpOverlayModel
-	ws             *workspaces // workspace state (see workspaces.go)
-	wsOverlay      workspacesOverlay
-	palette        commandPalette // command palette (cmdpalette.go)
-	recentCommands []string       // IDs of the palette's recently run commands
-	core           *beancore.Core
-	resolver       *beangraph.CoreResolver
-	config         *config.Config
-	width          int
-	height         int
-	program        *tea.Program // reference to program for sending messages from watcher
+	picker         pickerModel       // picker.go
+	helpOverlay    helpOverlayModel  // help.go
+	wsOverlay      workspacesOverlay // workspaces.go
+	palette        commandPalette    // cmdpalette.go
+	recentCommands []string          // IDs of the palette's recently run commands
+
+	ws       *workspaces // workspace state (see workspaces.go)
+	core     *beancore.Core
+	resolver *beangraph.CoreResolver
+	config   *config.Config
+	width    int
+	height   int
+	program  *tea.Program // reference to program for sending messages from watcher
 
 	// Views beyond the tree: Ready, Blocked, Audit (views.go)
 	views viewsState
@@ -107,16 +83,12 @@ type App struct {
 	heldKeys    []tea.KeyMsg
 	holdingKeys bool
 
-	// Modal state - tracks view behind modal pickers
-	previousState viewState
-
 	// Undo history of changes made in this session (undo.go)
 	undo undoState
 
-	// Mouse support (mouse.go): the regions of the last rendered screen,
-	// the recorder of the App's renderers and the click state.
+	// Mouse support (mouse.go): the regions of the last rendered screen
+	// and the click state.
 	hits    *hitMap
-	rec     hitRecorder
 	mouse   mouseState
 	mouseOn bool // mouse reporting is enabled
 
@@ -174,36 +146,6 @@ func (a *App) closePicker(clearSelection bool) tea.Cmd {
 	return a.list.loadBeans
 }
 
-// handleChord handles the second key of a chord ("g t", "g g", "z o", ...).
-func (a *App) handleChord(first string, msg tea.KeyMsg) tea.Cmd {
-	switch first + " " + msg.String() {
-	case "g t":
-		a.openFilterField(barTags)
-	case "g w":
-		return a.openWorkspacesOverlay()
-	case "g g":
-		if l := a.activeList(); l != nil && a.focus == focusTree {
-			l.moveToEnd(-1)
-		} else if a.focus == focusTree {
-			a.list.moveCursor(-len(a.list.rows))
-		} else {
-			a.detail.scrollHome()
-		}
-	case "z o":
-		a.list.foldOpen()
-	case "z c":
-		a.list.foldClose()
-	case "z a":
-		a.list.foldToggle()
-	case "z R":
-		a.list.openAll()
-	case "z M":
-		a.list.closeAll()
-	}
-	// Other second keys cancel the chord and are ignored.
-	return nil
-}
-
 func (a *App) update(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 
@@ -215,99 +157,10 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
+		return nil
 
 	case tea.KeyMsg:
-		// Keep the order of keys while earlier keys of a batch are pending.
-		if a.holdingKeys {
-			a.heldKeys = append(a.heldKeys, msg)
-			return nil
-		}
-		// Several runes delivered at once are individual shortcuts, unless a
-		// text input is receiving them.
-		if keys, ok := splitBatchedRunes(msg); ok && !a.acceptsTextInput() {
-			return a.handleKeys(keys)
-		}
-
-		// Clear status messages on any keypress
-		a.list.statusMessage = ""
-
-		if msg.String() == "ctrl+c" {
-			return tea.Quit
-		}
-
-		// Handle key chord sequences
-		if a.state == viewList && !a.typing() {
-			if first := a.pendingKey; first != "" {
-				a.pendingKey = ""
-				return a.handleChord(first, msg)
-			}
-			switch msg.String() {
-			case "g":
-				a.pendingKey = "g"
-				return nil
-			case "z":
-				if a.focus == focusTree && a.views.active == viewTree {
-					a.pendingKey = "z"
-					return nil
-				}
-			}
-		}
-
-		// Clear pending key on any other key press
-		a.pendingKey = ""
-
-		if a.opensCommandPalette(msg.String()) {
-			return a.openCommandPalette()
-		}
-
-		// Moving the focus between the panes and opening relations is
-		// handled here, synchronously, so that the keys that follow already
-		// go to the right pane.
-		if a.state == viewList && a.handleViewSearchKey(msg.String()) {
-			return nil
-		}
-		if a.state == viewList && !a.list.typing() {
-			if a.focus == focusFilter {
-				if cmd, handled := a.updateFilterBar(msg); handled {
-					return cmd
-				}
-			}
-			if !a.typing() {
-				if cmd, handled := a.handleViewKey(msg); handled {
-					return cmd
-				}
-				if handled := a.handleFocusKey(msg.String()); handled {
-					return nil
-				}
-			}
-			if cmd, handled := a.handleQuickKey(msg.String()); handled {
-				return cmd
-			}
-			if cmd, handled := a.handleWorkspaceKey(msg.String()); handled {
-				return cmd
-			}
-		}
-
-		switch msg.String() {
-		case "?":
-			// Open help overlay from the browse view
-			if a.state == viewList && !a.typing() {
-				a.previousState = a.state
-				a.helpOverlay = newHelpOverlayModel(a.width, a.height)
-				a.state = viewHelpOverlay
-				return a.helpOverlay.Init()
-			}
-		case "q":
-			switch a.state {
-			case viewParentPicker, viewStatusPicker, viewTypePicker, viewBlockingPicker, viewPriorityPicker, viewHelpOverlay:
-				return tea.Quit
-			case viewList:
-				// Only quit if not typing a query or tag
-				if !a.typing() {
-					return tea.Quit
-				}
-			}
-		}
+		return a.handleKey(msg)
 
 	case tea.MouseMsg:
 		return a.handleMouse(msg)
@@ -328,6 +181,10 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		}
 		return cmd
 
+	case errMsg:
+		a.list, cmd = a.list.Update(msg)
+		return cmd
+
 	case beansChangedMsg:
 		// Beans changed on disk - refresh (and the workspaces' status)
 		return tea.Batch(a.list.loadBeans, a.ws.refreshCmd(a.core))
@@ -344,21 +201,8 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 	case themeReloadedMsg:
 		return a.applyThemeReload(msg)
 
-	case openParentPickerMsg:
-		// Check if all bean types can have parents
-		for _, beanType := range msg.beanTypes {
-			if beancore.ValidParentTypes(beanType) == nil {
-				// At least one bean type (e.g., milestone) cannot have parents - don't open the picker
-				return nil
-			}
-		}
-		a.previousState = a.state // Remember where we came from for the modal background
-		a.parentPicker = newParentPickerModel(msg.beanIDs, msg.beanTitle, msg.beanTypes, msg.currentParent, a.resolver, a.config, a.width, a.height)
-		a.state = viewParentPicker
-		return a.parentPicker.Init()
-
-	case closeParentPickerMsg:
-		return a.closePicker(false)
+	case openPickerMsg:
+		return a.openPicker(msg)
 
 	case parentSelectedMsg:
 		// Set the new parent via GraphQL mutation for all beans
@@ -374,29 +218,11 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		})
 		return a.closePicker(true)
 
-	case openStatusPickerMsg:
-		a.previousState = a.state
-		a.statusPicker = newStatusPickerModel(msg.beanIDs, msg.beanTitle, msg.currentStatus, a.config, a.width, a.height)
-		a.state = viewStatusPicker
-		return a.statusPicker.Init()
-
-	case closeStatusPickerMsg:
-		return a.closePicker(false)
-
 	case statusSelectedMsg:
 		a.trackChange(a.changeLabel("status", msg.beanIDs), msg.beanIDs, func() {
 			a.updateBeans(msg.beanIDs, model.UpdateBeanInput{Status: &msg.status})
 		})
 		return a.closePicker(true)
-
-	case openTypePickerMsg:
-		a.previousState = a.state
-		a.typePicker = newTypePickerModel(msg.beanIDs, msg.beanTitle, msg.currentType, a.config, a.width, a.height)
-		a.state = viewTypePicker
-		return a.typePicker.Init()
-
-	case closeTypePickerMsg:
-		return a.closePicker(false)
 
 	case typeSelectedMsg:
 		a.trackChange(a.changeLabel("type", msg.beanIDs), msg.beanIDs, func() {
@@ -404,43 +230,11 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		})
 		return a.closePicker(true)
 
-	case openPriorityPickerMsg:
-		a.previousState = a.state
-		a.priorityPicker = newPriorityPickerModel(msg.beanIDs, msg.beanTitle, msg.currentPriority, a.config, a.width, a.height)
-		a.state = viewPriorityPicker
-		return a.priorityPicker.Init()
-
-	case closePriorityPickerMsg:
-		return a.closePicker(false)
-
 	case prioritySelectedMsg:
 		a.trackChange(a.changeLabel("priority", msg.beanIDs), msg.beanIDs, func() {
 			a.updateBeans(msg.beanIDs, model.UpdateBeanInput{Priority: &msg.priority})
 		})
 		return a.closePicker(true)
-
-	case openHelpMsg:
-		a.previousState = a.state
-		a.helpOverlay = newHelpOverlayModel(a.width, a.height)
-		a.state = viewHelpOverlay
-		return a.helpOverlay.Init()
-
-	case closeHelpMsg:
-		a.state = a.previousState
-		return nil
-
-	case openCommandPaletteMsg:
-		a.state = viewList
-		return a.openCommandPalette()
-
-	case openBlockingPickerMsg:
-		a.previousState = a.state
-		a.blockingPicker = newBlockingPickerModel(msg.beanID, msg.beanTitle, msg.currentBlocking, a.resolver, a.config, a.width, a.height)
-		a.state = viewBlockingPicker
-		return a.blockingPicker.Init()
-
-	case closeBlockingPickerMsg:
-		return a.closePicker(false)
 
 	case blockingConfirmedMsg:
 		// Apply all blocking changes via GraphQL mutations, continuing with
@@ -509,150 +303,11 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		return nil
 	}
 
-	// Forward all messages to the current view
-	switch a.state {
-	case viewList:
-		switch a.focus {
-		case focusDetail:
-			a.detail, cmd = a.detail.Update(msg)
-		case focusFilter:
-			// Keys not handled by the filter bar must not act on the tree.
-			if _, isKey := msg.(tea.KeyMsg); !isKey {
-				a.list, cmd = a.list.Update(msg)
-			}
-		default:
-			// Outside the tree view, keys only reach the tree's query input.
-			if _, isKey := msg.(tea.KeyMsg); !isKey || a.views.active == viewTree || a.list.typing() {
-				a.list, cmd = a.list.Update(msg)
-			}
-		}
-	case viewParentPicker:
-		a.parentPicker, cmd = a.parentPicker.Update(msg)
-	case viewStatusPicker:
-		a.statusPicker, cmd = a.statusPicker.Update(msg)
-	case viewTypePicker:
-		a.typePicker, cmd = a.typePicker.Update(msg)
-	case viewPriorityPicker:
-		a.priorityPicker, cmd = a.priorityPicker.Update(msg)
-	case viewBlockingPicker:
-		a.blockingPicker, cmd = a.blockingPicker.Update(msg)
-	case viewHelpOverlay:
-		a.helpOverlay, cmd = a.helpOverlay.Update(msg)
-	case viewWorkspaces:
-		cmd = a.updateWorkspacesOverlay(msg)
-	case viewCommandPalette:
-		cmd = a.updateCommandPalette(msg)
+	// Other messages go to the open overlay (e.g. the palette's text input).
+	if o := a.activeOverlay(); o != nil {
+		return o.update(a, msg)
 	}
-
-	return cmd
-}
-
-// handleFocusKey handles the keys moving the focus between the filter bar,
-// the tree and the detail pane, and reports whether key was one of them.
-//
-// tab and shift+tab cycle filter bar → tree → detail (relations, body) →
-// filter bar; F focuses the filter bar from anywhere.
-func (a *App) handleFocusKey(key string) bool {
-	if key == "F" {
-		a.focusFilterBar()
-		return true
-	}
-	switch a.focus {
-	case focusFilter:
-		switch key {
-		case "tab":
-			a.focusTree()
-		case "shift+tab":
-			if !a.focusDetailPane(false) {
-				a.focusTree()
-			}
-		default:
-			return false
-		}
-		return true
-	case focusTree:
-		switch key {
-		case "enter", "tab":
-			if !a.focusDetailPane(true) && key == "tab" {
-				a.focusFilterBar()
-			}
-		case "shift+tab":
-			a.focusFilterBar()
-		default:
-			return false
-		}
-		return true
-	}
-	switch key {
-	case "tab":
-		if a.detail.section == sectionRelations {
-			a.detail.section = sectionBody
-		} else {
-			a.focusFilterBar()
-		}
-	case "shift+tab":
-		if a.detail.section == sectionBody && len(a.detail.links) > 0 {
-			a.detail.section = sectionRelations
-		} else {
-			a.focusTree()
-		}
-	case "esc":
-		a.focusTree()
-	case "/", "H", "c", "C", "r", "K", "J":
-		// Tree-wide actions return to the tree and are handled there.
-		a.focusTree()
-		return false
-	case "enter":
-		if id := a.detail.selectedRelation(); id != "" {
-			a.showBean(id, true)
-		}
-	case "backspace":
-		if id, ok := a.detail.popHistory(); ok {
-			a.showBean(id, false)
-		} else {
-			a.focusTree()
-		}
-	default:
-		return false
-	}
-	return true
-}
-
-// focusDetailPane moves the focus to the detail pane, on its first section
-// (relations, if any) or its last one (body), and reports whether there is a
-// bean to show.
-func (a *App) focusDetailPane(first bool) bool {
-	if a.currentBean() == nil {
-		return false
-	}
-	a.focus = focusDetail
-	a.syncDetail()
-	a.detail.focus()
-	if !first {
-		a.detail.section = sectionBody
-	}
-	return true
-}
-
-// typing reports whether the browse view routes typed characters into a
-// text field (the query input or the tag type-ahead).
-func (a *App) typing() bool {
-	return a.list.typing() || (a.focus == focusFilter && a.bar.typing())
-}
-
-// showBean shows a bean in the detail pane, moving the tree cursor to it if
-// it is in the (filtered) tree. record adds the current bean to the detail
-// history.
-func (a *App) showBean(id string, record bool) {
-	if cur := a.detail.bean; cur != nil && record {
-		a.detail.history = append(a.detail.history, cur.ID)
-	}
-	if a.selectInView(id) {
-		a.detailPinned = ""
-	} else {
-		a.detailPinned = id
-	}
-	a.syncDetail()
+	return nil
 }
 
 // touchEditedBean sets updated_at of the bean being edited if the editor
@@ -679,67 +334,6 @@ func (a *App) touchEditedBean() {
 	}
 }
 
-// acceptsTextInput reports whether the active view currently routes typed
-// characters into a text field, so batched runes must be kept intact.
-func (a *App) acceptsTextInput() bool {
-	switch a.state {
-	case viewList:
-		return a.typing()
-	case viewParentPicker:
-		return a.parentPicker.list.FilterState() == list.Filtering
-	case viewStatusPicker:
-		return a.statusPicker.list.FilterState() == list.Filtering
-	case viewTypePicker:
-		return a.typePicker.list.FilterState() == list.Filtering
-	case viewPriorityPicker:
-		return a.priorityPicker.list.FilterState() == list.Filtering
-	case viewBlockingPicker:
-		return a.blockingPicker.list.FilterState() == list.Filtering
-	case viewCommandPalette:
-		return true
-	}
-	return false
-}
-
-// releaseHeldKeysMsg delivers keys held back by handleKeys.
-type releaseHeldKeysMsg struct{}
-
-// handleKeys handles key messages one after another, as if they had been
-// typed separately, splitting batched runes into single-key shortcuts.
-//
-// A key may return a command whose message changes the view (e.g. "s" opens
-// the status picker via openStatusPickerMsg). The remaining keys, and any keys
-// arriving in the meantime, are therefore held back until that command's
-// messages have been processed. Once a text input has focus, the remaining
-// keys are delivered to it directly as text.
-func (a *App) handleKeys(keys []tea.KeyMsg) tea.Cmd {
-	var cmds []tea.Cmd
-	for len(keys) > 0 {
-		if a.acceptsTextInput() {
-			for _, k := range keys {
-				_, cmd := a.Update(k)
-				cmds = append(cmds, cmd)
-			}
-			break
-		}
-		if split, ok := splitBatchedRunes(keys[0]); ok {
-			keys = append(split, keys[1:]...)
-		}
-		k := keys[0]
-		keys = keys[1:]
-		_, cmd := a.Update(k)
-		if cmd != nil && len(keys) > 0 && !a.acceptsTextInput() {
-			a.heldKeys = keys
-			a.holdingKeys = true
-			release := func() tea.Msg { return releaseHeldKeysMsg{} }
-			cmds = append(cmds, tea.Sequence(cmd, release))
-			break
-		}
-		cmds = append(cmds, cmd)
-	}
-	return tea.Batch(cmds...)
-}
-
 // View renders the current view, painted with the theme's background (see
 // ui.PaintBackground; a no-op with the terminal theme).
 func (a *App) View() string {
@@ -753,44 +347,10 @@ func (a *App) view() string {
 	if a.width < minAppWidth || a.height < minAppHeight {
 		return a.tooSmallView()
 	}
-	picker := func(modal string, l *list.Model) string {
-		bg := a.browseView()
-		a.recordPicker(modal, l)
-		return overlayModal(bg, modal, a.width, a.height)
+	if o := a.activeOverlay(); o != nil {
+		return a.overlayView(o)
 	}
-	switch a.state {
-	case viewList:
-		return a.browseView()
-	case viewParentPicker:
-		return picker(a.parentPicker.View(), &a.parentPicker.list)
-	case viewStatusPicker:
-		return picker(a.statusPicker.View(), &a.statusPicker.list)
-	case viewTypePicker:
-		return picker(a.typePicker.View(), &a.typePicker.list)
-	case viewPriorityPicker:
-		return picker(a.priorityPicker.View(), &a.priorityPicker.list)
-	case viewBlockingPicker:
-		return picker(a.blockingPicker.View(), &a.blockingPicker.list)
-	case viewHelpOverlay:
-		bg, modal := a.browseView(), a.helpOverlay.View()
-		a.recordModal(modal)
-		return overlayModal(bg, modal, a.width, a.height)
-	case viewWorkspaces:
-		local := &hitMap{}
-		a.rec = local.recorder()
-		modal := a.workspacesOverlayView()
-		a.rec = hitRecorder{}
-		bg := a.browseView()
-		x, y := a.recordModal(modal)
-		a.hits.recorder().place(local, x, y)
-		return overlayModal(bg, modal, a.width, a.height)
-	case viewCommandPalette:
-		modal := a.commandPaletteView()
-		bg := a.browseView()
-		a.recordModal(modal)
-		return overlayModal(bg, modal, a.width, a.height)
-	}
-	return ""
+	return a.browseView()
 }
 
 // getEditor returns the user's preferred editor using the fallback chain:

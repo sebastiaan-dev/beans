@@ -76,3 +76,9 @@ func borderStyle() lipgloss.Style { return fg(colBorder()) }
 
 // keyStyle renders a key in hints and help.
 func keyStyle() lipgloss.Style { return fg(colAccent()).Bold(true) }
+
+// listTitleStyle renders list and section titles.
+func listTitleStyle() lipgloss.Style { return fg(colAccent()).Bold(true) }
+
+// modalDimStyle renders the dimmed background behind modals.
+func modalDimStyle() lipgloss.Style { return fg(colDim()) }
