@@ -1,5 +1,5 @@
 +--------------------------------------------------------------------------------------------------+
-| beans: demo  [1 Tree] 2 Ready 3 Blocked 4 Audit            / query - F filters - ? help - q quit |
+| beans: demo  [1 Tree] 2 Ready 3 Blocked 4 Audit           : commands - / query - ? help - q quit |
 | ------------------------------------------------------------------------------------------------ |
 | +- Status --+ +- Type --+ +- Priority -+ +- Tags --+ +- Archived -+ +- Ready -+ +- Done -+ +---+ |
 | | any       | | any     | | any        | | any     | | shown      | | any     | | shown  | | x | |

@@ -263,8 +263,8 @@ func TestBrowseTooSmall(t *testing.T) {
 func TestBrowseHeader(t *testing.T) {
 	withStableRendering(t)
 	app := newDemoApp(t, 100, 30)
-	header := stripAnsi(app.headerLine(96))
-	if !strings.HasPrefix(header, "beans: demo") || !strings.HasSuffix(header, "/ query · F filters · ? help · q quit") {
+	header := stripAnsi(app.headerLine(140))
+	if !strings.HasPrefix(header, "beans: demo") || !strings.HasSuffix(header, ": commands · / query · F filters · ? help · q quit") {
 		t.Errorf("header = %q", header)
 	}
 	// Narrow terminals drop the less important hints first.

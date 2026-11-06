@@ -379,8 +379,8 @@ func (a *App) headerLine(width int) string {
 	right := ""
 	if room > 0 {
 		right = renderHints(
-			[]keyHint{{"/", "query"}, {"F", "filters"}},
-			[]keyHint{{"?", "help"}, {"q", "quit"}},
+			[]keyHint{cmdHint("palette"), cmdHint("query"), cmdHint("focus-filter")},
+			[]keyHint{cmdHint("help"), cmdHint("quit")},
 			room,
 		)
 		if lipgloss.Width(right) > room {

@@ -1036,15 +1036,16 @@ func (m listModel) treeHints(wide bool) []keyHint {
 	if m.doneHidden() {
 		hideLabel = "show done"
 	}
+	// The hints refer to the command registry (commands.go).
 	if len(m.selectedBeans) > 0 {
 		return []keyHint{
-			{"esc", "clear selection"},
-			{"space", "toggle"},
-			{"s", "status"},
-			{"t", "type"},
-			{"P", "priority"},
-			{"p", "parent"},
-			{"y", "copy ids"},
+			cmdHint("clear-selection"),
+			cmdHint("select", "toggle"),
+			cmdHint("status"),
+			cmdHint("type"),
+			cmdHint("priority"),
+			cmdHint("parent"),
+			cmdHint("copy-id", "copy ids"),
 		}
 	}
 	detail := "details"
@@ -1053,29 +1054,29 @@ func (m listModel) treeHints(wide bool) []keyHint {
 	}
 	var hints []keyHint
 	if m.search.Value() != "" {
-		hints = append(hints, keyHint{"esc", "clear filter"})
+		hints = append(hints, cmdHint("clear-filters"))
 	}
 	return append(hints,
-		keyHint{"enter", detail},
-		keyHint{"e", "edit"},
-		keyHint{"c", "create"},
-		keyHint{"C", "child"},
-		keyHint{"r", "rename"},
-		keyHint{"s", "status"},
-		keyHint{"t", "type"},
-		keyHint{"P", "priority"},
-		keyHint{"p", "parent"},
-		keyHint{"b", "blocking"},
-		keyHint{"n", "next"},
-		keyHint{"u", "undo"},
-		keyHint{"K J", "move"},
-		keyHint{glyphs().KeyLeftRight, "fold"},
-		keyHint{"space", "select"},
-		keyHint{"H", hideLabel},
-		keyHint{"y", "copy id"},
-		keyHint{"F", "filters"},
-		keyHint{"/", "query"},
-		keyHint{"zR zM", "open/close all"},
-		keyHint{"g t", "tag"},
+		cmdHint("focus-detail", detail),
+		cmdHint("edit"),
+		cmdHint("create"),
+		cmdHint("create-child"),
+		cmdHint("rename"),
+		cmdHint("status"),
+		cmdHint("type"),
+		cmdHint("priority"),
+		cmdHint("parent"),
+		cmdHint("blocking"),
+		cmdHint("next"),
+		cmdHint("undo"),
+		cmdPairHint("move", "move-up", "move-down"),
+		cmdHint("fold"),
+		cmdHint("select"),
+		cmdHint("hide-done", hideLabel),
+		cmdHint("copy-id"),
+		cmdHint("focus-filter"),
+		cmdHint("query"),
+		cmdPairHint("open/close all", "open-all", "close-all"),
+		cmdHint("filter-tag"),
 	)
 }

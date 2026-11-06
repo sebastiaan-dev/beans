@@ -520,33 +520,34 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 
 // hints returns the footer hints for the focused pane in order of importance.
 func (m detailModel) hints() []keyHint {
+	// The hints refer to the command registry (commands.go).
 	var hints []keyHint
-	hints = append(hints, keyHint{"esc", "back"})
+	hints = append(hints, cmdHint("back"))
 	if m.section == sectionRelations {
-		hints = append(hints, keyHint{"enter", "open"}, keyHint{glyphs().KeyUpDown, "move"})
+		hints = append(hints, cmdHint("open-relation"), cmdHint("detail-move", "move"))
 	} else {
-		hints = append(hints, keyHint{glyphs().KeyUpDown, "scroll"})
+		hints = append(hints, cmdHint("detail-move"))
 		if len(m.checks) > 0 {
-			hints = append(hints, keyHint{"[ ]", "checkbox"}, keyHint{"x", "toggle"})
+			hints = append(hints, cmdHint("checkbox-select"), cmdHint("checkbox-toggle"))
 		}
 	}
 	if m.section == sectionRelations {
-		hints = append(hints, keyHint{"tab", "body"})
+		hints = append(hints, cmdHint("detail-sections"))
 	} else {
-		hints = append(hints, keyHint{"tab", "filters"})
+		hints = append(hints, cmdHint("detail-sections", "filters"))
 	}
 	if len(m.history) > 0 {
-		hints = append(hints, keyHint{"bksp", "previous"})
+		hints = append(hints, cmdHint("previous-bean"))
 	}
 	return append(hints,
-		keyHint{"e", "edit"},
-		keyHint{"s", "status"},
-		keyHint{"t", "type"},
-		keyHint{"P", "priority"},
-		keyHint{"p", "parent"},
-		keyHint{"b", "blocking"},
-		keyHint{"y", "copy id"},
-		keyHint{"pgup/pgdn", "scroll body"},
+		cmdHint("edit"),
+		cmdHint("status"),
+		cmdHint("type"),
+		cmdHint("priority"),
+		cmdHint("parent"),
+		cmdHint("blocking"),
+		cmdHint("copy-id"),
+		cmdHint("detail-page"),
 	)
 }
 
