@@ -523,6 +523,11 @@ func (c *Config) toYAMLNode() *yaml.Node {
 		}
 		tuiMapping.Content = append(tuiMapping.Content, key, overrides)
 	}
+	if c.TUI.AgentCommand != "" {
+		key := strNode("agent_command")
+		key.HeadComment = "Agent the TUI launches in a bean's workspace (W); placeholders: {{bean_id}},\n{{bean_title}}, {{path}} (overridden by $BEANS_AGENT_COMMAND)"
+		tuiMapping.Content = append(tuiMapping.Content, key, strNode(c.TUI.AgentCommand))
+	}
 
 	// Build the top-level mapping
 	topMapping := &yaml.Node{

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/hmans/beans/internal/output"
+	"github.com/hmans/beans/internal/tui"
 	"github.com/hmans/beans/internal/ui"
 	"github.com/hmans/beans/internal/worktree"
 	"github.com/hmans/beans/pkg/bean"
@@ -174,6 +175,7 @@ func startInWorktree(ctx context.Context, mainCore *beancore.Core, mgr *worktree
 	}
 
 	wtCore := beancore.New(filepath.Join(wt.Path, beancore.BeansDir), mainCore.Config())
+	wtCore.SetWarnWriter(tio.Stderr)
 	if err := wtCore.Load(); err != nil {
 		return nil, cmdError(o.json, output.ErrFileError, "loading beans in worktree %s: %v", wt.Path, err)
 	}
@@ -190,6 +192,34 @@ func startInWorktree(ctx context.Context, mainCore *beancore.Core, mgr *worktree
 	}
 	res.Warnings = warnings
 	return res, nil
+}
+
+func init() {
+	// The TUI's w/W keys start beans in workspaces exactly like
+	// `beans start <id> --worktree`.
+	tui.RegisterWorkspaceSupport(tui.WorkspaceSupport{NewManager: newWorktreeManager, Start: startWorkspaceForTUI})
+}
+
+// startWorkspaceForTUI is startInWorktree for the TUI (worktree name derived
+// from the bean).
+func startWorkspaceForTUI(ctx context.Context, mainCore *beancore.Core, mgr *worktree.Manager, id string, tio worktree.TerminalIO) (*tui.WorkspaceStart, error) {
+	res, err := startInWorktree(ctx, mainCore, mgr, id, &startWorktreeOptions{worktree: true}, tio)
+	if err != nil {
+		return nil, err
+	}
+	name := res.Worktree.Name
+	if name == "" {
+		name = res.Worktree.ID
+	}
+	return &tui.WorkspaceStart{
+		BeanID:   res.Bean.ID,
+		Name:     name,
+		Branch:   res.Worktree.Branch,
+		Path:     res.Worktree.Path,
+		Created:  res.Created,
+		Message:  startWorktreeMessage(res),
+		Warnings: res.Warnings,
+	}, nil
 }
 
 func containsString(list []string, s string) bool {

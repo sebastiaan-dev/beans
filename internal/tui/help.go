@@ -68,6 +68,7 @@ var helpSections = []helpSection{
 		{"gg G", "First / last bean"},
 		{"n", "Next bean to do"},
 		{"enter tab", "Focus details"},
+		{"g w", "Workspaces"},
 	}},
 	{"Details", [][2]string{
 		{"tab ⇧tab", "Sections / panes"},
@@ -97,6 +98,8 @@ var helpSections = []helpSection{
 		{"u", "Undo last change"},
 		{"space", "Select for batch"},
 		{"y", "Copy bean ID"},
+		{"w", "Start in workspace"},
+		{"W", "…and run agent"},
 	}},
 }
 

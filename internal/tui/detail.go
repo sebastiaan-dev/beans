@@ -234,6 +234,7 @@ const (
 type detailModel struct {
 	resolver *beangraph.CoreResolver
 	config   *config.Config
+	ws       *workspaces // workspace badges (see workspaces.go)
 
 	bean  *bean.Bean
 	links []resolvedLink
@@ -381,7 +382,7 @@ func (m detailModel) layout() detailLayout {
 	need := func() int {
 		n := 2 + len(l.titleLines) + 3*l.metaRows + 3*l.extraRows + 2 + l.relRows + 3 // body: 1 line
 		if l.history {
-			n += 5
+			n += m.historyHeight()
 		}
 		return n
 	}
@@ -407,7 +408,7 @@ func (m detailModel) layout() detailLayout {
 	if l.history && len(m.body) > room {
 		// The body matters more than the history.
 		l.history = false
-		room += 5
+		room += m.historyHeight()
 	}
 	l.bodyRows = max(1, min(len(m.body), room))
 	return l
@@ -632,7 +633,7 @@ func (m detailModel) renderBoxes(w int) []string {
 	none := mutedStyle().Render("(none)")
 
 	var out []string
-	out = append(out, box{label: "Title · " + b.ID, hotkey: "e", lines: l.titleLines, width: w, padding: 1}.render()...)
+	out = append(out, box{label: "Title · " + b.ID, topRight: workspaceBadge(m.resolver.Core, m.ws, b.ID, ""), hotkey: "e", lines: l.titleLines, width: w, padding: 1}.render()...)
 
 	status := fg(colNamed(colors.StatusColor)).Bold(!colors.IsArchive).Render(b.Status)
 	if implicit, _ := m.resolver.Core.ImplicitStatus(b.ID); implicit != "" {
@@ -728,11 +729,17 @@ func (m detailModel) renderBoxes(w int) []string {
 		if b.UpdatedAt != nil {
 			updated = b.UpdatedAt.Local().Format("2006-01-02 15:04")
 		}
-		out = append(out, box{label: "History", lines: []string{
+		historyRows := []string{
 			row("Created", created),
 			row("Updated", updated),
 			row("ETag", b.ETag()),
-		}, width: w, padding: 1}.render()...)
+		}
+		if info, ok := workspaceFor(m.resolver.Core, m.ws, b.ID); ok {
+			badge := workspaceBadge(m.resolver.Core, m.ws, b.ID, "")
+			path := truncatePathLeft(info.Path, w-4-9-lipgloss.Width(badge)-1)
+			historyRows = append(historyRows, row("Changed", badge+mutedStyle().Render(" "+path)))
+		}
+		out = append(out, box{label: "History", lines: historyRows, width: w, padding: 1}.render()...)
 	}
 	return out
 }
