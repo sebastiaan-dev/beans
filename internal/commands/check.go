@@ -1,12 +1,14 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/hmans/beans/internal/ui"
+	"github.com/hmans/beans/internal/ui/theme"
 	"github.com/hmans/beans/internal/worktree"
 	"github.com/hmans/beans/pkg/beancore"
 	"github.com/hmans/beans/pkg/config"
@@ -26,13 +28,17 @@ type checkResult struct {
 	Fixed        int                       `json:"fixed,omitempty"`
 	// Notices are informational hints that never fail the check.
 	Notices []string `json:"notices,omitempty"`
+	// Warnings are problems that degrade gracefully (e.g. a theme that falls
+	// back to terminal colors because nvim is not installed); they never
+	// fail the check.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 var checkCmd = &cobra.Command{
 	Use:   "check",
 	Short: "Validate configuration and bean integrity",
 	Long: `Checks configuration and bean integrity, including:
-- Configuration settings (colors, default type)
+- Configuration settings (colors, default type, theme)
 - Duplicate bean IDs (multiple files claiming the same ID)
 - Broken links (links to non-existent beans)
 - Self-references (beans linking to themselves)
@@ -91,6 +97,22 @@ Note: Cycles cannot be auto-fixed and require manual intervention.`,
 			if !checkJSON {
 				fmt.Printf("  %s %s\n", ui.Muted.Render("i"), notice)
 			}
+		}
+
+		// 2e. Check the theme ($BEANS_THEME / tui.theme): unknown or unloadable
+		// themes are errors, a missing nvim is a warning (the UI falls back
+		// to terminal colors).
+		themeOK, themeErr, themeWarning := checkTheme(cfg, theme.NvimAvailable(), loadThemeForCheck)
+		var warnings []string
+		if themeErr != "" {
+			configErrors = append(configErrors, themeErr)
+		} else if themeWarning != "" {
+			warnings = append(warnings, themeWarning)
+			if !checkJSON {
+				fmt.Printf("  %s %s\n", ui.Warning.Render("!"), themeWarning)
+			}
+		} else if !checkJSON {
+			fmt.Printf("  %s %s\n", ui.Success.Render("✓"), themeOK)
 		}
 
 		// 3. Check all status colors are valid (hardcoded statuses)
@@ -223,6 +245,7 @@ Note: Cycles cannot be auto-fixed and require manual intervention.`,
 				DuplicateIDs: duplicateIDs,
 				Fixed:        fixed,
 				Notices:      notices,
+				Warnings:     warnings,
 			}
 			data, _ := json.MarshalIndent(result, "", "  ")
 			fmt.Println(string(data))
@@ -263,6 +286,36 @@ func worktreeBackendNotice(backend config.WorktreeBackend, wtAvailable bool) str
 		return "worktree.backend is worktrunk but wt was not found on PATH; beans-serve needs it to manage workspaces"
 	}
 	return ""
+}
+
+// checkTheme validates the theme setting in effect. It returns a success
+// message, or an error (unknown theme, unreadable palette, missing
+// colorscheme), or a warning (nvim theme without nvim installed). load loads
+// a theme to verify it exists.
+func checkTheme(c *config.Config, nvimAvailable bool, load func(config.ThemeSpec) error) (ok, errMsg, warning string) {
+	value, source := c.ThemeSetting()
+	spec, err := c.GetTheme()
+	if err != nil {
+		return "", err.Error(), ""
+	}
+	if _, err := c.GetThemeBackground(spec); err != nil {
+		return "", err.Error(), ""
+	}
+	if spec.Kind == config.ThemeNvim && !nvimAvailable {
+		return "", "", fmt.Sprintf("%s is %q but nvim is not installed; terminal colors will be used", source, value)
+	}
+	if spec.Kind != config.ThemeTerminal {
+		if err := load(spec); err != nil {
+			return "", fmt.Sprintf("%s %q: %v", source, value, err), ""
+		}
+	}
+	return fmt.Sprintf("Theme '%s' is valid", spec), "", ""
+}
+
+// loadThemeForCheck loads a theme to verify that it exists.
+func loadThemeForCheck(spec config.ThemeSpec) error {
+	_, err := theme.Load(context.Background(), spec, theme.NvimOptions{})
+	return err
 }
 
 func RegisterCheckCmd(root *cobra.Command) {

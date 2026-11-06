@@ -203,9 +203,9 @@ const showBodyWordWrap = 80
 
 // newBodyRenderer returns the glamour renderer used for bean bodies.
 //
-// On a terminal it uses the shared 16-color ANSI palette style (the same one
-// as the TUI detail view) with the given color profile, so the output follows
-// the terminal theme. It deliberately avoids glamour's auto style, which emits
+// On a terminal it uses the shared markdown style of the current theme (the
+// same one as the TUI detail view; with the default theme, the 16-color ANSI
+// palette) with the given color profile, so the output follows the theme. It deliberately avoids glamour's auto style, which emits
 // 256-color codes and performs slow terminal background detection. When stdout
 // is not a terminal, or colors are disabled (an Ascii profile, e.g. NO_COLOR or
 // TERM=dumb), it uses glamour's plain "notty" style without escape sequences.
@@ -219,7 +219,7 @@ func newBodyRenderer(isTTY bool, profile termenv.Profile) (*glamour.TermRenderer
 	}
 	return glamour.NewTermRenderer(
 		glamour.WithStyles(ui.MarkdownStyleConfig()),
-		glamour.WithChromaFormatter(ui.MarkdownChromaFormatter),
+		glamour.WithChromaFormatter(ui.MarkdownChromaFormatterFor(profile)),
 		glamour.WithColorProfile(profile),
 		glamour.WithWordWrap(showBodyWordWrap),
 	)

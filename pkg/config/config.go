@@ -185,6 +185,7 @@ type Config struct {
 	Worktree WorktreeConfig `yaml:"worktree,omitempty"`
 	Agent    AgentConfig    `yaml:"agent,omitempty"`
 	Server   ServerConfig   `yaml:"server,omitempty"`
+	TUI      TUIConfig      `yaml:"tui,omitempty"`
 
 	// configDir is the directory containing the config file (not serialized)
 	// Used to resolve relative paths
@@ -486,6 +487,19 @@ func (c *Config) toYAMLNode() *yaml.Node {
 		serverMapping.Content = append(serverMapping.Content, portKey, intNode(c.Server.Port))
 	}
 
+	// Build the tui mapping
+	tuiMapping := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	if c.TUI.Theme != "" {
+		key := strNode("theme")
+		key.HeadComment = "Color theme: terminal (default), nvim, nvim:<colorscheme> or file:<path>\n(overridden by $BEANS_THEME)"
+		tuiMapping.Content = append(tuiMapping.Content, key, strNode(c.TUI.Theme))
+	}
+	if c.TUI.ThemeBackground != nil {
+		key := strNode("theme_background")
+		key.HeadComment = "Paint the theme's background behind the TUI (default: true for nvim/file themes)"
+		tuiMapping.Content = append(tuiMapping.Content, key, scalar(fmt.Sprintf("%t", *c.TUI.ThemeBackground), "!!bool"))
+	}
+
 	// Build the top-level mapping
 	topMapping := &yaml.Node{
 		Kind:        yaml.MappingNode,
@@ -508,6 +522,10 @@ func (c *Config) toYAMLNode() *yaml.Node {
 
 	if len(serverMapping.Content) > 0 {
 		topMapping.Content = append(topMapping.Content, strNode("server"), serverMapping)
+	}
+
+	if len(tuiMapping.Content) > 0 {
+		topMapping.Content = append(topMapping.Content, strNode("tui"), tuiMapping)
 	}
 
 	// Wrap in a document node
