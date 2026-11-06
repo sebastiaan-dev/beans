@@ -4,6 +4,8 @@
   import { configStore } from '$lib/config.svelte';
   import { worktreeStore } from '$lib/worktrees.svelte';
   import { ui } from '$lib/uiState.svelte';
+  import { focusMode } from '$lib/focusMode.svelte';
+  import { FOCUS_ENTER_KEY } from '$lib/focusMode';
   import { statusColors, typeColors, priorityColors } from '$lib/styles';
   import { client } from '$lib/graphqlClient';
   import {
@@ -226,6 +228,16 @@
           Edit
         </button>
       {/if}
+      <button
+        class="btn-toggle btn-toggle-inactive"
+        onclick={() => focusMode.enter(bean.id)}
+        title="Focus mode: read this bean without distractions ({FOCUS_ENTER_KEY.toUpperCase()})"
+        aria-keyshortcuts={FOCUS_ENTER_KEY}
+        data-focus-enter
+      >
+        <span class="icon-[uil--book-open] size-4 text-violet-400" aria-hidden="true"></span>
+        Focus
+      </button>
     </div>
   </div>
 
@@ -326,84 +338,3 @@
     <div>Path: {bean.path}</div>
   </div>
 </div>
-
-<style>
-  .bean-body :global(h1) {
-    font-size: 1.25rem;
-    font-weight: 600;
-    color: var(--th-md-h1);
-    border-bottom: 1px solid var(--th-md-h1-border);
-    padding-bottom: 0.25rem;
-    margin-top: 1.5rem;
-  }
-
-  .bean-body :global(h2) {
-    font-size: 1.1rem;
-    font-weight: 600;
-    color: var(--th-md-h2);
-    margin-top: 1.25rem;
-  }
-
-  .bean-body :global(h3) {
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--th-md-h3);
-    margin-top: 1rem;
-  }
-
-  .bean-body :global(h4),
-  .bean-body :global(h5),
-  .bean-body :global(h6) {
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: var(--th-md-h456);
-    margin-top: 0.75rem;
-  }
-
-  .bean-body :global(ul:has(input[type='checkbox'])) {
-    list-style: none;
-    padding-left: 0;
-  }
-
-  .bean-body :global(li:has(> input[type='checkbox'])) {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.5rem;
-    padding-left: 0;
-  }
-
-  .bean-body :global(li:has(> input[type='checkbox'])::before) {
-    content: none;
-  }
-
-  .bean-body :global(input[type='checkbox']) {
-    margin-top: 0.25rem;
-    accent-color: #22c55e;
-  }
-
-  .bean-body :global(pre.shiki) {
-    padding: 1rem;
-    border-radius: 0.5rem;
-    overflow-x: auto;
-    font-size: 0.875rem;
-    line-height: 1.5;
-    margin: 1rem 0;
-  }
-
-  .bean-body :global(pre.shiki code) {
-    font-family:
-      ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, 'Cascadia Code', Consolas,
-      'Liberation Mono', 'Courier New', monospace;
-  }
-
-  .bean-body :global(code:not(pre code)) {
-    color: var(--th-text);
-    background-color: var(--th-md-code-bg);
-    padding: 0.125rem 0.375rem;
-    border-radius: 0.25rem;
-    font-size: 0.875em;
-    font-family:
-      ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, 'Cascadia Code', Consolas,
-      'Liberation Mono', 'Courier New', monospace;
-  }
-</style>

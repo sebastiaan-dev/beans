@@ -1,14 +1,16 @@
 <script lang="ts">
-  import { beansStore } from '$lib/beans.svelte';
+  import { beansStore, type Bean } from '$lib/beans.svelte';
   import { ui } from '$lib/uiState.svelte';
   import { renderMarkdown } from '$lib/markdown';
 
   interface Props {
     content: string;
     class?: string;
+    /** Called when a bean link in the content is clicked (default: select the bean). */
+    onBeanLink?: (bean: Bean) => void;
   }
 
-  let { content, class: className }: Props = $props();
+  let { content, class: className, onBeanLink }: Props = $props();
 
   let renderedHtml = $state('');
 
@@ -27,7 +29,9 @@
     if (!target) return;
     e.preventDefault();
     const linkedBean = beansStore.get(target.dataset.beanId!);
-    if (linkedBean) ui.selectBean(linkedBean);
+    if (!linkedBean) return;
+    if (onBeanLink) onBeanLink(linkedBean);
+    else ui.selectBean(linkedBean);
   }
 </script>
 

@@ -1,9 +1,8 @@
 <script lang="ts">
   import type { Bean } from '$lib/beans.svelte';
-  import { sortBeans } from '$lib/beans.svelte';
   import { isArchived } from '$lib/filter';
   import { applyDrop } from '$lib/dragOrder';
-  import { planningFilter } from '$lib/planningFilter.svelte';
+  import { planningFilter, type BoardStatus } from '$lib/planningFilter.svelte';
   import { client } from '$lib/graphqlClient';
   import { typeBorders } from '$lib/styles';
   import { fade } from 'svelte/transition';
@@ -30,7 +29,7 @@
     confirmingArchiveAll = false;
   }
 
-  const columns = [
+  const columns: { status: BoardStatus; label: string; color: string }[] = [
     { status: 'todo', label: 'Todo', color: 'bg-status-todo-bg text-status-todo-text' },
     {
       status: 'in-progress',
@@ -44,13 +43,8 @@
     }
   ];
 
-  function beansForStatus(status: string): Bean[] {
-    // sortBeans already handles order → priority → type → title sorting
-    return sortBeans(
-      planningFilter.beans.filter(
-        (b) => b.status === status && b.status !== 'scrapped' && planningFilter.predicate(b)
-      )
-    );
+  function beansForStatus(status: BoardStatus): Bean[] {
+    return planningFilter.boardColumns[status];
   }
 
   // The completed column also lists archived beans when the filter asks for them.

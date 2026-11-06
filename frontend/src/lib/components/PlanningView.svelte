@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { beansStore, type Bean } from '$lib/beans.svelte';
-  import { backlogRoots } from '$lib/backlog';
+  import { beansStore } from '$lib/beans.svelte';
+  import { focusMode } from '$lib/focusMode.svelte';
   import { ui } from '$lib/uiState.svelte';
 
   let { planningView }: { planningView: 'backlog' | 'board' } = $props();
@@ -18,32 +18,16 @@
 
   let filterInput = $state<FilterInput | null>(null);
 
-  // Section roots: top-level backlog beans plus backlog beans whose ancestors
-  // are not in the backlog (e.g. todo children of an in-progress parent).
-  // Archived beans requested by the filter (archived:yes) are never nested
-  // (BeanItem only renders non-archived children), so they are extra roots.
-  function sectionRoots(status: string) {
-    return [
-      ...backlogRoots(beansStore.all, status),
-      ...planningFilter.archivedMatches.filter((b) => b.status === status)
-    ];
-  }
-  const todoRoots = $derived(sectionRoots('todo'));
-  const draftRoots = $derived(sectionRoots('draft'));
-
-  // Keep roots that match the filter or have a matching descendant.
-  function filterBeans(beans: Bean[]) {
-    const tree = planningFilter.tree;
-    return tree ? beans.filter((bean) => tree.visible.has(bean.id)) : beans;
-  }
-
-  const filteredTodoBeans = $derived(filterBeans(todoRoots));
-  const filteredDraftBeans = $derived(filterBeans(draftRoots));
+  const filteredTodoBeans = $derived(planningFilter.backlogSections.todo);
+  const filteredDraftBeans = $derived(planningFilter.backlogSections.draft);
 
   // Every bean with children can be folded; "collapse all" folds all of them.
   const foldableIds = $derived(parentIds(beansStore.all));
 
   function handleKeydown(e: KeyboardEvent) {
+    // The planning view stays mounted (hidden) under focus mode, whose keys the
+    // layout handles (and marks handled: Esc may already have left focus mode).
+    if (focusMode.active || e.defaultPrevented) return;
     if ((e.metaKey || e.ctrlKey) && (e.key === 'f' || e.key === '/')) {
       e.preventDefault();
       filterInput?.focus();
