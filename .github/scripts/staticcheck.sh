@@ -8,7 +8,6 @@
 #   staticcheck.sh                   check against the baseline
 #   staticcheck.sh --update-baseline rewrite the baseline from current findings
 #
-# TODO(repos-8849): fix the baselined findings and drop the baseline.
 set -euo pipefail
 
 # Pinned; bump deliberately (new versions add checks).
@@ -34,7 +33,7 @@ if [[ $status -ne 0 && $status -ne 1 ]]; then
 fi
 
 # file:line:col: message (CHECK)  →  file: message (CHECK)
-current=$(printf '%s\n' "$raw" | grep -v '^$' | sed -E 's/^([^:]+):[0-9]+:[0-9]+: /\1: /' | LC_ALL=C sort)
+current=$(printf '%s\n' "$raw" | { grep -v '^$' || true; } | sed -E 's/^([^:]+):[0-9]+:[0-9]+: /\1: /' | LC_ALL=C sort)
 
 if [[ "${1:-}" == "--update-baseline" ]]; then
 	{
@@ -46,7 +45,7 @@ if [[ "${1:-}" == "--update-baseline" ]]; then
 	exit 0
 fi
 
-known=$(grep -v -e '^#' -e '^$' "$baseline" | LC_ALL=C sort)
+known=$({ grep -v -e '^#' -e '^$' "$baseline" || true; } | LC_ALL=C sort)
 new=$(LC_ALL=C comm -13 <(printf '%s\n' "$known") <(printf '%s\n' "$current") | grep -v '^$' || true)
 gone=$(LC_ALL=C comm -23 <(printf '%s\n' "$known") <(printf '%s\n' "$current") | grep -v '^$' || true)
 

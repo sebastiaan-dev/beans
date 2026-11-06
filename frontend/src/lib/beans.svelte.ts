@@ -1,6 +1,7 @@
 import { pipe, subscribe } from 'wonka';
 import { SvelteMap } from 'svelte/reactivity';
 import { client } from './graphqlClient';
+import { isArchived } from './filter';
 import {
   BeanChangedDocument,
   type BeanFieldsFragment,
@@ -37,7 +38,12 @@ export class BeansStore {
 
   /** All non-archived beans as a sorted array (derived) */
   get all(): Bean[] {
-    return sortBeans(Array.from(this.beans.values()).filter((b) => !b.path.startsWith('archive/')));
+    return sortBeans(Array.from(this.beans.values()).filter((b) => !isArchived(b)));
+  }
+
+  /** All beans, including archived ones, as a sorted array (derived) */
+  get allWithArchived(): Bean[] {
+    return sortBeans(Array.from(this.beans.values()));
   }
 
   /** Count of beans */

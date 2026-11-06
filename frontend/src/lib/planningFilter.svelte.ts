@@ -1,11 +1,13 @@
-import { beansStore } from '$lib/beans.svelte';
+import { beansStore, type Bean } from '$lib/beans.svelte';
 import { ui } from '$lib/uiState.svelte';
 import {
   compileFilter,
   createFilterContext,
   filterTree,
   formatFilter,
+  isArchived,
   isEmptyFilter,
+  mentionsArchived,
   parseFilter,
   type FilterQuery,
   type SuggestionSources
@@ -26,10 +28,36 @@ class PlanningFilter {
   readonly context = $derived(createFilterContext(beansStore.beans.values()));
   readonly predicate = $derived(compileFilter(this.query, this.context));
 
-  /** Matched beans plus their ancestors among the visible beans, or null when unfiltered. */
-  readonly tree = $derived(
-    this.active ? filterTree(beansStore.all, this.predicate, this.context.byId) : null
+  /**
+   * Whether archived beans are candidates: only when the query has an
+   * archived: clause (e.g. `archived:yes`); otherwise they stay hidden.
+   */
+  readonly includesArchived = $derived(mentionsArchived(this.query));
+
+  /** Beans the planning views filter (sorted): non-archived ones, plus archived ones if requested. */
+  readonly beans: Bean[] = $derived(
+    this.includesArchived ? beansStore.allWithArchived : beansStore.all
   );
+
+  /** Archived beans that match the filter (empty unless the query asks for archived beans). */
+  readonly archivedMatches: Bean[] = $derived(
+    this.includesArchived ? this.beans.filter((b) => isArchived(b) && this.predicate(b)) : []
+  );
+
+  /**
+   * Matched beans plus their ancestors among the visible beans, or null when
+   * unfiltered. Archived matches are included without ancestors: the bean tree
+   * only nests non-archived beans, so they are rendered as roots.
+   */
+  readonly tree = $derived.by(() => {
+    if (!this.active) return null;
+    const tree = filterTree(beansStore.all, this.predicate, this.context.byId);
+    for (const bean of this.archivedMatches) {
+      tree.matched.add(bean.id);
+      tree.visible.add(bean.id);
+    }
+    return tree;
+  });
 
   /** Values offered by autocomplete and the popover. */
   readonly sources: SuggestionSources = $derived.by(() => {

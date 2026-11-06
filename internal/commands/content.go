@@ -64,25 +64,6 @@ func cmdError(jsonMode bool, code string, format string, args ...any) error {
 	return fmt.Errorf(format, args...)
 }
 
-// mergeTags combines existing tags with additions and removals.
-func mergeTags(existing, add, remove []string) []string {
-	tags := make(map[string]bool)
-	for _, t := range existing {
-		tags[t] = true
-	}
-	for _, t := range add {
-		tags[t] = true
-	}
-	for _, t := range remove {
-		delete(tags, t)
-	}
-	result := make([]string, 0, len(tags))
-	for t := range tags {
-		result = append(result, t)
-	}
-	return result
-}
-
 // applyBodyReplace replaces exactly one occurrence of old with new.
 // Returns an error if old is not found or found multiple times.
 func applyBodyReplace(body, old, new string) (string, error) {

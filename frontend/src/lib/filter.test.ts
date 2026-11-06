@@ -13,6 +13,7 @@ import {
   isArchived,
   isEmptyFilter,
   knownValues,
+  mentionsArchived,
   matchesText,
   parseFilter,
   removeTerm,
@@ -331,6 +332,21 @@ describe('compileFilter ready/done/archived', () => {
       expect(run(beans, query)).toEqual(want);
     });
   }
+
+  it('includes archived beans only for queries with an archived: clause', () => {
+    const cases: [string, boolean][] = [
+      ['', false],
+      ['status:completed done:yes', false],
+      ['archived', false],
+      ['archived:', false],
+      ['archived:yes', true],
+      ['-archived:no', true],
+      ['archived:no', true],
+      ['archived:yes,no tag:x', true]
+    ];
+    for (const [query, want] of cases)
+      expect(mentionsArchived(parseFilter(query)), query).toBe(want);
+  });
 
   it('detects archived beans by path', () => {
     expect(isArchived({ path: 'archive/x.md' })).toBe(true);

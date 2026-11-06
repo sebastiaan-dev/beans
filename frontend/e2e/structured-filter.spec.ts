@@ -241,4 +241,57 @@ test.describe('Structured filter', () => {
       'data-filter-context'
     );
   });
+
+  test('shows archived beans only when the query has an archived: clause', async ({
+    beans,
+    boardPage,
+    backlogPage,
+    page
+  }) => {
+    const oldDone = beans.create('Old Done', { status: 'completed', type: 'task' });
+    const oldTodo = beans.create('Old Todo', { status: 'todo', type: 'task' });
+    beans.create('Current Done', { status: 'completed', type: 'task' });
+    beans.create('Current Todo', { status: 'todo', type: 'task' });
+
+    await boardPage.goto();
+    await boardPage.waitForColumnCount('todo', 2);
+    await boardPage.waitForColumnCount('completed', 2);
+    // Archive through the server (like the board's "archive all"); an archived
+    // bean keeps its status, so the archived todo bean belongs to the backlog.
+    for (const id of [oldDone, oldTodo]) {
+      await beans.graphql(`mutation { archiveBean(id: "${id}") }`);
+    }
+
+    const columns = async () => ({
+      todo: await boardPage.getColumnTitles('todo'),
+      completed: await boardPage.getColumnTitles('completed')
+    });
+    const expectColumns = async (want: { todo: string[]; completed: string[] }) =>
+      await expect(async () => expect(await columns()).toEqual(want)).toPass({ timeout: 5_000 });
+
+    // Archived beans stay hidden by default and for filters without archived:.
+    await expectColumns({ todo: ['Current Todo'], completed: ['Current Done'] });
+    await filterInput(page).fill('done:yes');
+    await expectColumns({ todo: [], completed: ['Current Done'] });
+
+    await filterInput(page).fill('archived:yes');
+    await expectColumns({ todo: ['Old Todo'], completed: ['Old Done'] });
+    // "Archive all" only offers the beans that aren't archived yet.
+    await expect(boardPage.archiveAllButton).not.toBeVisible();
+
+    await filterInput(page).fill('archived:yes,no done:yes');
+    await expectColumns({ todo: [], completed: ['Current Done', 'Old Done'] });
+    await expect(boardPage.archiveAllButton).toBeVisible();
+
+    await filterInput(page).fill('-archived:yes');
+    await expectColumns({ todo: ['Current Todo'], completed: ['Current Done'] });
+
+    // The backlog lists archived backlog beans as roots when asked for.
+    await backlogPage.goto(1);
+    await expectTitles(backlogPage, ['Current Todo']);
+    await filterInput(page).fill('archived:yes');
+    await expectTitles(backlogPage, ['Old Todo']);
+    await filterInput(page).fill('archived:yes,no');
+    await expectTitles(backlogPage, ['Current Todo', 'Old Todo']);
+  });
 });

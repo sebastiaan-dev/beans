@@ -23,7 +23,9 @@
  *                          not blocked, not draft/in-progress/completed/scrapped
  *                          and no completed/scrapped ancestor
  *   done:yes|no            bean is (not) completed/scrapped, itself or via an ancestor
- *   archived:yes|no        bean is (not) stored in the archive directory
+ *   archived:yes|no        bean is (not) stored in the archive directory (the
+ *                          planning views hide archived beans unless the query
+ *                          has an archived: clause, see mentionsArchived)
  *   -status:completed      a leading "-" negates a field term
  *   "some words"           quotes group values/text containing spaces
  *   anything else          free-text search on title, id, type, status and tags
@@ -232,6 +234,15 @@ export function formatFilter(query: FilterQuery): string {
 /** Clauses that actually constrain results (incomplete `status:` terms do not). */
 export function activeClauses(query: FilterQuery): FilterClause[] {
   return query.terms.filter((t): t is FilterClause => t.kind === 'clause' && t.values.length > 0);
+}
+
+/**
+ * Whether the query has an archived: clause. The planning views hide archived
+ * beans by default; such a clause (archived:yes, -archived:no, archived:yes,no,
+ * …) makes them candidates, so the clause alone decides about them.
+ */
+export function mentionsArchived(query: FilterQuery): boolean {
+  return activeClauses(query).some((c) => c.field === 'archived');
 }
 
 export function isEmptyFilter(query: FilterQuery): boolean {

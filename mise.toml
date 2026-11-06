@@ -1,7 +1,7 @@
 [tools]
 go = "latest"
 node = "latest"
-pnpm = "latest"
+pnpm = "12.18.0" # also used by CI (.github/actions/setup-frontend)
 svu = "latest"
 watchexec = "latest"
 

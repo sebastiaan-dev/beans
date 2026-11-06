@@ -1,8 +1,2 @@
 # Pre-existing staticcheck findings tolerated by .github/scripts/staticcheck.sh
 # (format: "file: message (CHECK)"). Do not add entries; fix new findings.
-internal/agent/store.go: should convert img (type ImageRef) to entryImage instead of using struct literal (S1016)
-internal/agent/store.go: should convert img (type entryImage) to ImageRef instead of using struct literal (S1016)
-internal/commands/content.go: func mergeTags is unused (U1000)
-internal/commands/roadmap_test.go: func (*mockConfig).IsArchiveStatus is unused (U1000)
-internal/commands/roadmap_test.go: func (*mockConfig).StatusNames is unused (U1000)
-internal/commands/roadmap_test.go: type mockConfig is unused (U1000)
