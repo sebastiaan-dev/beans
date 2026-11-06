@@ -194,8 +194,12 @@ Examples:
 		// JSON output (flat list)
 		if listJSON {
 			if !listFull {
-				for _, b := range beans {
-					b.Body = ""
+				// Core's beans are shared, read-only snapshots: strip
+				// the body from copies.
+				for i, b := range beans {
+					stripped := *b
+					stripped.Body = ""
+					beans[i] = &stripped
 				}
 			}
 			return output.SuccessMultiple(beans)

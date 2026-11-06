@@ -171,6 +171,71 @@ type Bean struct {
 	extraFrontMatter []frontMatterField
 }
 
+// Clone returns a deep copy of the bean: modifying the copy (including its
+// slices, timestamps and preserved extra front matter) never affects the
+// original. Nil slices stay nil and empty slices stay empty, so the copy has
+// the same etag.
+func (b *Bean) Clone() *Bean {
+	if b == nil {
+		return nil
+	}
+	c := *b
+	c.Tags = cloneStrings(b.Tags)
+	c.Blocking = cloneStrings(b.Blocking)
+	c.BlockedBy = cloneStrings(b.BlockedBy)
+	c.CreatedAt = cloneTime(b.CreatedAt)
+	c.UpdatedAt = cloneTime(b.UpdatedAt)
+	if b.extraFrontMatter != nil {
+		c.extraFrontMatter = make([]frontMatterField, len(b.extraFrontMatter))
+		for i, f := range b.extraFrontMatter {
+			c.extraFrontMatter[i] = frontMatterField{Key: cloneYAMLNode(f.Key), Value: cloneYAMLNode(f.Value)}
+		}
+	}
+	return &c
+}
+
+// cloneStrings copies s, preserving the distinction between nil and empty.
+func cloneStrings(s []string) []string {
+	if s == nil {
+		return nil
+	}
+	return append(make([]string, 0, len(s)), s...)
+}
+
+func cloneTime(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	c := *t
+	return &c
+}
+
+// cloneYAMLNode deep-copies a YAML node tree. A node reachable several times
+// (e.g. an anchor and the aliases referring to it) is copied once, so the copy
+// has the same structure.
+func cloneYAMLNode(n *yaml.Node) *yaml.Node {
+	return cloneYAMLNodeMemo(n, make(map[*yaml.Node]*yaml.Node))
+}
+
+func cloneYAMLNodeMemo(n *yaml.Node, seen map[*yaml.Node]*yaml.Node) *yaml.Node {
+	if n == nil {
+		return nil
+	}
+	if c, ok := seen[n]; ok {
+		return c
+	}
+	c := *n
+	seen[n] = &c
+	if n.Content != nil {
+		c.Content = make([]*yaml.Node, len(n.Content))
+		for i, child := range n.Content {
+			c.Content[i] = cloneYAMLNodeMemo(child, seen)
+		}
+	}
+	c.Alias = cloneYAMLNodeMemo(n.Alias, seen)
+	return &c
+}
+
 // ArchiveDir is the subdirectory of the beans root that holds archived beans.
 // It must match beancore.ArchiveDir.
 const ArchiveDir = "archive"

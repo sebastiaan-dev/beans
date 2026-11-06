@@ -1,5 +1,22 @@
 // Package beancore provides a thread-safe in-memory store for beans with filesystem persistence
 // and optional file watching for long-running processes.
+//
+// # Bean ownership
+//
+// The beans held by a Core are immutable snapshots: once stored, a
+// *bean.Bean is never modified again. Every change builds a new bean and swaps
+// it in under the write lock (copy-on-write), so readers never race with
+// writers and a failed change leaves no trace.
+//
+//   - Methods returning a single bean (Get, Mutate, LoadAndUnarchive,
+//     GetFromArchive) return a copy owned by the caller.
+//   - Methods returning many beans (All, Search, FindIncomingLinks,
+//     FindActiveBlockers, FindAllBlockers) and BeanEvent.Bean return the shared
+//     snapshots, so listing a large store doesn't copy it. Callers must treat
+//     them as read-only and Clone them before modifying.
+//   - All changes go through Core: Mutate applies a change to a copy of the
+//     current version, validating ifMatch and anything else (see Tx) under the
+//     same lock as the write; Update and Create store a copy of the given bean.
 package beancore
 
 import (
@@ -135,12 +152,20 @@ func (c *Core) Config() *config.Config {
 	return c.config
 }
 
-// Load reads all beans from disk into memory.
+// Load reads all beans from disk into memory, discarding runtime-only
+// changes. Beans changed in watched worktrees keep showing (and stay linked
+// to) their worktree version, like after the initial worktree scan: otherwise
+// a linked bean would show main's version while writes to it are still routed
+// to the worktree, clobbering the worktree's change.
 func (c *Core) Load() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	return c.loadFromDisk()
+	if err := c.loadFromDisk(); err != nil {
+		return err
+	}
+	c.reapplyWorktreeChangesLocked()
+	return nil
 }
 
 // loadFromDisk reads all beans from disk (must be called with lock held).
@@ -268,7 +293,8 @@ func (c *Core) ensureSearchIndexLocked() error {
 	return nil
 }
 
-// Search performs full-text search and returns all matching beans.
+// Search performs full-text search and returns all matching beans (shared,
+// read-only snapshots; see the package documentation).
 //
 // Long-running processes that watch the beans directory (beans-serve, the TUI)
 // maintain an in-memory search index, which is lazily built on first use and
@@ -333,7 +359,8 @@ func (c *Core) searchOnce(beans []*bean.Bean, query string) ([]*bean.Bean, error
 	return result, nil
 }
 
-// All returns a slice of all beans.
+// All returns a slice of all beans. The beans are shared, read-only snapshots
+// (see the package documentation): Clone a bean before modifying it.
 func (c *Core) All() []*bean.Bean {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -348,24 +375,17 @@ func (c *Core) All() []*bean.Bean {
 // Get finds a bean by exact ID match.
 // If a prefix is configured and the query doesn't include it, the prefix is automatically prepended.
 // For example, with prefix "beans-", Get("abc") will match "beans-abc" but Get("ab") will not.
+// The returned bean is a copy owned by the caller: modifying it doesn't change
+// the store (use Mutate or Update for that).
 func (c *Core) Get(id string) (*bean.Bean, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	// Try exact match
-	if b, ok := c.beans[id]; ok {
-		return b, nil
+	b, _, err := c.findBeanLocked(id)
+	if err != nil {
+		return nil, err
 	}
-
-	// If not found and we have a configured prefix that isn't already in the query,
-	// try with the prefix prepended (allows short IDs like "abc" to match "beans-abc")
-	if c.config != nil && c.config.Beans.Prefix != "" && !strings.HasPrefix(id, c.config.Beans.Prefix) {
-		if b, ok := c.beans[c.config.Beans.Prefix+id]; ok {
-			return b, nil
-		}
-	}
-
-	return nil, ErrNotFound
+	return b.Clone(), nil
 }
 
 // NormalizeID resolves a potentially short ID to its full form.
@@ -374,7 +394,11 @@ func (c *Core) Get(id string) (*bean.Bean, error) {
 func (c *Core) NormalizeID(id string) (string, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+	return c.normalizeIDLocked(id)
+}
 
+// normalizeIDLocked implements NormalizeID. Must be called with the lock held.
+func (c *Core) normalizeIDLocked(id string) (string, bool) {
 	// Try exact match
 	if _, ok := c.beans[id]; ok {
 		return id, true
@@ -399,6 +423,7 @@ type updateOptions struct {
 	persist      bool   // whether to write to disk (default: true)
 	worktreePath string // if set, write to this worktree's .beans/ dir instead of main
 	idPrefix     *string // Create only: overrides the configured ID prefix for generated IDs
+	validate     func(tx *Tx, b *bean.Bean) error
 }
 
 func defaultUpdateOptions() updateOptions {
@@ -426,6 +451,18 @@ func WithWorktreePath(path string) UpdateOption {
 func WithIDPrefix(prefix string) UpdateOption {
 	return func(o *updateOptions) {
 		o.idPrefix = &prefix
+	}
+}
+
+// WithValidation runs validate on the bean about to be written by Create,
+// Update or Mutate, while Core holds its write lock: the checks (e.g. that a
+// parent or blocker exists, or that no cycle is created) see the same state
+// the write is applied to. validate may also complete b (e.g. set normalised
+// IDs of the beans it refers to). An error aborts the operation without
+// changes.
+func WithValidation(validate func(tx *Tx, b *bean.Bean) error) UpdateOption {
+	return func(o *updateOptions) {
+		o.validate = validate
 	}
 }
 
@@ -491,7 +528,7 @@ func (c *Core) SaveDirty() (int, error) {
 			continue
 		}
 
-		if err := c.saveToDisk(b); err != nil {
+		if err := c.persistLocked(b); err != nil {
 			return saved, fmt.Errorf("saving bean %s: %w", id, err)
 		}
 
@@ -517,7 +554,7 @@ func (c *Core) SaveBean(id string) error {
 		return ErrNotFound
 	}
 
-	if err := c.saveToDisk(b); err != nil {
+	if err := c.persistLocked(b); err != nil {
 		return fmt.Errorf("saving bean %s: %w", id, err)
 	}
 
@@ -525,8 +562,25 @@ func (c *Core) SaveBean(id string) error {
 	return nil
 }
 
+// persistLocked writes a stored bean to main's disk. A bean without a path
+// gets one, which is stored as a new snapshot. Must be called with the write
+// lock held.
+func (c *Core) persistLocked(b *bean.Bean) error {
+	if b.Path != "" {
+		return c.saveToDisk(b)
+	}
+	nb := b.Clone()
+	if err := c.saveToDisk(nb); err != nil {
+		return err
+	}
+	c.beans[nb.ID] = nb
+	return nil
+}
+
 // Create adds a new bean, generating an ID if needed.
 // By default, persists to disk. Use WithPersist(false) to only update runtime state.
+// Core stores a copy of b; on success b is updated to the stored version (ID,
+// path, defaults and timestamps). On error nothing is stored.
 func (c *Core) Create(b *bean.Bean, opts ...UpdateOption) error {
 	o := defaultUpdateOptions()
 	for _, opt := range opts {
@@ -536,7 +590,8 @@ func (c *Core) Create(b *bean.Bean, opts ...UpdateOption) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if b.ID == "" {
+	nb := b.Clone()
+	if nb.ID == "" {
 		// Generate a unique ID
 		prefix := ""
 		if c.config != nil {
@@ -549,52 +604,43 @@ func (c *Core) Create(b *bean.Bean, opts ...UpdateOption) error {
 		if err != nil {
 			return err
 		}
-		b.ID = id
+		nb.ID = id
 	} else {
 		// Explicit IDs must not collide with an existing bean
-		taken, err := c.idTakenLocked(b.ID)
+		taken, err := c.idTakenLocked(nb.ID)
 		if err != nil {
 			return err
 		}
 		if taken {
-			return &DuplicateIDError{ID: b.ID}
+			return &DuplicateIDError{ID: nb.ID}
 		}
 	}
 
 	// Make sure the filename maps back to this ID when the bean is reloaded
-	if b.Slug == "" && b.Path == "" && bean.RequiresSlug(b.ID) {
-		b.Slug = bean.UntitledSlug
+	if nb.Slug == "" && nb.Path == "" && bean.RequiresSlug(nb.ID) {
+		nb.Slug = bean.UntitledSlug
 	}
 
 	// Normalize exactly like Load does, so the in-memory bean (and its etag)
 	// matches what any reader loading the written file will see.
-	b.ApplyDefaults()
+	nb.ApplyDefaults()
+
+	if o.validate != nil {
+		if err := o.validate(&Tx{c: c, pending: nb}, nb); err != nil {
+			return err
+		}
+	}
 
 	// Set timestamps
 	now := time.Now().UTC().Truncate(time.Second)
-	b.CreatedAt = &now
-	b.UpdatedAt = &now
+	nb.CreatedAt = &now
+	nb.UpdatedAt = &now
 
-	if o.persist {
-		// Write to disk
-		if err := c.saveToDisk(b); err != nil {
-			return err
-		}
-	} else {
-		// Mark as dirty (runtime-only change)
-		c.dirty[b.ID] = true
+	if err := c.storeLocked(nb, "", o.persist); err != nil {
+		return err
 	}
 
-	// Add to in-memory map
-	c.beans[b.ID] = b
-
-	// Update search index if active (best-effort, don't fail create)
-	if c.searchIndex != nil {
-		if err := c.searchIndex.IndexBean(b); err != nil {
-			c.logWarn("failed to index bean %s: %v", b.ID, err)
-		}
-	}
-
+	*b = *nb.Clone()
 	return nil
 }
 
@@ -704,10 +750,40 @@ func (c *Core) FindDuplicateIDs() ([]DuplicateID, error) {
 	return dups, nil
 }
 
-// Update modifies an existing bean.
+// Update replaces an existing bean with b (matched by ID).
 // If ifMatch is provided, validates the current version's etag matches before updating.
 // By default, persists to disk. Use WithPersist(false) to only update runtime state.
+// Core stores a copy of b; on success b is updated to the stored version (e.g.
+// its updated_at). On error nothing changes. Prefer Mutate for changes based
+// on the current version: it applies them to that version under the lock.
 func (c *Core) Update(b *bean.Bean, ifMatch *string, opts ...UpdateOption) error {
+	updated, err := c.Mutate(b.ID, ifMatch, func(_ *Tx, cur *bean.Bean) error {
+		id := cur.ID
+		*cur = *b.Clone()
+		cur.ID = id
+		return nil
+	}, opts...)
+	if err != nil {
+		return err
+	}
+	*b = *updated
+	return nil
+}
+
+// Mutate atomically changes the bean with the given ID (short IDs are
+// supported) and returns a copy of the stored result.
+//
+// Under the write lock, Mutate validates ifMatch against the current version
+// (main's file for beans on disk, so writes by other processes are detected;
+// the runtime version for dirty and worktree beans), applies mutate to a copy
+// of the current version, runs the WithValidation check, and writes and
+// stores the result. mutate and validation callbacks can inspect the store
+// through tx; they must not call Core methods, which would deadlock. If any
+// step fails, nothing changes and the error is returned.
+//
+// Writes to beans linked to a worktree are routed to the worktree's copy
+// (see WithWorktreePath).
+func (c *Core) Mutate(id string, ifMatch *string, mutate func(tx *Tx, b *bean.Bean) error, opts ...UpdateOption) (*bean.Bean, error) {
 	o := defaultUpdateOptions()
 	for _, opt := range opts {
 		opt(&o)
@@ -717,26 +793,26 @@ func (c *Core) Update(b *bean.Bean, ifMatch *string, opts ...UpdateOption) error
 	defer c.mu.Unlock()
 
 	// Verify bean exists in memory
-	storedBean, ok := c.beans[b.ID]
-	if !ok {
-		return ErrNotFound
+	storedBean, targetID, err := c.findBeanLocked(id)
+	if err != nil {
+		return nil, err
 	}
 
 	// Validate etag if provided or required
 	requireIfMatch := c.config != nil && c.config.Beans.RequireIfMatch
 
 	if requireIfMatch && (ifMatch == nil || *ifMatch == "") {
-		return &ETagRequiredError{}
+		return nil, &ETagRequiredError{}
 	}
 
 	// Auto-route to linked worktree if no explicit path given
 	wtPath := o.worktreePath
 	if wtPath == "" {
-		wtPath = c.worktreeLinks[b.ID]
+		wtPath = c.worktreeLinks[targetID]
 	}
 
 	hasIfMatch := ifMatch != nil && *ifMatch != ""
-	onDisk := storedBean.Path != "" && !c.dirty[b.ID]
+	onDisk := storedBean.Path != "" && !c.dirty[targetID]
 	writesMain := wtPath == "" && o.persist
 
 	// Hold a cross-process lock on the bean file while validating and writing,
@@ -744,7 +820,7 @@ func (c *Core) Update(b *bean.Bean, ifMatch *string, opts ...UpdateOption) error
 	if storedBean.Path != "" && (writesMain || (hasIfMatch && onDisk)) {
 		unlock, err := lockBeanFile(filepath.Join(c.root, storedBean.Path))
 		if err != nil {
-			return err
+			return nil, err
 		}
 		defer unlock()
 	}
@@ -753,16 +829,16 @@ func (c *Core) Update(b *bean.Bean, ifMatch *string, opts ...UpdateOption) error
 		var currentETag string
 		if onDisk {
 			// Validate against the on-disk version: it reflects writes made by
-			// other processes, and the in-memory bean may already have been
-			// modified by the caller (it is the same pointer as c.beans[id]).
+			// other processes since this Core loaded the bean.
 			currentETag = c.diskETagLocked(storedBean)
 		} else {
-			// No path yet or bean is dirty (not on disk), use in-memory etag
+			// No path yet or bean is dirty (not on disk): the stored snapshot
+			// is the current version.
 			currentETag = storedBean.ETag()
 		}
 
 		if currentETag != *ifMatch {
-			return &ETagMismatchError{
+			return nil, &ETagMismatchError{
 				Provided: *ifMatch,
 				Current:  currentETag,
 			}
@@ -772,41 +848,68 @@ func (c *Core) Update(b *bean.Bean, ifMatch *string, opts ...UpdateOption) error
 		}
 	}
 
+	nb := storedBean.Clone()
+	tx := &Tx{c: c, pending: nb}
+	if mutate != nil {
+		if err := mutate(tx, nb); err != nil {
+			return nil, err
+		}
+	}
+	if nb.ID != targetID {
+		return nil, fmt.Errorf("cannot change the ID of bean %s", targetID)
+	}
+
 	// Normalize exactly like Load does (see Create)
-	b.ApplyDefaults()
+	nb.ApplyDefaults()
+
+	if o.validate != nil {
+		if err := o.validate(tx, nb); err != nil {
+			return nil, err
+		}
+	}
 
 	// Update timestamp
 	now := time.Now().UTC().Truncate(time.Second)
-	b.UpdatedAt = &now
+	nb.UpdatedAt = &now
 
+	if err := c.storeLocked(nb, wtPath, o.persist); err != nil {
+		return nil, err
+	}
+	return nb.Clone(), nil
+}
+
+// storeLocked writes nb and stores it as the bean's new snapshot. With a
+// worktree path, nb is written to the worktree's .beans/ directory and kept
+// dirty in runtime state; otherwise it is written to main's disk if persist
+// is set, or kept as a dirty runtime-only change. nb must not be shared: Core
+// takes ownership of it. On error, the stored state is unchanged. Must be
+// called with the write lock held.
+func (c *Core) storeLocked(nb *bean.Bean, wtPath string, persist bool) error {
 	if wtPath != "" {
 		// Write to the worktree's .beans/ dir; keep dirty in main
-		if err := c.saveToWorktree(b, wtPath); err != nil {
+		if err := c.saveToWorktree(nb, wtPath); err != nil {
 			return err
 		}
-		c.dirty[b.ID] = true
-	} else if o.persist {
-		// Write to disk
-		if err := c.saveToDisk(b); err != nil {
+		c.dirty[nb.ID] = true
+	} else if persist {
+		if err := c.saveToDisk(nb); err != nil {
 			return err
 		}
 		// Clear dirty flag since we just persisted
-		delete(c.dirty, b.ID)
+		delete(c.dirty, nb.ID)
 	} else {
 		// Mark as dirty (runtime-only change)
-		c.dirty[b.ID] = true
+		c.dirty[nb.ID] = true
 	}
 
-	// Update in-memory map
-	c.beans[b.ID] = b
+	c.beans[nb.ID] = nb
 
-	// Update search index if active (best-effort, don't fail update)
+	// Update search index if active (best-effort, don't fail the write)
 	if c.searchIndex != nil {
-		if err := c.searchIndex.IndexBean(b); err != nil {
-			c.logWarn("failed to update bean %s in search index: %v", b.ID, err)
+		if err := c.searchIndex.IndexBean(nb); err != nil {
+			c.logWarn("failed to index bean %s: %v", nb.ID, err)
 		}
 	}
-
 	return nil
 }
 
@@ -960,14 +1063,15 @@ func (c *Core) Archive(id string) error {
 		return fmt.Errorf("moving bean to archive: %w", err)
 	}
 
-	// Update bean's path in store and notify subscribers
-	targetBean.Path = newRelPath
-	c.beans[targetID] = targetBean
+	// Store the bean with its new path and notify subscribers
+	archived := targetBean.Clone()
+	archived.Path = newRelPath
+	c.beans[targetID] = archived
 	c.mu.Unlock()
 
 	c.fanOut([]BeanEvent{{
 		Type:   EventUpdated,
-		Bean:   targetBean,
+		Bean:   archived,
 		BeanID: targetID,
 	}})
 
@@ -1000,9 +1104,10 @@ func (c *Core) Unarchive(id string) error {
 		return fmt.Errorf("moving bean from archive: %w", err)
 	}
 
-	// Update bean's path
-	targetBean.Path = newRelPath
-	c.beans[targetID] = targetBean
+	// Store the bean with its new path
+	unarchived := targetBean.Clone()
+	unarchived.Path = newRelPath
+	c.beans[targetID] = unarchived
 
 	return nil
 }
@@ -1088,7 +1193,7 @@ func (c *Core) GetFromArchive(id string) (*bean.Bean, error) {
 }
 
 // LoadAndUnarchive finds a bean in the archive, loads it, unarchives it,
-// and adds it to the in-memory store. Returns the bean or ErrNotFound.
+// and adds it to the in-memory store. Returns a copy of the bean or ErrNotFound.
 func (c *Core) LoadAndUnarchive(id string) (*bean.Bean, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -1101,7 +1206,7 @@ func (c *Core) LoadAndUnarchive(id string) (*bean.Bean, error) {
 
 	// If already in main directory, just return it
 	if !c.isArchivedPath(b.Path) {
-		return b, nil
+		return b.Clone(), nil
 	}
 
 	// Move file from archive to main directory
@@ -1113,11 +1218,12 @@ func (c *Core) LoadAndUnarchive(id string) (*bean.Bean, error) {
 		return nil, fmt.Errorf("moving bean from archive: %w", err)
 	}
 
-	// Update bean's path
-	b.Path = newRelPath
-	c.beans[targetID] = b
+	// Store the bean with its new path
+	unarchived := b.Clone()
+	unarchived.Path = newRelPath
+	c.beans[targetID] = unarchived
 
-	return b, nil
+	return unarchived.Clone(), nil
 }
 
 // Init creates the .beans directory if it doesn't exist,

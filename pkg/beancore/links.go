@@ -49,7 +49,8 @@ func (r *LinkCheckResult) TotalIssues() int {
 	return len(r.BrokenLinks) + len(r.SelfLinks) + len(r.Cycles)
 }
 
-// FindIncomingLinks returns all beans that link TO the given bean ID.
+// FindIncomingLinks returns all beans that link TO the given bean ID. The
+// beans are shared, read-only snapshots (see the package documentation).
 func (c *Core) FindIncomingLinks(targetID string) []IncomingLink {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -88,62 +89,12 @@ func (c *Core) FindIncomingLinks(targetID string) []IncomingLink {
 // DetectCycle checks if adding a link from fromID to toID would create a cycle.
 // Checks for blocking, blocked_by, and parent link types.
 // Returns the cycle path if a cycle would be created, nil otherwise.
+// Mutations should check through their Tx instead (see Mutate), so the check
+// and the write are atomic.
 func (c *Core) DetectCycle(fromID, linkType, toID string) []string {
-	// Only check hierarchical link types
-	if linkType != "blocking" && linkType != "blocked_by" && linkType != "parent" {
-		return nil
-	}
-
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-
-	// Build adjacency list for the specific link type
-	// Adding edge: fromID -> toID
-	// Check if there's already a path from toID back to fromID
-	visited := make(map[string]bool)
-	path := []string{fromID, toID}
-
-	return c.findPathToTarget(toID, fromID, linkType, visited, path)
-}
-
-// findPathToTarget uses DFS to find if there's a path from current to target.
-// Returns the path if found, nil otherwise.
-func (c *Core) findPathToTarget(current, target, linkType string, visited map[string]bool, path []string) []string {
-	if current == target {
-		return path
-	}
-
-	if visited[current] {
-		return nil
-	}
-	visited[current] = true
-
-	b, ok := c.beans[current]
-	if !ok {
-		return nil
-	}
-
-	// Get targets based on link type
-	var targets []string
-	switch linkType {
-	case "parent":
-		if b.Parent != "" {
-			targets = []string{b.Parent}
-		}
-	case "blocking":
-		targets = b.Blocking
-	case "blocked_by":
-		targets = b.BlockedBy
-	}
-
-	for _, t := range targets {
-		newPath := append(path, t)
-		if result := c.findPathToTarget(t, target, linkType, visited, newPath); result != nil {
-			return result
-		}
-	}
-
-	return nil
+	return (&Tx{c: c}).DetectCycle(fromID, linkType, toID)
 }
 
 // CheckAllLinks validates all links across all beans.
@@ -332,35 +283,30 @@ func (c *Core) RemoveLinksTo(targetID string) (int, error) {
 
 	removed := 0
 	for _, b := range c.beans {
-		changed := false
+		nb := b.Clone()
+		n := 0
 
 		// Remove parent link
-		if b.Parent == targetID {
-			b.Parent = ""
-			changed = true
-			removed++
+		if nb.Parent == targetID {
+			nb.Parent = ""
+			n++
 		}
 
 		// Remove blocking links
-		originalBlockingLen := len(b.Blocking)
-		b.RemoveBlocking(targetID)
-		if len(b.Blocking) < originalBlockingLen {
-			changed = true
-			removed += originalBlockingLen - len(b.Blocking)
-		}
+		originalBlockingLen := len(nb.Blocking)
+		nb.RemoveBlocking(targetID)
+		n += originalBlockingLen - len(nb.Blocking)
 
 		// Remove blocked_by links
-		originalBlockedByLen := len(b.BlockedBy)
-		b.RemoveBlockedBy(targetID)
-		if len(b.BlockedBy) < originalBlockedByLen {
-			changed = true
-			removed += originalBlockedByLen - len(b.BlockedBy)
-		}
+		originalBlockedByLen := len(nb.BlockedBy)
+		nb.RemoveBlockedBy(targetID)
+		n += originalBlockedByLen - len(nb.BlockedBy)
 
-		if changed {
-			if err := c.saveToDisk(b); err != nil {
+		if n > 0 {
+			if err := c.storeLinkFixLocked(nb); err != nil {
 				return removed, err
 			}
+			removed += n
 		}
 	}
 
@@ -373,72 +319,64 @@ func (c *Core) FixBrokenLinks() (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	valid := func(self, target string) bool {
+		_, ok := c.beans[target]
+		return target != self && ok
+	}
+
 	fixed := 0
 	for _, b := range c.beans {
-		changed := false
+		nb := b.Clone()
+		n := 0
 
-		// Fix parent link
-		if b.Parent != "" {
-			// Remove self-reference or broken link
-			if b.Parent == b.ID {
-				b.Parent = ""
-				changed = true
-				fixed++
-			} else if _, ok := c.beans[b.Parent]; !ok {
-				b.Parent = ""
-				changed = true
-				fixed++
-			}
+		// Fix parent link: remove self-reference or broken link
+		if nb.Parent != "" && !valid(nb.ID, nb.Parent) {
+			nb.Parent = ""
+			n++
 		}
 
 		// Fix blocking links
-		originalBlockingLen := len(b.Blocking)
 		var newBlocking []string
-		for _, blocked := range b.Blocking {
-			// Skip self-references
-			if blocked == b.ID {
-				continue
+		for _, blocked := range nb.Blocking {
+			if valid(nb.ID, blocked) {
+				newBlocking = append(newBlocking, blocked)
 			}
-			// Skip broken links (target doesn't exist)
-			if _, ok := c.beans[blocked]; !ok {
-				continue
-			}
-			newBlocking = append(newBlocking, blocked)
 		}
-		if len(newBlocking) < originalBlockingLen {
-			b.Blocking = newBlocking
-			changed = true
-			fixed += originalBlockingLen - len(newBlocking)
+		if len(newBlocking) < len(nb.Blocking) {
+			n += len(nb.Blocking) - len(newBlocking)
+			nb.Blocking = newBlocking
 		}
 
 		// Fix blocked_by links
-		originalBlockedByLen := len(b.BlockedBy)
 		var newBlockedBy []string
-		for _, blocker := range b.BlockedBy {
-			// Skip self-references
-			if blocker == b.ID {
-				continue
+		for _, blocker := range nb.BlockedBy {
+			if valid(nb.ID, blocker) {
+				newBlockedBy = append(newBlockedBy, blocker)
 			}
-			// Skip broken links (target doesn't exist)
-			if _, ok := c.beans[blocker]; !ok {
-				continue
-			}
-			newBlockedBy = append(newBlockedBy, blocker)
 		}
-		if len(newBlockedBy) < originalBlockedByLen {
-			b.BlockedBy = newBlockedBy
-			changed = true
-			fixed += originalBlockedByLen - len(newBlockedBy)
+		if len(newBlockedBy) < len(nb.BlockedBy) {
+			n += len(nb.BlockedBy) - len(newBlockedBy)
+			nb.BlockedBy = newBlockedBy
 		}
 
-		if changed {
-			if err := c.saveToDisk(b); err != nil {
+		if n > 0 {
+			if err := c.storeLinkFixLocked(nb); err != nil {
 				return fixed, err
 			}
+			fixed += n
 		}
 	}
 
 	return fixed, nil
+}
+
+// storeLinkFixLocked writes and stores a bean whose links were repaired. Like
+// Update, a bean linked to a worktree is written to the worktree's copy, so
+// main never receives the worktree's version. Must be called with the write
+// lock held.
+func (c *Core) storeLinkFixLocked(nb *bean.Bean) error {
+	nb.ApplyDefaults()
+	return c.storeLocked(nb, c.worktreeLinks[nb.ID], true)
 }
 
 // ValidParentTypes returns the valid parent types for a given bean type.
@@ -460,29 +398,25 @@ func ValidParentTypes(beanType string) []string {
 
 // ValidateParent checks if a parent is valid for the given bean.
 // Returns nil if valid, error otherwise.
+// Mutations should check through their Tx instead (see Mutate), so the check
+// and the write are atomic.
 func (c *Core) ValidateParent(b *bean.Bean, parentID string) error {
-	if parentID == "" {
-		return nil
-	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return (&Tx{c: c}).ValidateParent(b, parentID)
+}
 
-	validTypes := ValidParentTypes(b.Type)
-	if validTypes == nil {
-		return fmt.Errorf("%s beans cannot have a parent", b.Type)
-	}
+func errNoParentAllowed(beanType string) error {
+	return fmt.Errorf("%s beans cannot have a parent", beanType)
+}
 
-	parent, err := c.Get(parentID)
-	if err != nil {
-		return fmt.Errorf("parent bean not found: %s", parentID)
-	}
+func errParentNotFound(parentID string) error {
+	return fmt.Errorf("parent bean not found: %s", parentID)
+}
 
-	for _, t := range validTypes {
-		if parent.Type == t {
-			return nil
-		}
-	}
-
+func errInvalidParentType(beanType string, validTypes []string, parentType string) error {
 	return fmt.Errorf("%s beans can only have %s as parent, not %s",
-		b.Type, joinWithOr(validTypes), parent.Type)
+		beanType, joinWithOr(validTypes), parentType)
 }
 
 // joinWithOr joins strings with commas and "or" for the last element.
@@ -540,6 +474,7 @@ func (c *Core) IsImplicitlyBlocked(beanID string) bool {
 // FindActiveBlockers returns all beans that are explicitly (directly) blocking
 // the given bean. A blocker is "active" if its status is NOT completed/scrapped.
 // This includes blockers from both the blocked_by field and incoming blocking links.
+// The beans are shared, read-only snapshots.
 func (c *Core) FindActiveBlockers(beanID string) []*bean.Bean {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -549,6 +484,7 @@ func (c *Core) FindActiveBlockers(beanID string) []*bean.Bean {
 
 // FindAllBlockers returns all beans blocking the given bean, both explicitly
 // (direct blockers) and implicitly (blockers on ancestors in the parent chain).
+// The beans are shared, read-only snapshots.
 func (c *Core) FindAllBlockers(beanID string) []*bean.Bean {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
