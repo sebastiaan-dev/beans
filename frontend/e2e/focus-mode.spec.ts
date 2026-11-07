@@ -175,20 +175,8 @@ test.describe('Focus mode', () => {
   test('related links navigate within focus mode', async ({ beans, page }) => {
     const epic = beans.create('The Epic', { status: 'todo', type: 'epic' });
     const task = beans.create('The Task', { status: 'todo' });
-    // Bodies auto-link IDs with the default `beans-` prefix only.
-    const blocker = JSON.parse(
-      beans.run([
-        'create',
-        '--json',
-        'The Blocker',
-        '-t',
-        'task',
-        '-s',
-        'todo',
-        '--prefix',
-        'beans-'
-      ])
-    ).bean.id as string;
+    // Bodies link the IDs of existing beans, whatever the project's prefix.
+    const blocker = beans.create('The Blocker', { status: 'todo' });
     beans.run(['update', task, '--parent', epic, '--blocked-by', blocker]);
     beans.run(['update', epic, '--body', `See ${blocker} for details.`]);
     const focus = new FocusPage(page);

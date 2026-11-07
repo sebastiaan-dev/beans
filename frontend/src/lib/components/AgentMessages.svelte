@@ -2,7 +2,12 @@
   import type { AgentMessage, SubagentActivity } from '$lib/agentChat.svelte';
   import { beansStore } from '$lib/beans.svelte';
   import { ui } from '$lib/uiState.svelte';
-  import { renderMarkdown, linkifyBeanIds } from '$lib/markdown';
+  import {
+    renderMarkdown,
+    linkifyBeanIds,
+    updateBeanIdMatcher,
+    type BeanIdMatcher
+  } from '$lib/markdown';
   import { fade } from 'svelte/transition';
   import { decryptText } from '$lib/actions/decryptText';
 
@@ -37,7 +42,15 @@
   });
 
   let messagesEl: HTMLDivElement | undefined = $state();
-  let renderedMessages = $state<Map<string, string>>(new Map());
+  // Rendered markdown by message key, with the bean ID matcher it was rendered
+  // with (re-rendered when beans are added or removed).
+  let renderedMessages = $state<Map<string, { html: string; beanIds: BeanIdMatcher }>>(new Map());
+
+  // Link the IDs of existing beans.
+  let lastBeanIds: BeanIdMatcher | undefined;
+  const beanIds = $derived.by(
+    () => (lastBeanIds = updateBeanIdMatcher(lastBeanIds, beansStore.beans.keys()))
+  );
   let stuckToBottom = $state(true);
   let expandedDiffs = $state<Set<number>>(new Set());
 
@@ -93,10 +106,14 @@
       if (!isMarkdownRole(msg.role)) continue;
 
       const key = `${i}:${msg.content.length}`;
-      if (!renderedMessages.has(key)) {
+      const matcher = beanIds;
+      if (renderedMessages.get(key)?.beanIds !== matcher) {
         // HTML typed in user messages renders as text instead of being
         // interpreted as HTML tags by the markdown parser.
-        renderMarkdown(msg.content, { escapeRawHtml: msg.role === 'USER' }).then((html) => {
+        renderMarkdown(msg.content, {
+          escapeRawHtml: msg.role === 'USER',
+          beanIds: matcher
+        }).then((html) => {
           // Replace {{file:path}} markers with inline pills for user messages
           if (msg.role === 'USER') {
             html = html.replace(
@@ -104,7 +121,7 @@
               '<span class="file-mention-pill">$1</span>'
             );
           }
-          renderedMessages = new Map(renderedMessages).set(key, html);
+          renderedMessages = new Map(renderedMessages).set(key, { html, beanIds: matcher });
         });
       }
     }
@@ -114,7 +131,7 @@
     const msg = messages[index];
     if (!msg || !isMarkdownRole(msg.role)) return null;
     const key = `${index}:${msg.content.length}`;
-    return renderedMessages.get(key) ?? null;
+    return renderedMessages.get(key)?.html ?? null;
   }
 
   function handleBeanLinkClick(e: MouseEvent) {
@@ -201,7 +218,7 @@
                 use:decryptText={{
                   text: msg.content,
                   immediate: settledMessageCount === -1 || i < settledMessageCount,
-                  html: linkifyBeanIds(msg.content)
+                  html: linkifyBeanIds(msg.content, beanIds)
                 }}
               ></p>
             {/if}
@@ -220,7 +237,7 @@
                     use:decryptText={{
                       text: msg.content,
                       immediate: settledMessageCount === -1 || i < settledMessageCount,
-                      html: linkifyBeanIds(msg.content)
+                      html: linkifyBeanIds(msg.content, beanIds)
                     }}
                   ></span>
                 </button>
@@ -229,7 +246,7 @@
                   use:decryptText={{
                     text: msg.content,
                     immediate: settledMessageCount === -1 || i < settledMessageCount,
-                    html: linkifyBeanIds(msg.content)
+                    html: linkifyBeanIds(msg.content, beanIds)
                   }}
                 ></span>
               {/if}

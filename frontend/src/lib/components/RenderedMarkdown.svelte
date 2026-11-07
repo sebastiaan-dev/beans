@@ -1,7 +1,7 @@
 <script lang="ts">
   import { beansStore, type Bean } from '$lib/beans.svelte';
   import { ui } from '$lib/uiState.svelte';
-  import { renderMarkdown } from '$lib/markdown';
+  import { renderMarkdown, updateBeanIdMatcher, type BeanIdMatcher } from '$lib/markdown';
 
   interface Props {
     content: string;
@@ -14,9 +14,15 @@
 
   let renderedHtml = $state('');
 
+  // Link the IDs of existing beans; re-render when beans are added or removed.
+  let lastBeanIds: BeanIdMatcher | undefined;
+  const beanIds = $derived.by(
+    () => (lastBeanIds = updateBeanIdMatcher(lastBeanIds, beansStore.beans.keys()))
+  );
+
   $effect(() => {
     if (content) {
-      renderMarkdown(content).then((html) => {
+      renderMarkdown(content, { beanIds }).then((html) => {
         renderedHtml = html;
       });
     } else {
