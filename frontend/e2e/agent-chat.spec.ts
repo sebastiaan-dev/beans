@@ -5,26 +5,32 @@ import { agentSession } from './agent-session';
 
 test.describe('Agent chat', () => {
   test('Bean IDs are autolinked in tool and info messages', async ({ page, beans }) => {
+    // Only IDs of existing beans are linked (any prefix).
+    const a = beans.create('Linked bean A');
+    const b = beans.create('Linked bean B');
     await agentSession('__central__', beans)
       .withMessages([
         { role: 'user', content: 'update the bean' },
-        { role: 'tool', content: 'Bash: beans update beans-ab12 -s in-progress' },
-        { role: 'info', content: 'Working on beans-cd34' },
-        { role: 'assistant', content: 'Done updating beans-ab12.' }
+        { role: 'tool', content: `Bash: beans update ${a} -s in-progress` },
+        { role: 'info', content: `Working on ${b}, not beans-zz99` },
+        { role: 'assistant', content: `Done updating ${a}.` }
       ])
       .open(page);
 
     // Tool message should have an autolinked bean ID
-    const toolBeanLink = page.locator('.bean-link[data-bean-id="beans-ab12"]').first();
+    const toolBeanLink = page.locator(`.bean-link[data-bean-id="${a}"]`).first();
     await expect(toolBeanLink).toBeVisible({ timeout: 5000 });
 
     // Info message should have an autolinked bean ID
-    const infoBeanLink = page.locator('.bean-link[data-bean-id="beans-cd34"]');
+    const infoBeanLink = page.locator(`.bean-link[data-bean-id="${b}"]`);
     await expect(infoBeanLink).toBeVisible({ timeout: 5000 });
 
     // Assistant message should also have an autolinked bean ID (via renderMarkdown)
-    const assistantBeanLink = page.locator('.bean-link[data-bean-id="beans-ab12"]').last();
+    const assistantBeanLink = page.locator(`.bean-link[data-bean-id="${a}"]`).last();
     await expect(assistantBeanLink).toBeVisible({ timeout: 5000 });
+
+    // Unknown IDs are not linked
+    await expect(page.locator('.bean-link[data-bean-id="beans-zz99"]')).toHaveCount(0);
   });
 
   test('Clear button resets the conversation in the UI', async ({ page, beans }) => {
