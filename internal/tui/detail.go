@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/hmans/beans/internal/ui"
 	"github.com/hmans/beans/pkg/bean"
@@ -23,7 +23,7 @@ import (
 // creating one is comparatively expensive.
 var (
 	markdownRenderersMu sync.Mutex
-	markdownRenderers   = map[markdownRendererKey]*glamour.TermRenderer{}
+	markdownRenderers   = map[markdownRendererKey]*ui.MarkdownRenderer{}
 )
 
 type markdownRendererKey struct {
@@ -40,7 +40,7 @@ func resetMarkdownRenderers() {
 }
 
 // markdownRenderer returns a renderer that wraps at width.
-func markdownRenderer(width int) *glamour.TermRenderer {
+func markdownRenderer(width int) *ui.MarkdownRenderer {
 	key := markdownRendererKey{width: width, profile: lipgloss.ColorProfile()}
 	markdownRenderersMu.Lock()
 	defer markdownRenderersMu.Unlock()
@@ -58,15 +58,12 @@ func markdownRenderer(width int) *glamour.TermRenderer {
 	// terminal background detection; the palette follows the terminal theme
 	// anyway. Use lipgloss's detected color profile so NO_COLOR and non-TTY
 	// output are respected like in the rest of the UI.
-	r, err := glamour.NewTermRenderer(
-		glamour.WithStyles(style),
-		glamour.WithChromaFormatter(ui.MarkdownChromaFormatter),
-		glamour.WithColorProfile(key.profile),
-		glamour.WithWordWrap(width),
-	)
-	if err != nil {
-		r = nil
-	}
+	r := ui.NewMarkdownRenderer(ansi.Options{
+		Styles:          style,
+		ChromaFormatter: ui.MarkdownChromaFormatter,
+		ColorProfile:    key.profile,
+		WordWrap:        width,
+	})
 	markdownRenderers[key] = r
 	return r
 }
@@ -75,10 +72,8 @@ func markdownRenderer(width int) *glamour.TermRenderer {
 func renderMarkdown(body string, width int) []string {
 	width = max(width, 10)
 	out := body
-	if r := markdownRenderer(width); r != nil {
-		if rendered, err := r.Render(body); err == nil {
-			out = rendered
-		}
+	if rendered, err := markdownRenderer(width).Render(body); err == nil {
+		out = rendered
 	}
 	lines := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
 	blank := func(s string) bool { return strings.TrimSpace(stripAnsi(s)) == "" }

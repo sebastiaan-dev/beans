@@ -199,32 +199,107 @@ function shikiExtension(hl: HighlighterCore): MarkedExtension {
 }
 
 /**
- * Marked extension that auto-links bean IDs (e.g. beans-s1m0) in inline text.
- * Renders as <a data-bean-id="beans-xxxx"> so click handlers can navigate.
+ * Finds bean IDs in text. Bean IDs are the configured prefix plus a random
+ * suffix (the prefix may contain dashes, e.g. `beans-e2e-template-pd4Yf8-`),
+ * so only the IDs of existing beans are matched, see createBeanIdMatcher.
  */
-function beanLinkExtension(): MarkedExtension {
+export interface BeanIdMatcher {
+  /** The known bean IDs. */
+  readonly ids: ReadonlySet<string>;
+  /** The first bean ID in text at or after `from`, if any. */
+  find(text: string, from?: number): { index: number; id: string } | undefined;
+  /** The bean ID at the very start of text, if any. */
+  matchStart(text: string): string | undefined;
+}
+
+// A bean ID candidate: a run of ID characters. A bean ID is a prefix of a
+// candidate ending at its end or before a '-' or '.' ("beans-abcd." ends a
+// sentence, "beans-abcd-ish" is a compound). It must not follow an ID
+// character (word boundary).
+const ID_CHAR = /[A-Za-z0-9_.-]/;
+const CANDIDATE = /(?<![A-Za-z0-9_.-])[A-Za-z0-9_][A-Za-z0-9_.-]*/g;
+const CANDIDATE_START = /^[A-Za-z0-9_][A-Za-z0-9_.-]*/;
+
+/**
+ * Create a matcher for the given bean IDs (e.g. the beans of the beans store).
+ */
+export function createBeanIdMatcher(ids: Iterable<string>): BeanIdMatcher {
+  const known = new Set(ids);
+  // The longest known ID that the candidate starts with.
+  const longestId = (candidate: string): string | undefined => {
+    for (let end = candidate.length; end > 0; end--) {
+      if (end < candidate.length && candidate[end] !== '-' && candidate[end] !== '.') continue;
+      const id = candidate.slice(0, end);
+      if (known.has(id)) return id;
+    }
+    return undefined;
+  };
+  return {
+    ids: known,
+    find(text, from = 0) {
+      if (known.size === 0) return undefined;
+      const pattern = new RegExp(CANDIDATE.source, 'g');
+      pattern.lastIndex = from;
+      for (let m = pattern.exec(text); m; m = pattern.exec(text)) {
+        const id = longestId(m[0]);
+        if (id) return { index: m.index, id };
+      }
+      return undefined;
+    },
+    matchStart(text) {
+      if (known.size === 0) return undefined;
+      const m = text.match(CANDIDATE_START);
+      return m ? longestId(m[0]) : undefined;
+    }
+  };
+}
+
+/**
+ * Return prev if it matches exactly the given IDs, else a new matcher. Use it
+ * to keep a matcher stable while beans change but no bean is added or removed,
+ * so rendered markdown is not re-rendered needlessly.
+ */
+export function updateBeanIdMatcher(
+  prev: BeanIdMatcher | undefined,
+  ids: Iterable<string>
+): BeanIdMatcher {
+  const next = new Set(ids);
+  if (prev && prev.ids.size === next.size && [...next].every((id) => prev.ids.has(id))) {
+    return prev;
+  }
+  return createBeanIdMatcher(next);
+}
+
+function beanLinkHtml(id: string): string {
+  const escaped = escapeHtml(id);
+  return `<a data-bean-id="${escaped}" class="bean-link">${escaped}</a>`;
+}
+
+/**
+ * Marked extension that auto-links the bean IDs found by matcher in inline
+ * text (not in code or link texts). Renders as <a data-bean-id="..."> so
+ * click handlers can navigate.
+ */
+export function beanLinkExtension(matcher: BeanIdMatcher): MarkedExtension {
   return {
     extensions: [
       {
         name: 'beanLink',
         level: 'inline',
         start(src: string) {
-          return src.match(/beans-/)?.index;
+          return matcher.find(src)?.index;
         },
-        tokenizer(src: string) {
-          const match = src.match(/^beans-[a-z0-9]{4}\b/);
-          if (match) {
-            return {
-              type: 'beanLink',
-              raw: match[0],
-              beanId: match[0]
-            };
-          }
-          return undefined;
+        tokenizer(src, tokens) {
+          if (this.lexer.state.inLink) return undefined;
+          // Marked offers every position; require a word boundary before.
+          const prev = tokens.at(-1)?.raw.slice(-1);
+          if (prev && ID_CHAR.test(prev)) return undefined;
+          const beanId = matcher.matchStart(src);
+          if (!beanId) return undefined;
+          return { type: 'beanLink', raw: beanId, beanId };
         },
         renderer(token) {
-          const beanId = (token as Record<string, unknown>).beanId as string;
-          return `<a data-bean-id="${beanId}" class="bean-link">${beanId}</a>`;
+          return beanLinkHtml((token as Record<string, unknown>).beanId as string);
         }
       }
     ]
@@ -239,6 +314,8 @@ export interface RenderMarkdownOptions {
    * escape code twice).
    */
   escapeRawHtml?: boolean;
+  /** Link the bean IDs found by this matcher (default: no bean links). */
+  beanIds?: BeanIdMatcher;
 }
 
 /**
@@ -269,7 +346,9 @@ export async function renderMarkdown(
   if (options.escapeRawHtml) {
     md.use(escapeRawHtmlExtension());
   }
-  md.use(beanLinkExtension());
+  if (options.beanIds) {
+    md.use(beanLinkExtension(options.beanIds));
+  }
   md.use({
     renderer: {
       link({ href, title, tokens }) {
@@ -325,19 +404,20 @@ export function escapeHtml(text: string): string {
 }
 
 /**
- * Replace bean IDs (e.g. beans-s1m0) in plain text with clickable bean-link HTML.
- * The input is HTML-escaped first, so the result is safe for innerHTML.
- * Returns undefined if no bean IDs are found (caller can skip innerHTML).
+ * Replace the bean IDs found by matcher in plain text with clickable
+ * bean-link HTML. The text is HTML-escaped, so the result is safe for
+ * innerHTML. Returns undefined if no bean IDs are found (caller can skip
+ * innerHTML).
  */
-export function linkifyBeanIds(text: string): string | undefined {
-  const pattern = /\bbeans-[a-z0-9]{4}\b/g;
-  if (!pattern.test(text)) return undefined;
-  pattern.lastIndex = 0;
-  const escaped = escapeHtml(text);
-  return escaped.replace(
-    pattern,
-    (match) => `<a data-bean-id="${match}" class="bean-link">${match}</a>`
-  );
+export function linkifyBeanIds(text: string, matcher: BeanIdMatcher): string | undefined {
+  let out = '';
+  let last = 0;
+  for (let m = matcher.find(text); m; m = matcher.find(text, last)) {
+    out += escapeHtml(text.slice(last, m.index)) + beanLinkHtml(m.id);
+    last = m.index + m.id.length;
+  }
+  if (last === 0) return undefined;
+  return out + escapeHtml(text.slice(last));
 }
 
 /**
