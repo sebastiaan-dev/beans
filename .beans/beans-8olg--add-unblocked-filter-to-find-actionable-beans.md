@@ -1,14 +1,14 @@
 ---
 # beans-8olg
 title: Add --unblocked filter to find actionable beans
-status: draft
+status: completed
 type: feature
 priority: normal
 tags:
     - cli
     - filtering
 created_at: 2025-12-07T11:29:37Z
-updated_at: 2026-03-10T08:10:33Z
+updated_at: 2026-11-09T08:59:41Z
 order: V
 ---
 
@@ -40,3 +40,7 @@ Returns beans-jkl (blocker is done) but NOT beans-def (blocker is open).
 - Should combine with other filters: `beans list --status open --unblocked`
 - Consider inverse: `--blocked` to show only blocked beans
 - Could extend to show WHY a bean is blocked
+
+## Summary of Changes
+
+Covered by `beans list --ready` and the query syntax `beans list -Q 'blocked:no'` / `ready:yes` (pkg/beangraph/filterquery).

@@ -7,7 +7,8 @@
 
   let inputEl = $state<HTMLInputElement | null>(null);
   let rootEl = $state<HTMLDivElement | null>(null);
-  const isMac = navigator.platform.startsWith('Mac');
+  // navigator is unavailable during SSR/prerendering.
+  const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
   const shortcutHint = isMac ? '⌘/' : 'Ctrl+/';
 
   // Autocomplete
