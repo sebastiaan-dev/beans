@@ -179,7 +179,7 @@ If a theme can't be loaded (e.g. nvim is not installed or the colorscheme doesn'
 
 ## Terminal UI
 
-`beans-tui` opens an interactive terminal UI on the project in the current directory (it accepts `--beans-path` like the CLI).
+`beans tui` (or the standalone `beans-tui` binary) opens an interactive terminal UI on the project in the current directory (it accepts `--beans-path` and `--config` like the other commands).
 
 **Layout.** One frame holds a header, the filter bar (one field box each for status, type, priority, tags, archived, ready and done; a single line on short terminals), the bean tree and the selected bean's detail boxes (title, status/type/priority, parent, tags, body, relations, history) next to it, and a footer with the keys of the focused pane. Terminals narrower than 100 or shorter than 16 lines show the tree only, and `enter` opens the detail pane in its place; when the detail boxes don't fit, the pane scrolls as a whole. Below 40×12 beans asks you to enlarge the terminal.
 
@@ -261,7 +261,7 @@ beans help
 You might specifically be interested in the interactive [terminal UI](#terminal-ui):
 
 ```bash
-beans-tui
+beans tui
 ```
 
 ### Example Workflows
