@@ -17,23 +17,12 @@ type CoreResolver struct {
 	Core *beancore.Core
 }
 
-// ETagMismatchError is returned when an ETag validation fails.
-// This allows callers to distinguish concurrency conflicts from other errors.
-type ETagMismatchError struct {
-	Provided string
-	Current  string
-}
-
-func (e *ETagMismatchError) Error() string {
-	return fmt.Sprintf("etag mismatch: provided %s, current is %s", e.Provided, e.Current)
-}
-
-// ETagRequiredError is returned when require_if_match is enabled and no ETag is provided.
-type ETagRequiredError struct{}
-
-func (e *ETagRequiredError) Error() string {
-	return "if-match etag is required (set require_if_match: false in config to disable)"
-}
+// ETagMismatchError and ETagRequiredError are the errors returned by the
+// core's etag validation (aliases, so callers can match either package).
+type (
+	ETagMismatchError = beancore.ETagMismatchError
+	ETagRequiredError = beancore.ETagRequiredError
+)
 
 // validateAndSetParent validates and sets the parent relationship.
 func validateAndSetParent(tx *beancore.Tx, b *bean.Bean, parentID string) error {

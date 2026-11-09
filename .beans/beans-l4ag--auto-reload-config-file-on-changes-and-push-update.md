@@ -5,10 +5,8 @@ status: todo
 type: feature
 priority: normal
 created_at: 2026-03-11T18:12:28Z
-updated_at: 2026-03-11T19:54:28Z
+updated_at: 2026-11-09T08:59:42Z
 order: zzzV
-blocked_by:
-    - beans-bbjk
 ---
 
 Make beans-serve (or beanscore) watch the .beans.yml config file for changes and automatically push updated config (like agent actions) to the frontend via GraphQL subscriptions. Currently config is only read at startup.
