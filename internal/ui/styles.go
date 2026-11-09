@@ -830,6 +830,15 @@ func MarkdownStyleConfig() ansi.StyleConfig {
 
 	s := glamourstyles.DarkStyleConfig
 
+	// glamour prints a block's indent token Indent+Margin times but narrows
+	// the wrap width by Indent+2*Margin columns. The 2-column quote token with
+	// Indent 1 made quoted lines one column too wide, so the document wrap
+	// moved their last word onto a line of its own (without the quote bar).
+	// Margin 1 prints the token once and reserves both of its columns.
+	zero, one := uint(0), uint(1)
+	s.BlockQuote.Indent = &zero
+	s.BlockQuote.Margin = &one
+
 	if currentTheme != nil {
 		slot := func(n int) *string { return str(string(ansiSlot(n))) }
 		s.Document.Color = nil

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RenderedMarkdown from './RenderedMarkdown.svelte';
   import type {
     PendingInteraction,
     AskUserQuestionData,
@@ -6,7 +7,6 @@
     QuestionAnswer
   } from '$lib/agentChat.svelte';
   import { untrack } from 'svelte';
-  import { renderMarkdown } from '$lib/markdown';
 
   interface Props {
     interaction: PendingInteraction;
@@ -16,19 +16,6 @@
   }
 
   let { interaction, onApprove, onAnswer }: Props = $props();
-
-  // Render plan content as markdown when available
-  let renderedPlanContent = $state<string | null>(null);
-  $effect(() => {
-    const content = interaction.planContent;
-    if (content) {
-      renderMarkdown(content).then((html) => {
-        renderedPlanContent = html;
-      });
-    } else {
-      renderedPlanContent = null;
-    }
-  });
 
   // --- AskUserQuestion form -------------------------------------------------
   //
@@ -110,11 +97,12 @@
   <div class="border-t border-status-in-progress-text/20 bg-status-in-progress-bg/50 p-3">
     <p class="mb-2 text-text-muted">Agent wants to leave plan mode and start working.</p>
 
-    {#if renderedPlanContent}
+    {#if interaction.planContent}
       <div class="mb-3 max-h-96 overflow-y-auto rounded border border-border bg-surface p-3">
-        <div class="agent-prose prose max-w-none min-w-0 text-text">
-          {@html renderedPlanContent}
-        </div>
+        <RenderedMarkdown
+          content={interaction.planContent}
+          class="agent-prose prose max-w-none min-w-0 text-text"
+        />
       </div>
     {/if}
 

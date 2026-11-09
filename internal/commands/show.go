@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/glamour/ansi"
 	glamourstyles "github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/hmans/beans/internal/output"
@@ -209,29 +209,28 @@ const showBodyWordWrap = 80
 // 256-color codes and performs slow terminal background detection. When stdout
 // is not a terminal, or colors are disabled (an Ascii profile, e.g. NO_COLOR or
 // TERM=dumb), it uses glamour's plain "notty" style without escape sequences.
-func newBodyRenderer(isTTY bool, profile termenv.Profile) (*glamour.TermRenderer, error) {
+//
+// Both use ui.MarkdownRenderer (glamour's renderer with greedy wrapping only at
+// spaces; see repos-fbua), so bodies wrap like in the TUI.
+func newBodyRenderer(isTTY bool, profile termenv.Profile) *ui.MarkdownRenderer {
 	if !isTTY || profile == termenv.Ascii {
-		return glamour.NewTermRenderer(
-			glamour.WithStandardStyle(glamourstyles.NoTTYStyle),
-			glamour.WithColorProfile(termenv.Ascii),
-			glamour.WithWordWrap(showBodyWordWrap),
-		)
+		return ui.NewMarkdownRenderer(ansi.Options{
+			Styles:       glamourstyles.NoTTYStyleConfig,
+			ColorProfile: termenv.Ascii,
+			WordWrap:     showBodyWordWrap,
+		})
 	}
-	return glamour.NewTermRenderer(
-		glamour.WithStyles(ui.MarkdownStyleConfig()),
-		glamour.WithChromaFormatter(ui.MarkdownChromaFormatterFor(profile)),
-		glamour.WithColorProfile(profile),
-		glamour.WithWordWrap(showBodyWordWrap),
-	)
+	return ui.NewMarkdownRenderer(ansi.Options{
+		Styles:          ui.MarkdownStyleConfig(),
+		ChromaFormatter: ui.MarkdownChromaFormatterFor(profile),
+		ColorProfile:    profile,
+		WordWrap:        showBodyWordWrap,
+	})
 }
 
 // renderMarkdownBody renders a bean body as styled markdown.
 func renderMarkdownBody(body string, isTTY bool, profile termenv.Profile) (string, error) {
-	renderer, err := newBodyRenderer(isTTY, profile)
-	if err != nil {
-		return "", fmt.Errorf("failed to create renderer: %w", err)
-	}
-	return renderer.Render(body)
+	return newBodyRenderer(isTTY, profile).Render(body)
 }
 
 // formatRelationships formats parent and blocks for display.
