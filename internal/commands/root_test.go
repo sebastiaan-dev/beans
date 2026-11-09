@@ -299,3 +299,16 @@ func TestBeansConfigEnvVar(t *testing.T) {
 		}
 	})
 }
+
+func TestTuiIsASubcommand(t *testing.T) {
+	cmd, _, err := testRootCmd().Find([]string{"tui"})
+	if err != nil || cmd.Name() != "tui" {
+		t.Fatalf("Find(tui) = %v, %v", cmd, err)
+	}
+	if cmd.Hidden || cmd.Run != nil || cmd.RunE == nil {
+		t.Errorf("tui should be the real TUI command, not the moved-to-beans-tui placeholder")
+	}
+	if !requiresProject(cmd) {
+		t.Error("tui needs a project")
+	}
+}
